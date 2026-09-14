@@ -263,7 +263,12 @@ async function MarcaDosClientComponents({ children }: { children: React.ReactNod
   // mandá-los engordaria o payload do RSC de TODA página com dado que ninguém lê.
   return (
     <MarcaDaInstalacaoProvider
-      marca={{ name: marca.name, logoUrl: marca.logoUrl, initial: marca.initial }}
+      marca={{
+        name: marca.name,
+        logoUrl: marca.logoUrl,
+        logoUrlEscuro: marca.logoUrlEscuro,
+        initial: marca.initial,
+      }}
     >
       {children}
     </MarcaDaInstalacaoProvider>

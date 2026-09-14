@@ -38,6 +38,11 @@ vi.mock("@/app/actions/shell/toggleSidebar", () => ({
 vi.mock("@/components/shell/VersionFooter", () => ({
   VersionFooter: () => null,
 }));
+// Mesmo motivo: "listas salvas" busca via react-query, e a barra as chama
+// incondicionalmente. Não é o que estes testes de grupo examinam.
+vi.mock("@/hooks/leads/useSavedLeadViews", () => ({
+  useSavedLeadViews: () => ({ data: [] }),
+}));
 
 function comoPapel(role: ActiveOrg["role"]) {
   authRef.user = { is_platform_admin: false };

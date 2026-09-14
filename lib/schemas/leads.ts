@@ -105,6 +105,18 @@ export const updateLeadSchema = z.object({
     .optional(),
   tags: z.array(z.string()).optional(),
   custom_fields: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * Bloco UTM editável (origem comercial/override) — item 4a do pedido do
+   * dossiê do lead. Nunca confundir com a leitura de `touchpoints` (o motor
+   * de rastreamento automático): este bloco é preenchido à mão e nunca é
+   * sobrescrito por aquele.
+   */
+  utm_source: z.string().trim().max(255).nullable().optional(),
+  utm_medium: z.string().trim().max(255).nullable().optional(),
+  utm_campaign: z.string().trim().max(255).nullable().optional(),
+  utm_content: z.string().trim().max(255).nullable().optional(),
+  utm_term: z.string().trim().max(255).nullable().optional(),
+  referrer: z.string().trim().max(255).nullable().optional(),
 });
 export type UpdateLeadInput = z.infer<typeof updateLeadSchema>;
 

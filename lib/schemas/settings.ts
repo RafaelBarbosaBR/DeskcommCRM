@@ -109,6 +109,15 @@ export const tenantSchema = z.object({
     .optional()
     .or(z.literal("").transform(() => null)),
   lost_reasons_extra: z.array(z.string().min(1).max(80)).max(50).default([]),
+  /**
+   * Heurística de país do gerador de link do WhatsApp (item 3 do pedido do
+   * dossiê do lead) — configurável por conta, nunca fixa no código.
+   */
+  whatsapp_default_country_code: z
+    .string()
+    .trim()
+    .regex(/^[0-9]{1,3}$/, "Só dígitos, até 3 caracteres (ex.: 55).")
+    .default("55"),
 });
 export type TenantInput = z.infer<typeof tenantSchema>;
 

@@ -23274,6 +23274,854 @@ update public.channel_sessions
 
 notify pgrst,'reload schema';
 
+-- ---- Rastreamento first-party — captura (migration 0233) ----
+-- Tracker.js instalável por site do cliente. site_key resolve o tenant no
+-- coletor público (nunca o corpo da requisição, mesmo padrão de
+-- webhook_sources.path_token). Nunca inventa fbclid/gclid/UTM ausentes.
+
+create table if not exists public.tracking_sites (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  name text not null,
+  site_key text not null default encode(gen_random_bytes(24), 'hex'),
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists tracking_sites_site_key_uk
+  on public.tracking_sites (site_key);
+
+create index if not exists tracking_sites_org_idx
+  on public.tracking_sites (organization_id);
+
+alter table public.tracking_sites enable row level security;
+revoke all on public.tracking_sites from anon, authenticated;
+grant select, insert, update, delete on public.tracking_sites to service_role;
+
+drop trigger if exists trg_tracking_sites_updated_at on public.tracking_sites;
+create trigger trg_tracking_sites_updated_at
+  before update on public.tracking_sites
+  for each row execute function public.fn_set_updated_at();
+
+create table if not exists public.tracking_domains (
+  id uuid primary key default gen_random_uuid(),
+  tracking_site_id uuid not null references public.tracking_sites(id) on delete cascade,
+  domain text not null,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists tracking_domains_site_domain_uk
+  on public.tracking_domains (tracking_site_id, domain);
+
+alter table public.tracking_domains enable row level security;
+revoke all on public.tracking_domains from anon, authenticated;
+grant select, insert, update, delete on public.tracking_domains to service_role;
+
+create table if not exists public.visitors (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  tracking_site_id uuid not null references public.tracking_sites(id) on delete cascade,
+  visitor_id uuid not null,
+  first_seen_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists visitors_site_visitor_uk
+  on public.visitors (tracking_site_id, visitor_id);
+
+create index if not exists visitors_org_idx
+  on public.visitors (organization_id);
+
+alter table public.visitors enable row level security;
+revoke all on public.visitors from anon, authenticated;
+grant select, insert, update, delete on public.visitors to service_role;
+
+create table if not exists public.sessions (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  visitor_id uuid not null references public.visitors(id) on delete cascade,
+  session_id uuid not null,
+  started_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  referrer text,
+  landing_url text,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  utm_term text,
+  utm_content text,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists sessions_session_id_uk
+  on public.sessions (session_id);
+
+create index if not exists sessions_visitor_idx
+  on public.sessions (visitor_id);
+
+alter table public.sessions enable row level security;
+revoke all on public.sessions from anon, authenticated;
+grant select, insert, update, delete on public.sessions to service_role;
+
+create table if not exists public.touchpoints (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  visitor_id uuid not null references public.visitors(id) on delete cascade,
+  session_id uuid references public.sessions(id) on delete set null,
+  occurred_at timestamptz not null default now(),
+  url text,
+  referrer text,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  utm_term text,
+  utm_content text,
+  fbclid text,
+  fbc text,
+  gclid text,
+  gbraid text,
+  wbraid text,
+  contact_id uuid references public.contacts(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists touchpoints_visitor_idx
+  on public.touchpoints (visitor_id, occurred_at desc);
+
+create index if not exists touchpoints_contact_idx
+  on public.touchpoints (contact_id) where contact_id is not null;
+
+alter table public.touchpoints enable row level security;
+revoke all on public.touchpoints from anon, authenticated;
+grant select, insert, update, delete on public.touchpoints to service_role;
+
+alter table public.contacts
+  add column if not exists visitor_id uuid references public.visitors(id) on delete set null;
+
+create index if not exists contacts_visitor_idx
+  on public.contacts (visitor_id) where visitor_id is not null;
+
+-- ---- Rastreamento first-party — motor de eventos (migration 0234) ----
+-- Vocabulário agnóstico de 5 eventos internos (PAGE_VIEW/CONTACT/LEAD/
+-- QUALIFIED/PURCHASE). outbound_events é o ledger cross-provider de
+-- despacho (criado/enviado/aceito-rejeitado). meta_event_logs é o detalhe
+-- de dedup Pixel×CAPI pelo mesmo event_id.
+
+create table if not exists public.internal_events (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  tracking_site_id uuid references public.tracking_sites(id) on delete set null,
+  event_type text not null,
+  visitor_id uuid references public.visitors(id) on delete set null,
+  session_id uuid references public.sessions(id) on delete set null,
+  contact_id uuid references public.contacts(id) on delete set null,
+  lead_id uuid references public.crm_leads(id) on delete set null,
+  touchpoint_id uuid references public.touchpoints(id) on delete set null,
+  value_cents bigint,
+  currency text,
+  occurred_at timestamptz not null default now(),
+  payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  constraint internal_events_event_type_enum
+    check (event_type in ('PAGE_VIEW', 'CONTACT', 'LEAD', 'QUALIFIED', 'PURCHASE')),
+  constraint internal_events_currency_iso
+    check (currency is null or currency ~ '^[A-Z]{3}$')
+);
+
+create unique index if not exists internal_events_lead_event_uk
+  on public.internal_events (organization_id, lead_id, event_type)
+  where lead_id is not null and event_type in ('LEAD', 'QUALIFIED', 'PURCHASE');
+
+create index if not exists internal_events_org_type_idx
+  on public.internal_events (organization_id, event_type, occurred_at desc);
+
+create index if not exists internal_events_visitor_idx
+  on public.internal_events (visitor_id) where visitor_id is not null;
+
+alter table public.internal_events enable row level security;
+revoke all on public.internal_events from anon, authenticated;
+grant select, insert, update, delete on public.internal_events to service_role;
+
+create table if not exists public.outbound_events (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  internal_event_id uuid not null references public.internal_events(id) on delete cascade,
+  provider text not null,
+  event_name text,
+  status text not null default 'pending',
+  reason text,
+  detail text,
+  created_at timestamptz not null default now(),
+  sent_at timestamptz,
+  resolved_at timestamptz,
+  updated_at timestamptz not null default now(),
+  constraint outbound_events_provider_enum
+    check (provider in ('META', 'GA4', 'GOOGLE_ADS')),
+  constraint outbound_events_status_enum
+    check (status in ('pending', 'sent', 'accepted', 'rejected'))
+);
+
+create unique index if not exists outbound_events_event_provider_uk
+  on public.outbound_events (internal_event_id, provider);
+
+create index if not exists outbound_events_org_status_idx
+  on public.outbound_events (organization_id, status, created_at desc);
+
+alter table public.outbound_events enable row level security;
+revoke all on public.outbound_events from anon, authenticated;
+grant select, insert, update, delete on public.outbound_events to service_role;
+
+drop trigger if exists trg_outbound_events_updated_at on public.outbound_events;
+create trigger trg_outbound_events_updated_at
+  before update on public.outbound_events
+  for each row execute function public.fn_set_updated_at();
+
+create table if not exists public.meta_event_logs (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  internal_event_id uuid not null references public.internal_events(id) on delete cascade,
+  event_id text not null,
+  pixel_fired boolean not null default false,
+  capi_status text,
+  capi_response jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists meta_event_logs_event_uk
+  on public.meta_event_logs (internal_event_id);
+
+alter table public.meta_event_logs enable row level security;
+revoke all on public.meta_event_logs from anon, authenticated;
+grant select, insert, update, delete on public.meta_event_logs to service_role;
+
+drop trigger if exists trg_meta_event_logs_updated_at on public.meta_event_logs;
+create trigger trg_meta_event_logs_updated_at
+  before update on public.meta_event_logs
+  for each row execute function public.fn_set_updated_at();
+
+-- ---- Rastreamento first-party — configuração (migration 0235) ----
+-- Credencial por provider em blob JSON cifrado (secrets_encrypted, via
+-- fn_encrypt_oauth/fn_decrypt_oauth — mesma chave mestra já usada por toda
+-- credencial de integração). Não-secreto (pixel_id/measurement_id/
+-- customer_id/mapa de conversion action) em config jsonb, em claro.
+-- is_qualified em crm_stages é o gatilho do evento QUALIFIED.
+
+create table if not exists public.integration_settings (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  provider text not null,
+  enabled boolean not null default false,
+  config jsonb not null default '{}'::jsonb,
+  secrets_encrypted bytea,
+  test_event_code text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  updated_by uuid,
+  constraint integration_settings_provider_enum
+    check (provider in ('META', 'GA4', 'GOOGLE_ADS'))
+);
+
+create unique index if not exists integration_settings_org_provider_uk
+  on public.integration_settings (organization_id, provider);
+
+alter table public.integration_settings enable row level security;
+revoke all on public.integration_settings from anon, authenticated;
+grant select, insert, update, delete on public.integration_settings to service_role;
+
+drop trigger if exists trg_integration_settings_updated_at on public.integration_settings;
+create trigger trg_integration_settings_updated_at
+  before update on public.integration_settings
+  for each row execute function public.fn_set_updated_at();
+
+alter table public.crm_stages
+  add column if not exists is_qualified boolean not null default false;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'crm_stages_qualified_wonlost_mutex'
+  ) then
+    alter table public.crm_stages
+      add constraint crm_stages_qualified_wonlost_mutex
+      check (not (is_qualified and (is_won or is_lost)));
+  end if;
+end $$;
+
+-- ---- Dossiê do lead — redes sociais/links + telefone digitado (migration 0236) ----
+-- `_normalized` só pra dedupe, nunca vira link clicável. `phone_raw` é o que a
+-- pessoa digitou; `contacts.phone_number` (canônica E.164) fica intocada.
+
+alter table public.contacts
+  add column if not exists website_url text,
+  add column if not exists website_url_normalized text,
+  add column if not exists instagram_url text,
+  add column if not exists instagram_url_normalized text,
+  add column if not exists facebook_url text,
+  add column if not exists facebook_url_normalized text,
+  add column if not exists google_maps_url text,
+  add column if not exists google_maps_url_normalized text,
+  add column if not exists phone_raw text;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'contacts_website_url_len') then
+    alter table public.contacts
+      add constraint contacts_website_url_len check (website_url is null or length(website_url) <= 500);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'contacts_instagram_url_len') then
+    alter table public.contacts
+      add constraint contacts_instagram_url_len check (instagram_url is null or length(instagram_url) <= 500);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'contacts_facebook_url_len') then
+    alter table public.contacts
+      add constraint contacts_facebook_url_len check (facebook_url is null or length(facebook_url) <= 500);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'contacts_google_maps_url_len') then
+    alter table public.contacts
+      add constraint contacts_google_maps_url_len check (google_maps_url is null or length(google_maps_url) <= 1000);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'contacts_phone_raw_len') then
+    alter table public.contacts
+      add constraint contacts_phone_raw_len check (phone_raw is null or length(phone_raw) <= 30);
+  end if;
+end $$;
+
+-- ---- Dossiê do lead — UTM editável (override) + país padrão do WhatsApp (migration 0237) ----
+
+alter table public.crm_leads
+  add column if not exists utm_source text,
+  add column if not exists utm_medium text,
+  add column if not exists utm_campaign text,
+  add column if not exists utm_content text,
+  add column if not exists utm_term text,
+  add column if not exists referrer text;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'crm_leads_utm_source_len') then
+    alter table public.crm_leads add constraint crm_leads_utm_source_len check (utm_source is null or length(utm_source) <= 255);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'crm_leads_utm_medium_len') then
+    alter table public.crm_leads add constraint crm_leads_utm_medium_len check (utm_medium is null or length(utm_medium) <= 255);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'crm_leads_utm_campaign_len') then
+    alter table public.crm_leads add constraint crm_leads_utm_campaign_len check (utm_campaign is null or length(utm_campaign) <= 255);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'crm_leads_utm_content_len') then
+    alter table public.crm_leads add constraint crm_leads_utm_content_len check (utm_content is null or length(utm_content) <= 255);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'crm_leads_utm_term_len') then
+    alter table public.crm_leads add constraint crm_leads_utm_term_len check (utm_term is null or length(utm_term) <= 255);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'crm_leads_referrer_len') then
+    alter table public.crm_leads add constraint crm_leads_referrer_len check (referrer is null or length(referrer) <= 255);
+  end if;
+end $$;
+
+alter table public.organizations
+  add column if not exists whatsapp_default_country_code text not null default '55';
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'organizations_whatsapp_country_code_format') then
+    alter table public.organizations
+      add constraint organizations_whatsapp_country_code_format
+      check (whatsapp_default_country_code ~ '^[0-9]{1,3}$');
+  end if;
+end $$;
+
+-- ---- Listas salvas de lead (migration 0238) ----
+
+create table if not exists public.crm_saved_lead_views (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  pipeline_id uuid references public.crm_pipelines(id) on delete cascade,
+  label text not null,
+  tag text not null,
+  position numeric not null default 1000,
+  created_by_user_id uuid,
+  created_at timestamptz not null default now(),
+  constraint crm_saved_lead_views_label_len check (length(label) <= 60),
+  constraint crm_saved_lead_views_tag_len check (length(tag) <= 50)
+);
+
+create index if not exists crm_saved_lead_views_org_idx
+  on public.crm_saved_lead_views (organization_id, position);
+
+alter table public.crm_saved_lead_views enable row level security;
+
+drop policy if exists "crm_saved_lead_views_tenant_isolation_all" on public.crm_saved_lead_views;
+create policy "crm_saved_lead_views_tenant_isolation_all" on public.crm_saved_lead_views
+  using (organization_id in (select public.fn_user_org_ids()) or public.fn_is_platform_admin())
+  with check (organization_id in (select public.fn_user_org_ids()) or public.fn_is_platform_admin());
+
+grant select, insert, update, delete on public.crm_saved_lead_views to authenticated;
+grant select, insert, update, delete on public.crm_saved_lead_views to service_role;
+
+-- ---- Compromissos leves por lead (migration 0239) ----
+-- Não é `calendar_appointments` — aquela exige event_type_id + disponibilidade
+-- publicada e não deixa reabrir cancelado. Reaproveita `calendar_connections`
+-- (OAuth por atendente, já cifrado) só pra sincronizar, sem o motor de slots.
+
+create table if not exists public.crm_lead_appointments (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  lead_id uuid not null references public.crm_leads(id) on delete cascade,
+  type text not null,
+  title text not null,
+  notes text,
+  scheduled_at timestamptz not null,
+  status text not null default 'pending',
+  assigned_to uuid references auth.users(id) on delete set null,
+  google_event_id text,
+  google_sync_error text,
+  created_by_user_id uuid,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint crm_lead_appointments_type_enum
+    check (type in ('proximo_contato', 'reuniao', 'ligacao', 'outro')),
+  constraint crm_lead_appointments_status_enum
+    check (status in ('pending', 'completed', 'cancelled')),
+  constraint crm_lead_appointments_title_len check (length(title) <= 200),
+  constraint crm_lead_appointments_notes_len check (notes is null or length(notes) <= 1000)
+);
+
+create index if not exists crm_lead_appointments_lead_idx
+  on public.crm_lead_appointments (lead_id, scheduled_at);
+
+create index if not exists crm_lead_appointments_org_status_idx
+  on public.crm_lead_appointments (organization_id, status, scheduled_at);
+
+alter table public.crm_lead_appointments enable row level security;
+
+drop policy if exists "crm_lead_appointments_tenant_isolation_all" on public.crm_lead_appointments;
+create policy "crm_lead_appointments_tenant_isolation_all" on public.crm_lead_appointments
+  using (organization_id in (select public.fn_user_org_ids()) or public.fn_is_platform_admin())
+  with check (organization_id in (select public.fn_user_org_ids()) or public.fn_is_platform_admin());
+
+grant select, insert, update, delete on public.crm_lead_appointments to authenticated;
+grant select, insert, update, delete on public.crm_lead_appointments to service_role;
+
+drop trigger if exists trg_crm_lead_appointments_updated_at on public.crm_lead_appointments;
+create trigger trg_crm_lead_appointments_updated_at
+  before update on public.crm_lead_appointments
+  for each row execute function public.fn_set_updated_at();
+
+-- ---- Formulário unificado de "Novo negócio" — função/cargo do contato (migration 0240) ----
+-- `job_title`, não `role`: `role` já é RBAC noutras tabelas deste produto.
+
+alter table public.contacts
+  add column if not exists job_title text;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'contacts_job_title_len') then
+    alter table public.contacts
+      add constraint contacts_job_title_len check (job_title is null or length(job_title) <= 150);
+  end if;
+end $$;
+
+-- ---- logo escuro da instalação (migration 0241) ----
+--
+-- `platform_branding` tinha UM slot de logo, mostrado sobre os dois temas do
+-- produto — `CampoDeLogo.tsx` já avisava disso na prévia. Este bloco é o par
+-- de verdade: um segundo arquivo, OPCIONAL, mostrado só no tema escuro.
+-- `logo_dark_path`, sem `logo_dark_url` par: não há `APP_LOGO_URL_DARK` no
+-- `.env` para ancorar uma URL colada. Ausente = o logo claro vale nos dois
+-- temas — precedência por campo, mesma regra de sempre (resolve.ts).
+
+alter table public.platform_branding
+  add column if not exists logo_dark_path text;
+
+comment on column public.platform_branding.logo_dark_path is
+  'Caminho do arquivo de logo para o TEMA ESCURO em storage/brand-logos, sempre platform/<uuid>.<png|jpg>. Opcional: ausente = o logo claro (logo_path) vale nos dois temas. Sem par de URL — não há semente de .env para um logo escuro. Escrito por app/api/v1/marca/logo/route.ts (variante=escuro).';
+
+update public.platform_branding
+   set logo_dark_path = null
+ where logo_dark_path is not null
+   and logo_dark_path !~ '^platform/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg)$';
+
+alter table public.platform_branding
+  drop constraint if exists platform_branding_logo_dark_path;
+alter table public.platform_branding
+  add constraint platform_branding_logo_dark_path check (
+    logo_dark_path is null
+    or logo_dark_path ~ '^platform/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg)$'
+  );
+
+notify pgrst, 'reload schema';
+
+-- ---- auditoria de rastreamento: fila de retry, log bruto, expurgo técnico (migration 0242) ----
+--
+-- Três peças: (1) outbound_events ganha attempt_count/last_attempt_at/
+-- next_retry_at/error_message e o vocabulário de status muda pra
+-- pending/processing/sent/failed/dead_letter; (2) platform_event_logs é NOVO
+-- — histórico bruto sanitizado por TENTATIVA, cross-provider, ao lado (não no
+-- lugar) de meta_event_logs, que continua sendo o dedup Pixel×CAPI; (3) duas
+-- funções de expurgo batched, mesmo molde de fn_podar_fila_de_jobs — só
+-- status TERMINAL é podável em outbound_events, internal_events nunca é
+-- expurgado (é histórico comercial, princípio 3 do pedido).
+
+alter table public.outbound_events
+  add column if not exists attempt_count integer not null default 0,
+  add column if not exists last_attempt_at timestamptz,
+  add column if not exists next_retry_at timestamptz,
+  add column if not exists error_message text;
+
+update public.outbound_events set status = 'sent' where status = 'accepted';
+update public.outbound_events set status = 'failed' where status = 'rejected';
+
+alter table public.outbound_events
+  drop constraint if exists outbound_events_status_enum;
+alter table public.outbound_events
+  add constraint outbound_events_status_enum
+  check (status in ('pending', 'processing', 'sent', 'failed', 'dead_letter'));
+
+comment on column public.outbound_events.attempt_count is
+  'Quantas tentativas de envio já foram feitas (sucesso ou falha, conta as duas). Base do backoff e do teto de tentativas.';
+comment on column public.outbound_events.last_attempt_at is
+  'Quando a ÚLTIMA tentativa rodou — sucesso ou falha. Distinto de created_at (quando a linha nasceu) e de sent_at (só existe se deu certo).';
+comment on column public.outbound_events.next_retry_at is
+  'Quando a PRÓXIMA tentativa está agendada. NULL = não há próxima (terminal: sent ou dead_letter; ou ainda não tentou nenhuma vez e o despacho imediato é quem tenta).';
+comment on column public.outbound_events.error_message is
+  'A mensagem de erro REAL da tentativa mais recente — da API da plataforma quando ela respondeu, ou do motivo de não ter tentado (sem credencial, etc). Nunca um texto genérico inventado aqui.';
+
+create index if not exists outbound_events_retry_idx
+  on public.outbound_events (next_retry_at)
+  where status = 'pending';
+
+create index if not exists outbound_events_processing_idx
+  on public.outbound_events (last_attempt_at)
+  where status = 'processing';
+
+create table if not exists public.platform_event_logs (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  outbound_event_id uuid not null references public.outbound_events(id) on delete cascade,
+  internal_event_id uuid not null references public.internal_events(id) on delete cascade,
+  provider text not null,
+  event_name text,
+  status text not null,
+  error_message text,
+  response_summary jsonb not null default '{}'::jsonb,
+  attempted_at timestamptz not null default now(),
+  constraint platform_event_logs_provider_enum
+    check (provider in ('META', 'GA4', 'GOOGLE_ADS')),
+  constraint platform_event_logs_status_enum
+    check (status in ('ok', 'erro'))
+);
+
+create index if not exists platform_event_logs_org_time_idx
+  on public.platform_event_logs (organization_id, attempted_at desc);
+
+create index if not exists platform_event_logs_status_idx
+  on public.platform_event_logs (organization_id, status, attempted_at desc);
+
+comment on table public.platform_event_logs is
+  'Histórico BRUTO de cada tentativa de envio a uma plataforma — append-only, uma linha por chamada, sanitizado (nunca segredo, PII hasheada). Diferente de meta_event_logs (upsert de estado atual, só Meta, dedup Pixel×CAPI). Expurgado depois de alguns dias por fn_podar_platform_event_logs — é log técnico, não histórico comercial.';
+
+alter table public.platform_event_logs enable row level security;
+revoke all on public.platform_event_logs from anon, authenticated;
+grant select, insert, update, delete on public.platform_event_logs to service_role;
+
+create or replace function public.fn_podar_platform_event_logs(
+  p_retencao_dias int default null,
+  p_limite int default null
+) returns int
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_dias int := greatest(coalesce(p_retencao_dias, 7), 3);
+  v_limite int := least(greatest(coalesce(p_limite, 1000), 1), 10000);
+  v_apagadas int;
+begin
+  with vencidas as (
+    select l.id
+      from public.platform_event_logs l
+     where l.attempted_at < now() - make_interval(days => v_dias)
+     order by l.attempted_at
+     limit v_limite
+  )
+  delete from public.platform_event_logs l
+   using vencidas v
+   where l.id = v.id;
+  get diagnostics v_apagadas = row_count;
+  return v_apagadas;
+end;
+$$;
+
+create or replace function public.fn_podar_outbound_events_finalizados(
+  p_retencao_dias int default null,
+  p_limite int default null
+) returns int
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_dias int := greatest(coalesce(p_retencao_dias, 7), 3);
+  v_limite int := least(greatest(coalesce(p_limite, 1000), 1), 10000);
+  v_apagados int;
+begin
+  with vencidos as (
+    select o.id
+      from public.outbound_events o
+     where o.status in ('sent', 'dead_letter')
+       and o.created_at < now() - make_interval(days => v_dias)
+     order by o.created_at
+     limit v_limite
+  )
+  delete from public.outbound_events o
+   using vencidos v
+   where o.id = v.id;
+  get diagnostics v_apagados = row_count;
+  return v_apagados;
+end;
+$$;
+
+revoke execute on function public.fn_podar_platform_event_logs(int, int)
+  from public, anon, authenticated;
+grant  execute on function public.fn_podar_platform_event_logs(int, int)
+  to service_role;
+
+revoke execute on function public.fn_podar_outbound_events_finalizados(int, int)
+  from public, anon, authenticated;
+grant  execute on function public.fn_podar_outbound_events_finalizados(int, int)
+  to service_role;
+
+notify pgrst, 'reload schema';
+
+-- ---- a cascata de anonimização (LGPD) passa a alcançar `touchpoints` (migration 0243) ----
+--
+-- Achado pela varredura `tests/invariants/lgpd-cascata-alcanca-quem-guarda-
+-- pessoa.test.ts`: `touchpoints` (0233) tem FK pra `contacts` e uma coluna
+-- reconhecida como conteúdo pessoal (`utm_content`). O passo é duplo:
+-- `contact_id = null` (soft de-link, mesmo padrão de `orders`) e
+-- `url`/`referrer`/`utm_content` limpos (URL/referrer de página real podem
+-- carregar e-mail/nome em query string). Os campos de atribuição de CAMPANHA
+-- (fbclid/gclid/utm_source/medium/campaign/term) ficam — não são da pessoa,
+-- e o link com ela já foi cortado.
+
+create or replace function public.fn_lgpd_cascade_redact_contact(p_organization_id uuid, p_contact_id uuid, p_request_id uuid) returns jsonb
+    language plpgsql security definer
+    set search_path to 'public'
+    as $$
+declare
+  v_already bool;
+  v_counts jsonb := '{}'::jsonb;
+  v_media_paths text[] := '{}';
+  v_anon_label text;
+  v_count int;
+begin
+  perform public.fn_service_lock(p_organization_id,p_contact_id);
+  select is_anonymized into v_already
+    from contacts
+    where id = p_contact_id and organization_id = p_organization_id;
+
+  if not found then
+    raise exception 'contact not found' using errcode = 'P0002';
+  end if;
+
+  if v_already then
+    return jsonb_build_object('already_anonymized', true, 'counts', v_counts, 'media_paths', v_media_paths);
+  end if;
+
+  v_anon_label := 'Cliente Anonimizado #' || substring(p_contact_id::text from 1 for 8);
+
+  select coalesce(array_agg(distinct media_storage_path) filter (where media_storage_path is not null), '{}')
+    into v_media_paths
+    from messages
+    where organization_id = p_organization_id
+      and conversation_id in (
+        select id from conversations
+          where contact_id = p_contact_id and organization_id = p_organization_id
+      );
+
+  update contacts set
+    name = v_anon_label,
+    display_name = v_anon_label,
+    email = null,
+    phone_number = null,
+    cpf_encrypted = null,
+    cpf_hash = null,
+    birthdate = null,
+    is_anonymized = true,
+    anonymized_at = now(),
+    consent = '{}'::jsonb,
+    source_metadata = '{}'::jsonb,
+    tags = '{}'::text[],
+    updated_at = now()
+  where id = p_contact_id and organization_id = p_organization_id;
+  get diagnostics v_count = row_count;
+  v_counts := v_counts || jsonb_build_object('contacts', v_count);
+
+  update conversations set
+    metadata = '{}'::jsonb,
+    last_message_preview = null,
+    updated_at = now()
+  where contact_id = p_contact_id and organization_id = p_organization_id;
+  get diagnostics v_count = row_count;
+  v_counts := v_counts || jsonb_build_object('conversations', v_count);
+
+  update messages set
+    body = '[mensagem anonimizada]',
+    media_url = null,
+    media_mime = null,
+    media_size_bytes = null,
+    media_storage_path = null,
+    metadata = '{}'::jsonb,
+    updated_at = now()
+  where organization_id = p_organization_id
+    and conversation_id in (
+      select id from conversations
+        where contact_id = p_contact_id and organization_id = p_organization_id
+    );
+  get diagnostics v_count = row_count;
+  v_counts := v_counts || jsonb_build_object('messages', v_count);
+
+  update crm_lead_activities set
+    payload = '{}'::jsonb,
+    metadata = '{}'::jsonb,
+    reason = null
+  where organization_id = p_organization_id
+    and (
+      contact_id = p_contact_id
+      or lead_id in (
+        select lead_id from crm_lead_links
+          where target_kind = 'contact'
+            and target_id = p_contact_id
+            and organization_id = p_organization_id
+      )
+      or lead_id in (
+        select id from crm_leads
+          where contact_id = p_contact_id and organization_id = p_organization_id
+      )
+    );
+  get diagnostics v_count = row_count;
+  v_counts := v_counts || jsonb_build_object('activities', v_count);
+
+  update crm_leads set
+    title = v_anon_label,
+    description = null,
+    custom_fields = '{}'::jsonb,
+    source_metadata = '{}'::jsonb,
+    tags = '{}'::text[],
+    updated_at = now()
+  where organization_id = p_organization_id
+    and (
+      contact_id = p_contact_id
+      or id in (
+        select lead_id from crm_lead_links
+          where target_kind = 'contact'
+            and target_id = p_contact_id
+            and organization_id = p_organization_id
+      )
+    );
+  get diagnostics v_count = row_count;
+  v_counts := v_counts || jsonb_build_object('leads', v_count);
+
+  update orders set
+    payload = (coalesce(payload, '{}'::jsonb))
+      - 'customer'
+      - 'customer_name'
+      - 'customer_email'
+      - 'customer_phone'
+      - 'shipping_address'
+      - 'billing_address'
+      - 'contact_identification',
+    customer_external_id = null,
+    contact_id = null,
+    is_anonymized = true,
+    updated_at = now()
+  where organization_id = p_organization_id
+    and contact_id = p_contact_id;
+  get diagnostics v_count = row_count;
+  v_counts := v_counts || jsonb_build_object('orders', v_count);
+
+  -- 9. touchpoints — soft de-link (mesmo padrão de `orders`) + limpeza de
+  --    URL/referrer/utm_content. fbclid/gclid/utm_source/medium/campaign/term
+  --    ficam: são atribuição de CAMPANHA, não da pessoa, e o link com ela já
+  --    foi cortado por este mesmo passo.
+  update touchpoints set
+    contact_id = null,
+    url = null,
+    referrer = null,
+    utm_content = null
+  where organization_id = p_organization_id
+    and contact_id = p_contact_id;
+  get diagnostics v_count = row_count;
+  v_counts := v_counts || jsonb_build_object('touchpoints', v_count);
+
+  if array_length(v_media_paths, 1) > 0 then
+    insert into storage_redaction_queue (organization_id, request_id, bucket, object_path)
+    select p_organization_id, p_request_id, 'whatsapp-media', path
+      from unnest(v_media_paths) as path
+      where path is not null and length(path) > 0
+    on conflict (bucket, object_path) do nothing;
+  end if;
+
+  insert into api_audit_log (organization_id, action, actor_user_id, resource_type, resource_id, metadata, bypassed_rls)
+  values (
+    p_organization_id,
+    'lgpd.redact_executed',
+    null,
+    'contact',
+    p_contact_id,
+    jsonb_build_object(
+      'cascaded_to', v_counts,
+      'media_queued', coalesce(array_length(v_media_paths, 1), 0),
+      'request_id', p_request_id
+    ),
+    true
+  );
+
+  return jsonb_build_object(
+    'already_anonymized', false,
+    'counts', v_counts,
+    'media_paths', v_media_paths
+  );
+end;
+$$;
+
+revoke all on function public.fn_lgpd_cascade_redact_contact(uuid,uuid,uuid) from public,anon,authenticated;
+grant execute on function public.fn_lgpd_cascade_redact_contact(uuid,uuid,uuid) to service_role;
+
+notify pgrst, 'reload schema';
+
+-- ---- um terceiro slot de logo: a marca do favicon (migration 0244) ----
+--
+-- `favicon_mark_path`, mesma forma de `logo_path`/`logo_dark_path`: caminho
+-- dentro de `brand-logos`, sem par `_url`. Ausente = o favicon cai no logo
+-- inteiro ou na cor+inicial gerada — nenhuma instalação existente muda de
+-- comportamento até alguém subir um arquivo neste slot novo.
+
+alter table public.platform_branding
+  add column if not exists favicon_mark_path text;
+
+comment on column public.platform_branding.favicon_mark_path is
+  'Caminho do arquivo do ÍCONE (mark, sem o texto da wordmark) para o favicon, em storage/brand-logos, sempre platform/<uuid>.<png|jpg>. Opcional: ausente = o favicon cai no logo inteiro ou na cor+inicial gerada. Escrito por app/api/v1/marca/logo/route.ts (variante=favicon).';
+
+update public.platform_branding
+   set favicon_mark_path = null
+ where favicon_mark_path is not null
+   and favicon_mark_path !~ '^platform/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg)$';
+
+alter table public.platform_branding
+  drop constraint if exists platform_branding_favicon_mark_path;
+alter table public.platform_branding
+  add constraint platform_branding_favicon_mark_path check (
+    favicon_mark_path is null
+    or favicon_mark_path ~ '^platform/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg)$'
+  );
+
+notify pgrst, 'reload schema';
+
 -- ---- VARREDURA anon: função nova nasce exposta em quem ATUALIZA (migration 0116) ----
 --
 -- ⚠️ ESTE BLOCO É, DE PROPÓSITO, O ÚLTIMO DO ARQUIVO. Apêndice novo entra ANTES

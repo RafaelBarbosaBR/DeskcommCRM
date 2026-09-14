@@ -31,6 +31,10 @@ export interface MarcaGravada {
    * ponteiro é gravado por escritor próprio.
    */
   readonly logo_path: string | null;
+  /** O ARQUIVO do tema escuro — mesma rota própria, mesma razão. Opcional. */
+  readonly logo_dark_path: string | null;
+  /** O ARQUIVO do ícone de favicon — mesma rota própria, mesma razão. Opcional. */
+  readonly favicon_mark_path: string | null;
   readonly accent_hex: string | null;
   readonly show_powered_by: boolean;
 }
@@ -46,6 +50,18 @@ interface Props {
    * interface aparece com o nome em texto.
    */
   readonly logoEmVigor: string | null;
+  /**
+   * O logo do TEMA ESCURO EM VIGOR, já resolvido pelo servidor. Nunca `null`
+   * quando `logoEmVigor` também não é — sem arquivo escuro próprio, cai no
+   * mesmo `logoEmVigor` (ver `lib/branding/resolve.ts`).
+   */
+  readonly logoEscuroEmVigor: string | null;
+  /**
+   * O ÍCONE de favicon EM VIGOR, já resolvido pelo servidor. `null` = ninguém
+   * subiu um — o favicon cai pro logo inteiro (`logoEmVigor`), e na ausência
+   * dele pra cor+inicial gerada (ver `app/icon.tsx`).
+   */
+  readonly faviconEmVigor: string | null;
   /** O que apareceria SEM o arquivo subido — a URL colada no `.env`, se houver. */
   readonly logoDoAmbiente: string | null;
   readonly origens: { readonly nome: string; readonly logoUrl: string; readonly cor: string };
@@ -68,6 +84,8 @@ export function FormularioDaMarca({
   gravada,
   nomeEmVigor,
   logoEmVigor,
+  logoEscuroEmVigor,
+  faviconEmVigor,
   logoDoAmbiente,
   origens,
   definidoNestaTela,
@@ -334,16 +352,66 @@ export function FormularioDaMarca({
         Salvar. Misturá-lo aos campos que passam ensinaria que o arquivo só vale
         depois de salvar — e a pessoa sairia da tela achando que perdeu o upload.
       */}
-      <Card className="space-y-4 p-6">
-        <CampoDeLogo
-          escopo="instalacao"
-          // Literal, nunca memoizado: a identidade deste objeto é o que diz ao
-          // campo que houve render NOVO do servidor. Ver os Props de CampoDeLogo.
-          logoDaCamada={{ url: gravada.logo_path ? logoEmVigor : null }}
-          logoHerdado={logoDoAmbiente}
-          origemDoHerdado="do arquivo de instalação do servidor"
-          nomeEmVigor={nomeEmVigor}
-        />
+      <Card className="space-y-6 p-6">
+        <div className="space-y-4">
+          <p className="text-sm font-medium text-text">{t("Logo — tema claro")}</p>
+          <CampoDeLogo
+            escopo="instalacao"
+            variante="claro"
+            // Literal, nunca memoizado: a identidade deste objeto é o que diz ao
+            // campo que houve render NOVO do servidor. Ver os Props de CampoDeLogo.
+            logoDaCamada={{ url: gravada.logo_path ? logoEmVigor : null }}
+            logoHerdado={logoDoAmbiente}
+            origemDoHerdado="do arquivo de instalação do servidor"
+            nomeEmVigor={nomeEmVigor}
+          />
+        </div>
+
+        {/*
+          Opcional, e por isso HERDA do claro (não do arquivo de instalação):
+          sem arquivo escuro próprio, o produto mostra o MESMO logo claro nos
+          dois temas — é literalmente o que `logoEscuroEmVigor` já resolve
+          (`resolve.ts`: `logoUrlEscuro` cai em `logoUrl` quando ninguém definiu
+          um). Mostrar isso como herança do claro, e não como "sem logo", evita
+          a pessoa concluir que precisa subir os dois para o produto funcionar.
+        */}
+        <div className="space-y-4 border-t border-border pt-6">
+          <p className="text-sm font-medium text-text">{t("Logo — tema escuro (opcional)")}</p>
+          <p className="text-xs text-text-muted">
+            {t("Se você não enviar um, o logo claro acima é usado nos dois temas.")}
+          </p>
+          <CampoDeLogo
+            escopo="instalacao"
+            variante="escuro"
+            logoDaCamada={{ url: gravada.logo_dark_path ? logoEscuroEmVigor : null }}
+            logoHerdado={logoEmVigor}
+            origemDoHerdado="claro (nenhum logo escuro definido)"
+            nomeEmVigor={nomeEmVigor}
+          />
+        </div>
+
+        {/*
+          Também opcional, também HERDA — desta vez do logo inteiro: o
+          favicon (`app/icon.tsx`) redimensiona o logo claro pra 64px quando
+          não há um ícone próprio. Uma wordmark horizontal vira mancha nesse
+          tamanho; o ícone é pensado pra caber num quadrado pequeno.
+        */}
+        <div className="space-y-4 border-t border-border pt-6">
+          <p className="text-sm font-medium text-text">{t("Ícone do favicon (opcional)")}</p>
+          <p className="text-xs text-text-muted">
+            {t(
+              "Só o símbolo, sem o texto do nome — o logo inteiro fica ilegível reduzido ao tamanho de uma aba do navegador. Se você não enviar um, o favicon usa o logo claro acima.",
+            )}
+          </p>
+          <CampoDeLogo
+            escopo="instalacao"
+            variante="favicon"
+            logoDaCamada={{ url: gravada.favicon_mark_path ? faviconEmVigor : null }}
+            logoHerdado={logoEmVigor}
+            origemDoHerdado="claro (nenhum ícone de favicon definido)"
+            nomeEmVigor={nomeEmVigor}
+          />
+        </div>
       </Card>
 
       <EstadoDaMarca

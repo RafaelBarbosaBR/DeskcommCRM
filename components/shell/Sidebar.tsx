@@ -3,7 +3,8 @@ import Link from "next/link";
 import { useT } from "@/hooks/i18n/useT";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { ArrowRight, CaretDoubleLeft, CaretDoubleRight, CaretDown, Gear } from "@/lib/ui/icons";
+import { ArrowRight, CaretDoubleLeft, CaretDoubleRight, CaretDown, Gear, Tag } from "@/lib/ui/icons";
+import { useSavedLeadViews } from "@/hooks/leads/useSavedLeadViews";
 import { cn } from "@/lib/utils";
 import { toggleSidebar } from "@/app/actions/shell/toggleSidebar";
 import { useAuth } from "@/hooks/auth/AuthProvider";
@@ -48,6 +49,14 @@ export function SidebarContent({
   // 1280x768, ele caía fora da dobra mesmo em telas de 1080px.
   const grupos = todos.filter((g) => g.group.id !== GRUPO_NO_RODAPE);
   const rodape = todos.find((g) => g.group.id === GRUPO_NO_RODAPE)?.group.hub;
+
+  // Listas salvas (filtro de tag do funil, guardado como atalho) — seção
+  // DINÂMICA, por organização, à parte de `NAV_CATALOG` (que é estático,
+  // build-time). Some por completo quando ninguém salvou nenhuma: uma seção
+  // vazia custaria a mesma dobra que a doutrina acima mede com cuidado, sem
+  // dar nada em troca.
+  const savedViews = useSavedLeadViews();
+  const listasSalvas = savedViews.data ?? [];
 
   /**
    * Grupo fechado é preferência POR NAVEGADOR, não por conta: começa vazio (tudo
@@ -109,6 +118,16 @@ export function SidebarContent({
    * descer para ele — que é o contrário do que a precedência por campo promete.
    */
   const logo = activeOrg?.marca?.logoUrl || brand.logoUrl;
+  /**
+   * O logo do TEMA ESCURO — mesma regra do claro (org vence, `||` porque vazio
+   * é ausência). A organização não tem logo escuro próprio (ver
+   * `lib/branding/resolve.ts`): quem definiu logo por organização continua com
+   * ele nos dois temas, igual a antes desta feature.
+   */
+  const logoEscuro = activeOrg?.marca?.logoUrl || brand.logoUrlEscuro || brand.logoUrl;
+  /** Só desenha o par claro/escuro quando os dois DIVERGEM — um `<img>` extra
+   * escondido não serve a ninguém quando é a mesma imagem duas vezes. */
+  const temLogoEscuroProprio = Boolean(logo) && logoEscuro !== logo;
 
   return (
     <>
@@ -124,8 +143,35 @@ export function SidebarContent({
           // build — a imagem pré-buildada rejeitaria o domínio do self-hoster.
           // Altura fixa e largura livre porque a arte enviada tem proporção
           // desconhecida; forçar as duas distorceria o logo de quem configurou.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={logo} alt={nome} className="h-7 w-auto max-w-[10rem] object-contain" />
+          //
+          // Par claro/escuro por CSS (`dark:`), nunca por JS: o tema já troca de
+          // atributo no `<html>` ANTES do primeiro paint (`THEME_INIT_SCRIPT` em
+          // `app/layout.tsx`), e decidir aqui por `useTheme()` acrescentaria um
+          // re-render depois de hidratar — o logo trocaria de imagem na tela, o
+          // que o CSS não faz.
+          temLogoEscuroProprio ? (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={logo}
+                alt={nome}
+                className="h-10 w-auto max-w-[11rem] object-contain dark:hidden"
+              />
+              {/* `?? logo`: só um fallback para o tipo (`logoEscuro` nunca é
+                  `null` aqui na prática — `temLogoEscuroProprio` já garante
+                  `logo` truthy, e `logoUrlEscuro` do resolvedor cai no claro
+                  quando ninguém define um escuro), não uma ramificação nova. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={logoEscuro ?? logo}
+                alt={nome}
+                className="hidden h-10 w-auto max-w-[11rem] object-contain dark:block"
+              />
+            </>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={logo} alt={nome} className="h-10 w-auto max-w-[11rem] object-contain" />
+          )
         ) : (
           <span className={cn("font-semibold tracking-tight", collapsed && "sr-only")}>{nome}</span>
         )}
@@ -277,6 +323,64 @@ export function SidebarContent({
             </div>
           );
         })}
+        {listasSalvas.length > 0 && (
+          <div className="space-y-1">
+            {collapsed ? (
+              <div aria-hidden className="mx-2 border-t" />
+            ) : (
+              <h2 id="nav-grupo-listas-salvas">
+                <button
+                  type="button"
+                  onClick={() => toggleGrupo("listas-salvas")}
+                  aria-expanded={collapsed || !gruposFechados.has("listas-salvas")}
+                  className="flex w-full items-center justify-between rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+                >
+                  {t("Minhas listas")}
+                  <CaretDown
+                    size={12}
+                    weight="bold"
+                    className={cn(
+                      "shrink-0 text-text-subtle transition-transform",
+                      !(collapsed || !gruposFechados.has("listas-salvas")) && "-rotate-90",
+                    )}
+                    aria-hidden
+                  />
+                </button>
+              </h2>
+            )}
+            {(collapsed || !gruposFechados.has("listas-salvas")) && (
+              <ul
+                aria-labelledby={collapsed ? undefined : "nav-grupo-listas-salvas"}
+                aria-label={collapsed ? t("Minhas listas") : undefined}
+                className="space-y-1"
+              >
+                {listasSalvas.map((lista) => {
+                  const href = `/app/pipelines/${lista.pipeline_id}?tag=${encodeURIComponent(lista.tag)}`;
+                  const isActive = pathname === `/app/pipelines/${lista.pipeline_id}` && pathname.includes(lista.tag);
+                  return (
+                    <li key={lista.id}>
+                      <Link
+                        href={href}
+                        title={collapsed ? lista.label : undefined}
+                        onClick={onNavigate}
+                        className={cn(
+                          "flex items-center gap-3 rounded-md px-3 py-1 text-sm transition-colors",
+                          isActive
+                            ? "bg-accent text-accent-foreground"
+                            : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                          collapsed && "justify-center px-2",
+                        )}
+                      >
+                        <Tag size={18} weight={isActive ? "fill" : "regular"} aria-hidden />
+                        {!collapsed && <span className="truncate">{lista.label}</span>}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
       </nav>
       <div className="border-t p-2">
         {rodape && (

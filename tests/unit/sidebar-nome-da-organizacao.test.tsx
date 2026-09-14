@@ -32,6 +32,11 @@ vi.mock("@/components/connections/ConnectionHealthDot", () => ({
   ConnectionHealthDot: () => null,
 }));
 vi.mock("@/components/shell/VersionFooter", () => ({ VersionFooter: () => null }));
+// Busca via react-query, chamada incondicional da barra; não tem nada a ver
+// com o nome ou o logo da marca, que é o que este arquivo examina.
+vi.mock("@/hooks/leads/useSavedLeadViews", () => ({
+  useSavedLeadViews: () => ({ data: [] }),
+}));
 
 /**
  * A marca da INSTALAÇÃO, como o SERVIDOR a entrega.

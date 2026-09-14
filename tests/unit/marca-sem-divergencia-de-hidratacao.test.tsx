@@ -62,6 +62,11 @@ vi.mock("@/components/connections/ConnectionHealthDot", () => ({
   ConnectionHealthDot: () => null,
 }));
 vi.mock("@/components/shell/VersionFooter", () => ({ VersionFooter: () => null }));
+// Busca via react-query, chamada incondicional da barra; não fala de marca,
+// que é o que este arquivo examina (e não tem QueryClientProvider nenhum).
+vi.mock("@/hooks/leads/useSavedLeadViews", () => ({
+  useSavedLeadViews: () => ({ data: [] }),
+}));
 
 const usuario = {
   id: "00000000-0000-4000-8000-000000000001",

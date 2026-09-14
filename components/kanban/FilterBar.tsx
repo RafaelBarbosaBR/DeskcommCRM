@@ -1,8 +1,11 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { useT } from "@/hooks/i18n/useT";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { createSavedLeadView } from "@/app/actions/leads/savedViews";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,6 +30,7 @@ interface FilterBarProps {
   filters: LeadFilters;
   onChange: (next: LeadFilters) => void;
   leads: Lead[];
+  pipelineId: string;
 }
 
 const STATUS_OPTIONS: Array<{ value: NonNullable<LeadFilters["status"]>; label: string }> = [
@@ -36,12 +40,29 @@ const STATUS_OPTIONS: Array<{ value: NonNullable<LeadFilters["status"]>; label: 
   { value: "lost", label: "Perdidos" },
 ];
 
-export function FilterBar({ filters, onChange, leads }: FilterBarProps) {
+export function FilterBar({ filters, onChange, leads, pipelineId }: FilterBarProps) {
   const t = useT();
   const user = useUser();
+  const qc = useQueryClient();
   const { data: members } = useAssignableMembers(true);
   const { data: agents } = useAssignableAgents(true);
   const [searchInput, setSearchInput] = useState(filters.search ?? "");
+  const [salvandoLista, setSalvandoLista] = useState(false);
+
+  async function salvarListaAtual() {
+    if (!filters.tag) return;
+    const label = window.prompt(t("Nome desta lista salva (aparece no menu lateral):"), filters.tag);
+    if (!label?.trim()) return;
+    setSalvandoLista(true);
+    const resultado = await createSavedLeadView({ pipelineId, label: label.trim(), tag: filters.tag });
+    setSalvandoLista(false);
+    if (resultado.ok) {
+      toast.success(t("Lista salva."));
+      qc.invalidateQueries({ queryKey: ["saved-lead-views"] });
+    } else {
+      toast.error(t("Não consegui salvar a lista."));
+    }
+  }
 
   // Debounce search 250ms
   useEffect(() => {
@@ -56,7 +77,7 @@ export function FilterBar({ filters, onChange, leads }: FilterBarProps) {
 
   const tagOptions = useMemo(() => {
     const set = new Set<string>();
-    for (const l of leads) for (const t of l.tags) set.add(t);
+    for (const l of leads) for (const t of l.contact_tags ?? []) set.add(t);
     return Array.from(set).sort();
   }, [leads]);
 
@@ -204,6 +225,12 @@ export function FilterBar({ filters, onChange, leads }: FilterBarProps) {
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {filters.tag && (
+        <Button variant="ghost" size="sm" onClick={salvarListaAtual} disabled={salvandoLista}>
+          {salvandoLista ? t("Salvando…") : t("Salvar filtro atual")}
+        </Button>
+      )}
 
       <label
         className={cn(

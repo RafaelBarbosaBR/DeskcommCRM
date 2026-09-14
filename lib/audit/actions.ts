@@ -328,6 +328,16 @@ export const AUDIT_ACTIONS = [
   // a tela de Meta Ads para de funcionar para todo mundo da organização, e a
   // trilha precisa dizer quem fez isso e quando.
   "ad_insights_connection.deleted",
+  // Conexão do motor de rastreamento first-party (migration 0235) — uma ação
+  // por provider, mesma razão de `ad_platform_connection.updated` vs.
+  // `ad_insights_connection.updated` acima: "quem conectou o Pixel/CAPI da
+  // Meta" e "quem conectou o Measurement Protocol do GA4" são perguntas
+  // diferentes, e fundir exigiria ler metadata pra saber qual aconteceu.
+  // `metadata` carrega identificadores (pixel_id/measurement_id/customer_id)
+  // e um booleano de segredo trocado — o segredo em si, nunca.
+  "tracking_integration.meta.updated",
+  "tracking_integration.ga4.updated",
+  "tracking_integration.google_ads.updated",
   // A marca da ORGANIZAÇÃO (nome + cor) trocada em `organizations.settings.branding`
   // — mutação de TENANT, e por isso COM `organization_id` e com `resource_id` =
   // o uuid da org. É outra ação, e não `org.updated`, porque a pergunta que a

@@ -172,6 +172,19 @@ export function TenantForm({ initial }: Props) {
               onChange={(e) => set("privacy_policy_url", e.target.value || null)}
             />
           </div>
+          <div className="space-y-2">
+            <Label htmlFor="whatsapp_default_country_code">{t("Código de país padrão (WhatsApp)")}</Label>
+            <Input
+              id="whatsapp_default_country_code"
+              value={form.whatsapp_default_country_code}
+              onChange={(e) => set("whatsapp_default_country_code", e.target.value)}
+              maxLength={3}
+              placeholder="55"
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("Usado no botão de WhatsApp do dossiê do lead quando o telefone não tem código de país (ex.: 55 para o Brasil).")}
+            </p>
+          </div>
         </div>
 
         <div className="space-y-2">

@@ -80,7 +80,7 @@ export function applyFilters(leads: Lead[], f: LeadFilters): Lead[] {
       }
     }
     if (f.status && f.status !== "all" && l.status !== f.status) return false;
-    if (f.tag && !l.tags.includes(f.tag)) return false;
+    if (f.tag && !(l.contact_tags ?? []).includes(f.tag)) return false;
     if (
       search &&
       !`${l.title} ${l.description ?? ""}`.toLowerCase().includes(search)

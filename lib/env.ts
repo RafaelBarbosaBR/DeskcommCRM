@@ -275,6 +275,8 @@ const schema = z.object({
    */
   JOB_QUEUE_RETENTION_DAYS: z.string().optional().default(""),
   AUDIT_LOG_RETENTION_DAYS: z.string().optional().default(""),
+  /** Log técnico da auditoria de rastreamento (platform_event_logs + outbound_events terminal). Ausente = 7 dias. */
+  RASTREAMENTO_LOG_RETENTION_DAYS: z.string().optional().default(""),
 
   // LGPD export (S-08.04)
   LGPD_SIGNING_KEY: z.string().optional().default(""),

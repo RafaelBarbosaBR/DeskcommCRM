@@ -202,6 +202,62 @@ const PROVA_PROPRIA: readonly Excecao[] = [
       "`describe.each` da linha acima. Guarda o token `ads_read`, que expõe " +
       "orçamento, criativo e performance de quem anuncia.",
   },
+  // ─── As nove do motor de rastreamento first-party (migrations 0233/0234/
+  // 0235/0242) ───
+  //
+  // MESMA prova de tipo que as três de anúncio acima: privilégio NENHUM pra
+  // anon/authenticated, `permission denied` medido sob `set role`, RLS
+  // ligada, zero policies, `organization_id` NOT NULL com FK em cascata.
+  // NÃO é DEBITO_CONHECIDO: há prova comportamental, escrita no mesmo PR
+  // que criou `tests/invariants/rastreamento-e-server-side.test.ts`.
+  {
+    tabela: "visitors",
+    razao:
+      "tests/invariants/rastreamento-e-server-side.test.ts — describe.each das " +
+      "9 tabelas do motor de rastreamento. Guarda o rastro de navegação " +
+      "(fbclid/gclid/IP/user agent) de quem visitou o site rastreado.",
+  },
+  {
+    tabela: "sessions",
+    razao: "tests/invariants/rastreamento-e-server-side.test.ts — mesmo describe.each.",
+  },
+  {
+    tabela: "touchpoints",
+    razao: "tests/invariants/rastreamento-e-server-side.test.ts — mesmo describe.each.",
+  },
+  {
+    tabela: "tracking_sites",
+    razao: "tests/invariants/rastreamento-e-server-side.test.ts — mesmo describe.each.",
+  },
+  {
+    tabela: "integration_settings",
+    razao:
+      "tests/invariants/rastreamento-e-server-side.test.ts — mesmo describe.each, " +
+      "mais o caso próprio que confere `secrets_encrypted` como bytea. Guarda o " +
+      "token de Meta/GA4/Google Ads cifrado.",
+  },
+  {
+    tabela: "internal_events",
+    razao:
+      "tests/invariants/rastreamento-e-server-side.test.ts — mesmo describe.each. " +
+      "É o registro de conversão comercial — histórico permanente, nunca expurgado.",
+  },
+  {
+    tabela: "outbound_events",
+    razao:
+      "tests/invariants/rastreamento-e-server-side.test.ts — mesmo describe.each. " +
+      "A fila de despacho por evento×provider.",
+  },
+  {
+    tabela: "meta_event_logs",
+    razao: "tests/invariants/rastreamento-e-server-side.test.ts — mesmo describe.each.",
+  },
+  {
+    tabela: "platform_event_logs",
+    razao:
+      "tests/invariants/rastreamento-e-server-side.test.ts — mesmo describe.each. " +
+      "Histórico bruto de tentativa de envio por plataforma, sanitizado.",
+  },
   {
     tabela: "ad_conversion_dispatches",
     razao:

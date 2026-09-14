@@ -86,6 +86,17 @@ const escopoSchema = z.enum(["instalacao", "organizacao"]);
 type Escopo = z.infer<typeof escopoSchema>;
 
 /**
+ * Qual dos três slots desta camada. `claro` é o de sempre (`logo_path`);
+ * `escuro` (`logo_dark_path`, migration 0241) e `favicon` (`favicon_mark_path`,
+ * migration 0244) só existem na camada da INSTALAÇÃO — a organização não tem
+ * essas colunas (ver `lib/branding/organizacao.ts`), então `abrirContexto`
+ * recusa a combinação. Default `claro` para o corpo continuar aceito sem o
+ * campo novo.
+ */
+const varianteSchema = z.enum(["claro", "escuro", "favicon"]).default("claro");
+type Variante = z.infer<typeof varianteSchema>;
+
+/**
  * 10 trocas de logo por pessoa a cada 5 min.
  *
  * Por USUÁRIO e não por IP: o kit self-host expõe o app sem proxy
@@ -98,7 +109,12 @@ const TETO_POR_USUARIO = 10;
 const JANELA_SEGUNDOS = 300;
 
 type Contexto =
-  | { readonly escopo: "instalacao"; readonly userId: string; readonly prefixo: string }
+  | {
+      readonly escopo: "instalacao";
+      readonly userId: string;
+      readonly prefixo: string;
+      readonly variante: Variante;
+    }
   | {
       readonly escopo: "organizacao";
       readonly userId: string;
@@ -122,10 +138,30 @@ type Recusa = { readonly codigo: string; readonly mensagem: string; readonly sta
  * dois é só para quem AINDA NÃO cadastrou fator — e essa pessoa é barrada antes,
  * pelo gate de cadastro do layout, que é onde ela pode resolver.
  */
-async function abrirContexto(escopo: Escopo): Promise<{ ctx: Contexto } | { recusa: Recusa }> {
+async function abrirContexto(
+  escopo: Escopo,
+  variante: Variante,
+): Promise<{ ctx: Contexto } | { recusa: Recusa }> {
   const user = await loadAuthUser();
   if (!user) {
     return { recusa: { codigo: "unauthenticated", mensagem: "Faça login.", status: 401 } };
+  }
+
+  // A organização não tem coluna de logo escuro nem de ícone de favicon (só a
+  // instalação ganhou, nas 0241/0244) — recusar aqui, antes do gate de papel,
+  // é o que impede um `variante` adulterado de gravar silenciosamente no
+  // slot claro de uma organização.
+  if (escopo === "organizacao" && variante !== "claro") {
+    return {
+      recusa: {
+        codigo: "validation_failed",
+        mensagem:
+          variante === "escuro"
+            ? "Logo para o tema escuro só é suportado na marca da instalação."
+            : "Ícone de favicon só é suportado na marca da instalação.",
+        status: 422,
+      },
+    };
   }
 
   if (escopo === "instalacao") {
@@ -152,7 +188,7 @@ async function abrirContexto(escopo: Escopo): Promise<{ ctx: Contexto } | { recu
         },
       };
     }
-    return { ctx: { escopo, userId: user.id, prefixo: PREFIXO_DA_INSTALACAO } };
+    return { ctx: { escopo, userId: user.id, prefixo: PREFIXO_DA_INSTALACAO, variante } };
   }
 
   const org = await resolveActiveOrg(user);
@@ -186,16 +222,24 @@ async function abrirContexto(escopo: Escopo): Promise<{ ctx: Contexto } | { recu
   };
 }
 
+/** A coluna do slot pedido — nunca a mesma para claro e escuro. */
+function colunaDoLogo(variante: Variante): "logo_path" | "logo_dark_path" | "favicon_mark_path" {
+  if (variante === "escuro") return "logo_dark_path";
+  if (variante === "favicon") return "favicon_mark_path";
+  return "logo_path";
+}
+
 /** O caminho HOJE gravado, lido do BANCO. Nunca do cliente. */
 async function caminhoGravado(ctx: Contexto): Promise<string | null> {
   const admin = createAdminClient();
   if (ctx.escopo === "instalacao") {
+    const coluna = colunaDoLogo(ctx.variante);
     const { data } = await admin
       .from("platform_branding")
-      .select("logo_path")
+      .select(coluna)
       .eq("id", 1)
       .maybeSingle();
-    return (data as { logo_path?: string | null } | null)?.logo_path ?? null;
+    return (data as Record<string, string | null> | null)?.[coluna] ?? null;
   }
   const { data } = await admin
     .from("organizations")
@@ -221,9 +265,10 @@ async function caminhoGravado(ctx: Contexto): Promise<string | null> {
 async function gravarCaminho(ctx: Contexto, caminho: string | null): Promise<Recusa | null> {
   const admin = createAdminClient();
   if (ctx.escopo === "instalacao") {
+    const coluna = colunaDoLogo(ctx.variante);
     const { error } = await admin
       .from("platform_branding")
-      .upsert({ id: 1, logo_path: caminho, seeded_from_env: false }, { onConflict: "id" });
+      .upsert({ id: 1, [coluna]: caminho, seeded_from_env: false }, { onConflict: "id" });
     if (error) {
       logger.error("[marca/logo] gravação da instalação falhou", {
         codigo: error.code,
@@ -322,7 +367,8 @@ async function registrarAuditoria(
   const userAgent = req.headers.get("user-agent") ?? null;
   // FORMA, nunca IDENTIDADE — mesma disciplina de `resolve.ts`. O caminho do
   // arquivo não entra: a trilha é lida por quem opera a plataforma inteira.
-  const metadata = { fields_changed: ["logo_path"], logo_definido: acao === "definido" };
+  const coluna = ctx.escopo === "instalacao" ? colunaDoLogo(ctx.variante) : "logo_path";
+  const metadata = { fields_changed: [coluna], logo_definido: acao === "definido" };
 
   if (ctx.escopo === "instalacao") {
     await audit({
@@ -366,8 +412,12 @@ export async function POST(req: NextRequest): Promise<Response> {
   if (!escopoLido.success) {
     return fail("validation_failed", "Campo 'escopo' inválido.", 422, { requestId });
   }
+  const varianteLida = varianteSchema.safeParse(form?.get("variante") ?? undefined);
+  if (!varianteLida.success) {
+    return fail("validation_failed", "Campo 'variante' inválido.", 422, { requestId });
+  }
 
-  const aberto = await abrirContexto(escopoLido.data);
+  const aberto = await abrirContexto(escopoLido.data, varianteLida.data);
   if ("recusa" in aberto) {
     return fail(aberto.recusa.codigo, aberto.recusa.mensagem, aberto.recusa.status, { requestId });
   }
@@ -462,12 +512,17 @@ export async function DELETE(req: NextRequest): Promise<Response> {
 
   const requestId = randomUUID();
 
-  const escopoLido = escopoSchema.safeParse(new URL(req.url).searchParams.get("escopo"));
+  const params = new URL(req.url).searchParams;
+  const escopoLido = escopoSchema.safeParse(params.get("escopo"));
   if (!escopoLido.success) {
     return fail("validation_failed", "Parâmetro 'escopo' inválido.", 422, { requestId });
   }
+  const varianteLida = varianteSchema.safeParse(params.get("variante") ?? undefined);
+  if (!varianteLida.success) {
+    return fail("validation_failed", "Parâmetro 'variante' inválido.", 422, { requestId });
+  }
 
-  const aberto = await abrirContexto(escopoLido.data);
+  const aberto = await abrirContexto(escopoLido.data, varianteLida.data);
   if ("recusa" in aberto) {
     return fail(aberto.recusa.codigo, aberto.recusa.mensagem, aberto.recusa.status, { requestId });
   }

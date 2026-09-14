@@ -42,10 +42,21 @@
  * REPORTAR. Os dois conjuntos coincidem hoje e não têm por que coincidir sempre
  * — existe plataforma que atribui e não recebe conversão de volta.
  */
-export type PlataformaDeAnuncio = "meta_ads" | "google_ads";
+export type PlataformaDeAnuncio = "meta_ads" | "google_ads" | "ga4";
 
-/** Só `Purchase` hoje. `Lead` é a Fase 2 e entra quando `lead.created` for consumido. */
-export type NomeDoEvento = "Purchase";
+/**
+ * Os nomes de evento de PLATAFORMA que um transporte pode receber — nunca os
+ * 5 eventos internos (`PAGE_VIEW`/`CONTACT`/.../`PURCHASE`, em
+ * `lib/rastreamento/motor/types.ts`) diretamente. `despacho.handler.ts`
+ * (o motor de rastreamento) é quem traduz um pro outro; um transporte nunca
+ * vê o nome interno.
+ *
+ * `Purchase` é o único que o handler legado (`lib/conversoes/`, CTWA→Meta em
+ * `lead.won`) usa — os outros 4 entraram junto com o motor de rastreamento
+ * first-party e nenhum transporte é obrigado a implementar todos (ver
+ * `registry.ts`: fan-out varia por provider).
+ */
+export type NomeDoEvento = "PageView" | "Contact" | "Lead" | "Qualified" | "Purchase";
 
 /**
  * Uma conversão pronta para sair — no formato da CASA, não no da plataforma.
@@ -73,11 +84,27 @@ export interface ConversaoOffline {
    */
   ocorridoEm: Date;
   /** O clique que originou a conversa — `ad_source_id` do contato (0164). */
-  cliqueDeOrigem: string;
+  cliqueDeOrigem?: string | null;
   /** E.164 sem `+`, ainda EM CLARO: o hash é responsabilidade do transporte. */
-  telefone: string | null;
-  valorCentavos: number;
-  moeda: string;
+  telefone?: string | null;
+  valorCentavos?: number | null;
+  moeda?: string | null;
+  /**
+   * Campos do motor de rastreamento first-party — o handler legado
+   * (Purchase-on-won via CTWA) nunca os preenche, e nenhum transporte pode
+   * assumir que vêm preenchidos: item 1 do pedido original é "nunca inventa
+   * esses dados quando não existem".
+   */
+  /** = `visitor_id` do first-party cookie. Identidade do GA4 (`client_id`). */
+  clientId?: string | null;
+  email?: string | null;
+  gclid?: string | null;
+  gbraid?: string | null;
+  wbraid?: string | null;
+  /** `_fbc` já calculado pelo tracker.js seguindo a spec oficial da Meta. */
+  fbc?: string | null;
+  /** `action_source` do CAPI — varia por origem do lead (item 4 do pedido). */
+  actionSource?: string;
 }
 
 /**
@@ -102,7 +129,7 @@ export type ResultadoDeEnvio =
   | { tipo: "transitorio"; detalhe: string; tentarEmMs?: number }
   | { tipo: "permanente"; detalhe: string };
 
-/** As credenciais que o transporte precisa, já decifradas. */
+/** As credenciais que o transporte de Meta precisa, já decifradas. */
 export interface CredencialDeConversao {
   datasetId: string;
   accessToken: string;
@@ -113,15 +140,23 @@ export interface CredencialDeConversao {
 /**
  * O contrato que todo transporte de conversão cumpre.
  *
- * `google_ads` não implementa nenhum hoje — e a ausência é DECLARADA no
- * registry, não deduzida do silêncio (invariante 4).
+ * Genérico em `C` porque a credencial é heterogênea de PROPÓSITO entre
+ * plataformas — Meta usa dataset_id+token, GA4 usa measurement_id+api_secret,
+ * Google Ads usa developer_token+client_id/secret+refresh_token+customer_id.
+ * Cada arquivo de transporte (`meta/`, `ga4/`, `google-ads/`) fixa seu
+ * próprio `C` concreto e fica inteiramente tipado por dentro; só o registry
+ * (`registry.ts`), que precisa guardar as três num mapa só, lida com elas
+ * como `TransporteDeConversao<unknown>` — o preço deliberado de um registry
+ * de estratégias heterogêneas, pago num único ponto em vez de forçar um
+ * formato de credencial artificialmente comum.
+ *
+ * `ga4`/`google_ads` não implementavam nada antes do motor de rastreamento —
+ * a ausência era DECLARADA no registry, não deduzida do silêncio
+ * (invariante 4).
  */
-export interface TransporteDeConversao {
+export interface TransporteDeConversao<C = CredencialDeConversao> {
   plataforma: PlataformaDeAnuncio;
-  enviar(
-    credencial: CredencialDeConversao,
-    conversao: ConversaoOffline,
-  ): Promise<ResultadoDeEnvio>;
+  enviar(credencial: C, conversao: ConversaoOffline): Promise<ResultadoDeEnvio>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

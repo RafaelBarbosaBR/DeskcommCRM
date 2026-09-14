@@ -232,6 +232,22 @@ beforeAll(() => {
                     (select id from public.crm_leads where organization_id = v_org limit 1));
         end if;
 
+        -- crm_lead_appointments (migration 0239): compromisso leve preso a um
+        -- lead. Entra COM o vínculo, mesmo raciocínio de crm_tasks acima — se
+        -- a policy vazasse, o vizinho leria o compromisso E o negócio dele.
+        if not exists (select 1 from public.crm_lead_appointments where organization_id = v_org) then
+          insert into public.crm_lead_appointments (organization_id, lead_id, type, title, scheduled_at)
+            values (v_org, (select id from public.crm_leads where organization_id = v_org limit 1),
+                    'outro', 'RLS invariant compromisso', now() + interval '1 day');
+        end if;
+
+        -- crm_saved_lead_views (migration 0238): atalho de filtro salvo, preso
+        -- ao pipeline da organização.
+        if not exists (select 1 from public.crm_saved_lead_views where organization_id = v_org) then
+          insert into public.crm_saved_lead_views (organization_id, pipeline_id, label, tag)
+            values (v_org, v_pipe, 'RLS invariant view', 'rls-invariant');
+        end if;
+
         if not exists (select 1 from public.push_subscriptions where organization_id = v_org) then
           insert into public.push_subscriptions
             (organization_id, user_id, endpoint, p256dh, auth)
@@ -294,6 +310,13 @@ export const TABLES = [
   "crm_tasks",
   // 0227 — texto de sugestões: org + visibilidade da conversa por authenticated.
   "ai_reply_drafts",
+  // migrations 0238/0239 — compromisso leve do lead e filtro salvo do
+  // funil. As duas usam a policy `tenant_isolation_*_all` genérica (sem
+  // `fn_role_at_least` — dívida de papel registrada em
+  // `tests/invariants/rbac-config-ia-canais.test.ts`, DIVIDA_RBAC_CONHECIDA);
+  // aqui só se mede o isolamento por TENANT, que é o que esta lista prova.
+  "crm_lead_appointments",
+  "crm_saved_lead_views",
   // ⚠️ `webhook_lead_captures` (migration 0174) NÃO entra nesta lista, e a
   // ausência é deliberada: a policy dela exige `manager`, e o usuário semeado
   // aqui é `agent` — o controle positivo falharia por ACERTO, e a "correção"

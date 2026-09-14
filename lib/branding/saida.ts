@@ -65,6 +65,20 @@ export type MarcaDeSaida = {
    * (`app/(public)/layout.tsx`).
    */
   readonly logoUrl: string | null;
+  /**
+   * O logo do TEMA ESCURO. `null` só quando `logoUrl` também é `null` — sem
+   * camada nenhuma declarando um logo escuro próprio, cai no `logoUrl` claro
+   * (ver `resolve.ts`). Os templates de e-mail IGNORAM este campo de propósito
+   * (ver "TEMA CLARO, SEMPRE" no cabeçalho); o único consumidor hoje é a
+   * fachada de acesso (`app/(public)/layout.tsx`), que TEM DOM e tema.
+   */
+  readonly logoUrlEscuro: string | null;
+  /**
+   * O ÍCONE (mark, sem wordmark) pro favicon. `null` = ninguém subiu um —
+   * `app/icon.tsx` degrada pro `logoUrl` inteiro, e na ausência dele pra
+   * cor+inicial gerada. Único consumidor: `app/icon.tsx`.
+   */
+  readonly faviconMarkUrl: string | null;
   /** `#hex` sempre — o formato que cliente de e-mail e @react-pdf entendem. */
   readonly accent: string;
   /** Preto ou branco, já com o piso de contraste aplicado. */
@@ -117,6 +131,8 @@ function padraoDoProduto(): MarcaDeSaida {
   return {
     nome: DEFAULT_APP_NAME,
     logoUrl: null,
+    logoUrlEscuro: null,
+    faviconMarkUrl: null,
     accent: ACCENT_DO_PRODUTO,
     accentFg: melhorFrenteSobre(ACCENT_DO_PRODUTO),
     origens: { nome: "padrao", cor: "padrao" },
@@ -197,6 +213,8 @@ export async function marcaDaSaida(organizationId: string | null): Promise<Marca
     return {
       nome: marca.name,
       logoUrl: marca.logoUrl,
+      logoUrlEscuro: marca.logoUrlEscuro,
+      faviconMarkUrl: marca.faviconMarkUrl,
       accent,
       // Nunca `#ffffff` fixo: `melhorFrenteSobre` (`contraste.ts:79`) já
       // decide preto ou branco pelo contraste real. Uma marca amarela colada

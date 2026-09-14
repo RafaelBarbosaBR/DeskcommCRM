@@ -8,6 +8,11 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { useLeadTimeline } from "@/hooks/leads/useLeadTimeline";
 import type { Lead } from "@/lib/types/leads";
 import { ConversaNoDossie } from "./ConversaNoDossie";
+import { ContatoExtras } from "./ContatoExtras";
+import { AtribuicaoDeRastreamento } from "./AtribuicaoDeRastreamento";
+import { NotaComposer } from "./NotaComposer";
+import { AgendamentosDoLead } from "./AgendamentosDoLead";
+import { SecaoRecolhivel } from "./SecaoRecolhivel";
 import { LeadFieldsForm } from "./LeadFieldsForm";
 import { ScoreSlot } from "./ScoreSlot";
 import { LeadTimeline } from "./LeadTimeline";
@@ -39,12 +44,15 @@ function formatBRL(cents: number | null, currency: string | null): string {
 }
 
 /**
- * O dossiê do negócio: cabeçalho vivo → timeline → campos.
+ * O dossiê do negócio: cabeçalho vivo → Dados do negócio (sempre visível) →
+ * o resto, em seções recolhíveis (Contato, Agendamentos, Atribuição de
+ * rastreamento, Linha do tempo).
  *
- * A ORDEM É a mudança em relação ao diálogo de edição: quem abre um lead quer
- * primeiro saber O QUE ACONTECEU, e só depois mexer. O formulário íntegro fica
- * por último, e o cabeçalho tem um atalho para ele — ordem preservada, custo de
- * rolagem resolvido.
+ * "Dados do negócio" é a única seção sempre aberta: é o que se edita com mais
+ * frequência, e é para lá que o atalho "Editar campos" do cabeçalho rola. As
+ * demais começam recolhidas para não competir por atenção — inclusive a
+ * timeline, que fica por último de propósito: quem abre o dossiê quer editar
+ * o negócio antes de revisitar o histórico dele.
  *
  * SALVAR NÃO FECHA. Quem edita precisa ver a atividade que acabou de gerar
  * entrar na timeline; fechar esconderia o registro justamente de quem o
@@ -132,26 +140,45 @@ export function LeadDossier({
 
         <ConversaNoDossie conversa={lead.conversa} />
 
-        {/* ② timeline */}
-        <section className="flex-1 py-3">
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-muted">
-            {t("Linha do tempo")}
-          </h3>
-          <LeadTimeline
-            itens={timeline.itens}
-            chegouAoVivo={timeline.chegouAoVivo}
-            isLoading={timeline.isLoading}
-            isError={timeline.isError}
-          />
-        </section>
-
-        {/* ③ campos, por último */}
+        {/* "Dados do negócio" é a ÚNICA seção sempre visível — o resto é
+            recolhível, pra não competir por atenção com o que se edita mais. */}
         <div ref={campos} className="border-t border-border pt-3">
           <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-muted">
             {t("Dados do negócio")}
           </h3>
           <LeadFieldsForm lead={lead} pipelineId={pipelineId} fieldDefs={fieldDefs} />
         </div>
+
+        {/* Tags/redes sociais/telefone pertencem ao CONTATO, não ao lead —
+            item 1 do pedido. */}
+        <SecaoRecolhivel titulo={t("Contato (dados, tags, redes sociais, telefone)")}>
+          <ContatoExtras
+            contactId={lead.contact_id}
+            leadId={lead.id}
+            leadTitle={lead.title}
+            pipelineId={pipelineId}
+          />
+        </SecaoRecolhivel>
+
+        <SecaoRecolhivel titulo={t("Agendamentos")}>
+          <AgendamentosDoLead leadId={lead.id} />
+        </SecaoRecolhivel>
+
+        <SecaoRecolhivel titulo={t("Atribuição de rastreamento")}>
+          <AtribuicaoDeRastreamento leadId={lead.id} />
+        </SecaoRecolhivel>
+
+        {/* Linha do tempo — recolhida e por último: quem abre o dossiê quer
+            primeiro os dados do negócio, não o histórico. */}
+        <SecaoRecolhivel titulo={t("Linha do tempo")}>
+          <NotaComposer leadId={lead.id} />
+          <LeadTimeline
+            itens={timeline.itens}
+            chegouAoVivo={timeline.chegouAoVivo}
+            isLoading={timeline.isLoading}
+            isError={timeline.isError}
+          />
+        </SecaoRecolhivel>
       </SheetContent>
     </Sheet>
   );

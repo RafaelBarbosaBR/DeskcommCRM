@@ -52,6 +52,15 @@ const ALLOWED = [
   // ela pede ao registro pelo slug da plataforma. Ver o cabeçalho de
   // `lib/plataformas-de-anuncio/types.ts`.
   /^lib\/plataformas-de-anuncio\//,
+  // TERCEIRA FRONTEIRA — motor de rastreamento first-party (tracker.js,
+  // visitante/sessão/touchpoint, o coletor público). Nem "entrega mensagem"
+  // (`lib/channels/`) nem "reporta uma venda pra plataforma de anúncio"
+  // (`lib/plataformas-de-anuncio/`, que só fala com quem JÁ tem atribuição
+  // resolvida) — este eixo é quem CAPTURA a atribuição antes de existir
+  // contato/lead nenhum. Mesma catraca: só esta pasta pode nomear cookie,
+  // formato de payload ou detalhe de provider; o resto do app pede pelo
+  // vocabulário agnóstico de 5 eventos (`lib/rastreamento/motor/types.ts`).
+  /^lib\/rastreamento\//,
   // O transporte que o adapter embrulha; some quando a Fase 3 o absorver.
   /^lib\/waha\//,
   // Saída de `supabase gen types`: os nomes são COLUNAS. Editar à mão é o defeito.

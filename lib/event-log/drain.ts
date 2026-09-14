@@ -37,7 +37,19 @@ function backoffAt(attempts: number): string {
 
 export async function drainEventLog(
   admin: SupabaseClient,
-  opts: { limit?: number } = {},
+  opts: {
+    limit?: number;
+    /**
+     * Restringe o SELECT a UMA linha específica — o despacho imediato
+     * (`lib/rastreamento/motor/registrar-evento.ts`) usa isto pra processar o
+     * `event_log` que acabou de inserir NA MESMA EXECUÇÃO, em vez de esperar o
+     * próximo tick do cron. Reaproveita o laço inteiro (claim otimista,
+     * backoff, `MAX_ATTEMPTS`, reaper de `processing` preso) em vez de
+     * duplicá-lo: aditivo, então quem não passa isto (o cron de sempre) roda
+     * exatamente como antes.
+     */
+    somenteId?: string;
+  } = {},
 ): Promise<DrainSummary> {
   const limit = opts.limit ?? 50;
   const summary: DrainSummary = {
@@ -75,20 +87,27 @@ export async function drainEventLog(
   // `updated_at` é confiável como "quando alguém tocou esta linha": o trigger
   // `trg_event_log_touch` (BEFORE UPDATE) o reescreve em toda atualização, então
   // a linha carrega o instante do CLAIM enquanto o handler não volta.
-  const limiteDePresos = new Date(Date.now() - PROCESSING_STALE_MS).toISOString();
-  const { data: reclamados } = await admin
-    .from("event_log")
-    .update({ status: "pending", updated_at: nowIso })
-    .eq("status", "processing")
-    .lt("updated_at", limiteDePresos)
-    .select("id");
-  if (reclamados?.length) {
-    logger.warn("[event-log.drain] eventos presos em processing devolvidos à fila", {
-      quantidade: reclamados.length,
-    });
+  // Pulado no despacho imediato (`somenteId`): é manutenção de FROTA (varre
+  // TODO `processing` preso), e quem chama com `somenteId` já roda dentro de
+  // uma requisição por evento — a cada pageview rastreado, potencialmente. O
+  // cron de sempre (sem `somenteId`, 1×/min) continua sendo o único dono
+  // desta faxina, do mesmo jeito que sempre foi.
+  if (!opts.somenteId) {
+    const limiteDePresos = new Date(Date.now() - PROCESSING_STALE_MS).toISOString();
+    const { data: reclamados } = await admin
+      .from("event_log")
+      .update({ status: "pending", updated_at: nowIso })
+      .eq("status", "processing")
+      .lt("updated_at", limiteDePresos)
+      .select("id");
+    if (reclamados?.length) {
+      logger.warn("[event-log.drain] eventos presos em processing devolvidos à fila", {
+        quantidade: reclamados.length,
+      });
+    }
   }
 
-  const { data: rows, error } = await admin
+  let consulta = admin
     .from("event_log")
     // `created_at` viaja porque um consumidor não consegue distinguir "evento de
     // agora" de "evento de três dias parado em `pending`" sem ele — e o drain
@@ -99,7 +118,9 @@ export async function drainEventLog(
     )
     .eq("status", "pending")
     .or(`next_attempt_at.is.null,next_attempt_at.lte.${nowIso}`)
-    .in("event_type", handledTypes)
+    .in("event_type", handledTypes);
+  if (opts.somenteId) consulta = consulta.eq("id", opts.somenteId);
+  const { data: rows, error } = await consulta
     .order("created_at", { ascending: true })
     .limit(limit);
 

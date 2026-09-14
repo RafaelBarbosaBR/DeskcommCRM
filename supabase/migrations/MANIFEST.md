@@ -287,3 +287,27 @@ To re-apply on a fresh Supabase project, replay the migrations in version order 
 | `20260907060000` | `0230_reserva_pre_go_live` | A reserva transacional de novos canais WAHA preserva o pré-go-live da plataforma; retry mantém política e identidade existentes. Forward-fix da integração, sem alterar 0228 aplicada. |
 
 | `20260909190000` | `0232_nome_de_sessao_waha_cabe_no_teto_do_waha` | `fn_reserve_channel_connection` gerava `waha_session_name` de 69 chars (`org_<32>_<32>`); o WAHA latest-2026.7.2 valida `name` com @MaxLength(54) e todo `POST /api/sessions` de canal novo tomava 400 (`waha_create_400`). Prefixo da org encurta para 8 (`org_<8>_<32>` = 45), alinhado com a busca de canal de onboarding no mesmo corpo. Repara canais WAHA nunca pareados com nome fora do teto. Forward-fix da 0230. |
+
+| `20260911100000` | `0233_rastreamento_captura` | Tracker.js first-party: `tracking_sites`/`tracking_domains` (site_key público, allowlist de Origin), `visitors`/`sessions`/`touchpoints` (fbclid/fbc/gclid/gbraid/wbraid nunca inventados) e `contacts.visitor_id` — o elo entre rastreamento e CRM. |
+
+| `20260911100100` | `0234_rastreamento_motor_de_eventos` | Vocabulário agnóstico de 5 eventos internos (PAGE_VIEW/CONTACT/LEAD/QUALIFIED/PURCHASE) em `internal_events`, idempotente por (org, lead, tipo) pros 3 que marcam negócio; `outbound_events` é o ledger cross-provider criado/enviado/aceito-rejeitado; `meta_event_logs` é o dedup Pixel×CAPI pelo mesmo event_id. |
+
+| `20260911100200` | `0235_rastreamento_integracoes` | `integration_settings` por provider (Meta/GA4/Google Ads), segredo heterogêneo em blob JSON cifrado via `fn_encrypt_oauth` (mesma chave mestra existente); `crm_stages.is_qualified`, gatilho do evento QUALIFIED no mesmo padrão de `is_won`/`is_lost`. |
+
+| `20260912100000` | `0236_redes_sociais_e_telefone_digitado` | `contacts` ganha 4 links (site/instagram/facebook/maps) com coluna `_normalized` só pra dedupe (nunca vira link clicável) e `phone_raw` (telefone como foi digitado, separado da `phone_number` canônica que já existia). |
+
+| `20260912100100` | `0237_utm_editavel_e_pais_padrao` | `crm_leads` ganha o bloco UTM editável (override manual, nunca sobrescrito pelo tracker automático que lê `touchpoints`); `organizations.whatsapp_default_country_code` — heurística de código de país configurável por conta, nunca fixa no código. |
+
+| `20260912100200` | `0238_listas_salvas_de_lead` | `crm_saved_lead_views` — um filtro de tag salvo por organização, renderizado como atalho dinâmico no menu lateral (fora do `NAV_CATALOG`, que é estático). |
+
+| `20260912100300` | `0239_compromissos_do_lead` | `crm_lead_appointments` — compromissos leves por lead (tipo/título/observação/data/status/responsável), deliberadamente separada de `calendar_appointments` (que exige disponibilidade publicada e não reabre cancelado); reaproveita `calendar_connections` só pra sincronizar com o Google. |
+
+| `20260912120000` | `0240_funcao_do_contato` | `contacts.job_title` — a função/cargo do contato, pedida no formulário unificado de "Novo negócio" (contato + lead num só). Nome `job_title` e não `role` pra não colidir com o RBAC que já usa essa palavra noutras tabelas. |
+
+| `20260914100000` | `0241_logo_escuro_da_instalacao` | `platform_branding.logo_dark_path` — segundo slot de logo, opcional, mostrado só no tema escuro (ausente = o logo claro vale nos dois temas). Sem par de URL: não há `APP_LOGO_URL_DARK` no `.env`. |
+
+| `20260914150000` | `0242_auditoria_de_rastreamento` | `outbound_events` ganha fila de retry de verdade (`attempt_count`/`last_attempt_at`/`next_retry_at`/`error_message`, status `pending/processing/sent/failed/dead_letter`); `platform_event_logs` novo (histórico bruto sanitizado por tentativa, cross-provider); `fn_podar_platform_event_logs`/`fn_podar_outbound_events_finalizados` (expurgo batched, só status terminal). |
+
+| `20260914160000` | `0243_cascata_lgpd_alcanca_touchpoints` | `fn_lgpd_cascade_redact_contact` ganha o passo de `touchpoints` (achado pela varredura `lgpd-cascata-alcanca-quem-guarda-pessoa.test.ts`): soft de-link de `contact_id` + limpeza de `url`/`referrer`/`utm_content`; atribuição de campanha (fbclid/gclid/utm_source/medium/campaign/term) fica intocada. |
+
+| `20260914170000` | `0244_marca_do_favicon` | `platform_branding.favicon_mark_path` — terceiro slot de logo, o ÍCONE (mark, sem a wordmark) usado só no favicon. Ausente = favicon cai no logo inteiro ou na cor+inicial gerada. |

@@ -107,8 +107,14 @@ async function enviar(
         messaging_channel: "whatsapp",
         user_data: userData,
         custom_data: {
-          value: conversao.valorCentavos / 100,
-          currency: conversao.moeda.toUpperCase(),
+          // `?? 0`/`?? "BRL"` só existem porque `ConversaoOffline.valorCentavos`/
+          // `.moeda` ficaram opcionais quando o motor de rastreamento first-party
+          // (que também produz LEAD/QUALIFIED, sem valor) passou a compartilhar o
+          // mesmo tipo — este handler (Purchase-on-won via CTWA) sempre preenche
+          // os dois antes de chamar `enviar()` (guard em `envio.handler.ts`), o
+          // fallback nunca dispara na prática.
+          value: (conversao.valorCentavos ?? 0) / 100,
+          currency: (conversao.moeda ?? "BRL").toUpperCase(),
         },
       },
     ],

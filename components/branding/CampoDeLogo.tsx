@@ -56,8 +56,18 @@ const SUPERFICIE_ESCURA = superficie("escuro");
 
 export type EscopoDoLogo = "instalacao" | "organizacao";
 
+/**
+ * Qual dos três slots desta camada — `escuro`/`favicon` só são aceitos pela
+ * rota quando `escopo === "instalacao"` (a organização não tem essas
+ * colunas; ver `app/api/v1/marca/logo/route.ts`). Default `claro`: os dois
+ * call sites de `organizacao` não passam esta prop.
+ */
+export type VarianteDoLogo = "claro" | "escuro" | "favicon";
+
 interface Props {
   readonly escopo: EscopoDoLogo;
+  /** `escuro`/`favicon` só fazem sentido com `escopo="instalacao"`. Default `"claro"`. */
+  readonly variante?: VarianteDoLogo;
   /**
    * O logo que ESTA camada gravou, já como URL pública. `url: null` = esta
    * camada não tem logo próprio — e aí quem aparece é `logoHerdado`.
@@ -97,6 +107,7 @@ const ERRO_EM_PORTUGUES: Record<string, string> = {
 
 export function CampoDeLogo({
   escopo,
+  variante = "claro",
   logoDaCamada,
   logoHerdado,
   origemDoHerdado,
@@ -217,6 +228,7 @@ export function CampoDeLogo({
     try {
       const corpo = new FormData();
       corpo.set("escopo", escopo);
+      corpo.set("variante", variante);
       corpo.set("file", arquivo);
       const resposta = await fetch("/api/v1/marca/logo", { method: "POST", body: corpo });
       if (!resposta.ok) {
@@ -238,7 +250,9 @@ export function CampoDeLogo({
   async function remover() {
     setEnviando(true);
     try {
-      const resposta = await fetch(`/api/v1/marca/logo?escopo=${escopo}`, { method: "DELETE" });
+      const resposta = await fetch(`/api/v1/marca/logo?escopo=${escopo}&variante=${variante}`, {
+        method: "DELETE",
+      });
       if (!resposta.ok) {
         toast.error(await razaoDaFalha(resposta));
         return;
@@ -254,14 +268,19 @@ export function CampoDeLogo({
     }
   }
 
+  // Sufixo só quando NÃO é o padrão: preserva o atributo exato que
+  // `tests/e2e/marca-logo.spec.ts` já usa para a instância `claro`, e o novo
+  // seletor (`instalacao-escuro`) fica disponível para a instância nova.
+  const idDoCampo = variante === "claro" ? escopo : `${escopo}-${variante}`;
+
   return (
-    <div className="space-y-4" data-campo-de-logo={escopo} data-hidratado={hidratado ? "" : undefined}>
+    <div className="space-y-4" data-campo-de-logo={idDoCampo} data-hidratado={hidratado ? "" : undefined}>
       <div className="space-y-2">
-        <Label htmlFor={`logo-${escopo}`}>{t("Logo")}</Label>
+        <Label htmlFor={`logo-${idDoCampo}`}>{t("Logo")}</Label>
         <div className="flex flex-wrap items-center gap-3">
           <input
             ref={entrada}
-            id={`logo-${escopo}`}
+            id={`logo-${idDoCampo}`}
             type="file"
             // `image/png,image/jpeg` FILTRA o seletor de arquivos, não decide
             // nada: quem decide é o farejador de bytes do servidor. O atributo

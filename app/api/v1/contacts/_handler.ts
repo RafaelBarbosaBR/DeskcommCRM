@@ -18,6 +18,7 @@ import type { Idioma } from "@/lib/i18n/idiomas";
 import { roleAtLeast } from "@/lib/auth/types";
 import { canonicalPhoneBR, phoneLookupVariants } from "@/lib/channels/phone-variants";
 import { hashCpf, encryptCpfSql } from "@/lib/contacts/cpf";
+import { normalizarLink } from "@/lib/leads/social-links";
 import type { Contact } from "@/lib/types/contacts";
 import { ensureConversation, sessaoProntaParaEnvio } from "@/lib/automation/start-conversation";
 import type {
@@ -30,8 +31,18 @@ import { contactListQuerySchema } from "@/lib/schemas";
 
 type SB = SupabaseClient;
 
+/**
+ * `{coluna, coluna_normalized}` a partir do valor cru — protocolo garantido
+ * ANTES de gravar (item 2 do pedido: sem isso "www.empresa.com" salvo cru
+ * viraria link relativo no dia em que virasse `href`). `""` limpa os dois.
+ */
+function colunasDeLink(bruto: string, coluna: string): Record<string, string | null> {
+  const link = normalizarLink(bruto);
+  return { [coluna]: link?.href ?? null, [`${coluna}_normalized`]: link?.normalizado ?? null };
+}
+
 const SELECT_COLS =
-  "id, organization_id, name, display_name, email, email_normalized, phone_number, cpf_hash, birthdate, is_blocked, blocked_reason, is_anonymized, anonymized_at, is_merged_into, merged_at, consent, tags, source, source_metadata, custom_fields, created_at, updated_at, last_activity_at";
+  "id, organization_id, name, display_name, email, email_normalized, phone_number, phone_raw, job_title, cpf_hash, birthdate, is_blocked, blocked_reason, is_anonymized, anonymized_at, is_merged_into, merged_at, consent, tags, source, source_metadata, custom_fields, website_url, website_url_normalized, instagram_url, instagram_url_normalized, facebook_url, facebook_url_normalized, google_maps_url, google_maps_url_normalized, created_at, updated_at, last_activity_at";
 
 interface CursorPayload {
   sort: string | null;
@@ -379,12 +390,18 @@ export async function createContactHandler(
     display_name: input.display_name ?? null,
     email: input.email ?? null,
     phone_number: input.phone_number ? canonicalPhoneBR(input.phone_number) : null,
+    phone_raw: input.phone_raw ?? null,
+    job_title: input.job_title ?? null,
     birthdate: input.birthdate ?? null,
     tags: input.tags ?? [],
     source: input.source,
     source_metadata: input.source_metadata ?? {},
     custom_fields: input.custom_fields ?? {},
     consent: input.consent ?? {},
+    ...(input.website_url !== undefined ? colunasDeLink(input.website_url, "website_url") : {}),
+    ...(input.instagram_url !== undefined ? colunasDeLink(input.instagram_url, "instagram_url") : {}),
+    ...(input.facebook_url !== undefined ? colunasDeLink(input.facebook_url, "facebook_url") : {}),
+    ...(input.google_maps_url !== undefined ? colunasDeLink(input.google_maps_url, "google_maps_url") : {}),
   };
 
   if (input.cpf) {
@@ -510,6 +527,12 @@ export async function patchContactHandler(
   }
   if (input.birthdate !== undefined) patch.birthdate = input.birthdate;
   if (input.tags !== undefined) patch.tags = input.tags;
+  if (input.phone_raw !== undefined) patch.phone_raw = input.phone_raw;
+  if (input.job_title !== undefined) patch.job_title = input.job_title;
+  if (input.website_url !== undefined) Object.assign(patch, colunasDeLink(input.website_url, "website_url"));
+  if (input.instagram_url !== undefined) Object.assign(patch, colunasDeLink(input.instagram_url, "instagram_url"));
+  if (input.facebook_url !== undefined) Object.assign(patch, colunasDeLink(input.facebook_url, "facebook_url"));
+  if (input.google_maps_url !== undefined) Object.assign(patch, colunasDeLink(input.google_maps_url, "google_maps_url"));
   if (input.source !== undefined) patch.source = input.source;
   if (input.source_metadata !== undefined) patch.source_metadata = input.source_metadata;
   // SUBSTITUIÇÃO, não merge — ao contrário de `consent`. O editor da tela manda

@@ -607,6 +607,7 @@ export function CRMSidePanel({ conversation }: Props) {
           pipelineId={defaultPipeline.data.pipeline.id}
           stages={defaultPipeline.data.stages}
           contactId={contactId}
+          contactName={displayName}
           onCreated={() => {
             setLeadAtivoId(null);
             recarregar();

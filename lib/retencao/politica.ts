@@ -87,6 +87,18 @@ export const RETENCAO_CAPTACAO_DIAS_PADRAO = 365;
  */
 export const RETENCAO_CAPTACAO_DIAS_PISO = 30;
 
+/**
+ * 7 dias pro log TÉCNICO da auditoria de rastreamento —
+ * `platform_event_logs` (histórico bruto de tentativa) e `outbound_events`
+ * em status TERMINAL (`sent`/`dead_letter`). Curto de propósito: é log de
+ * depuração de envio, não histórico comercial — quem quer saber SE um lead
+ * converteu olha `internal_events`, que nunca expira (princípio 3 do pedido
+ * de auditoria de rastreamento).
+ */
+export const RETENCAO_RASTREAMENTO_DIAS_PADRAO = 7;
+/** Piso baixo, mesma razão do espelho da agenda: é log técnico, não rastro que precise sobreviver a um incidente. */
+export const RETENCAO_RASTREAMENTO_DIAS_PISO = 3;
+
 export interface RetencaoInterpretada {
   /** Dias a pedir ao banco. Nunca abaixo do piso, nunca `NaN`. */
   readonly dias: number;

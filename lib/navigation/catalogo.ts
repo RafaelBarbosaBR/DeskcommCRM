@@ -141,6 +141,22 @@ export const NAV_CATALOG = [
     sidebar: true,
   },
   {
+    // Item 7 do pedido do dossiê do lead: visão agregada dos compromissos
+    // leves (crm_lead_appointments), separada de "Agenda" (calendar_
+    // appointments, o motor tipo Calendly — outra tabela, outro problema).
+    //
+    // SEM `sidebar: true` de propósito: "Atendimento" já está em 4 destinos,
+    // e a doutrina deste catálogo (ver Sidebar.tsx) é clara — o QUINTO
+    // destino cria hub, nunca raspa densidade. Fica alcançável por ⌘K e por
+    // link direto (o atalho "Ver agenda" de cada aba de compromissos), mesmo
+    // precedente de `/app/integrations/nuvemshop`.
+    href: "/app/calendario",
+    label: "Calendário",
+    description: "Compromissos de todos os negócios (próximo contato, reunião, ligação), num lugar só.",
+    icon: "CalendarCheck",
+    group: "atendimento",
+  },
+  {
     // Renomeado de "Templates": estes são scripts do atendente, consumidos pelo
     // Composer do inbox. O nome "Templates" fica livre para os da Meta (HSM),
     // onde é o termo técnico correto.
@@ -457,6 +473,16 @@ export const NAV_CATALOG = [
     icon: "WebhooksLogo",
     group: "canais",
     minRole: "manager",
+    sidebar: true,
+  },
+  {
+    href: "/app/integrations/rastreamento",
+    label: "Rastreamento",
+    description:
+      "Tracker do site, atribuição de anúncio (UTM, fbclid, gclid) e conversão automática pra Meta, GA4 e Google Ads.",
+    icon: "Target",
+    group: "canais",
+    minRole: "admin",
     sidebar: true,
   },
 

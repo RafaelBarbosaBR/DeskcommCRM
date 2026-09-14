@@ -67,6 +67,7 @@ export {
   // origem de uma captação de formulário (página, IP, link para o lead)
   Globe,
   ArrowSquareOut,
+  WhatsappLogo,
   Tray,
   // feedback
   CheckCircle,
@@ -115,6 +116,7 @@ export {
   ArrowRight,
   SignOut,
   WebhooksLogo,
+  Target,
   PuzzlePiece,
   UploadSimple,
   Signpost,

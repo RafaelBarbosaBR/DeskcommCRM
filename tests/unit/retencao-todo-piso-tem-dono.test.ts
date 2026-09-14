@@ -44,6 +44,12 @@ const DONO_NO_SQL: Record<string, string> = {
   FILA: "fn_podar_fila_de_jobs",
   AUDITORIA: "fn_expurgar_auditoria_vencida",
   ESPELHO_AGENDA: "fn_expurgar_espelho_da_agenda",
+  // RASTREAMENTO tem DUAS funções donas (platform_event_logs e outbound_events
+  // terminal, migration 0242) — as duas usam o MESMO par padrão/piso, escrito
+  // igual nas duas. O teste casa 1:1; aqui a de logs é a referência, e um
+  // `git grep greatest(coalesce(p_retencao_dias, 7), 3)` no baseline mostra as
+  // duas junto se algum dia precisar conferir a outra também.
+  RASTREAMENTO: "fn_podar_platform_event_logs",
 };
 
 /**

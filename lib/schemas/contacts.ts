@@ -13,6 +13,30 @@ const PHONE_REGEX = /^\+\d{8,15}$/;
 const CPF_DIGITS = /^\d{11}$/;
 
 /**
+ * Tag de contato — item 1 do pedido: trim + minúsculo + corte de 50 chars,
+ * SEMPRE no servidor, mesmo que o front já limite. Tag também chega por API
+ * de integração externa, que não passa pelo input HTML nem pelo componente
+ * de chips — sem esta camada aqui, uma integração gravaria tag com espaço,
+ * maiúscula ou 400 caracteres direto no banco.
+ */
+const tagsSchema = z
+  .array(z.string())
+  // "cortar em 50 caracteres" é TRUNCAR, não recusar — `.max()` do Zod
+  // rejeitaria a tag inteira; o pedido quer o excesso descartado em silêncio,
+  // do mesmo jeito que o componente de chips já se comporta no cliente.
+  .transform((tags) => [...new Set(tags.map((tag) => tag.trim().toLowerCase().slice(0, 50)).filter(Boolean))])
+  .optional();
+
+/** Link de rede social — mesma checagem em duas camadas, servidor decide o valor final. */
+function linkSchema(max: number) {
+  return z
+    .string()
+    .trim()
+    .max(max)
+    .optional();
+}
+
+/**
  * Teto de 32 KB no jsonb inteiro. O CHECK do banco só garante que é OBJETO —
  * sem limite de tamanho, um cliente da API escreveria megabytes numa coluna que
  * a listagem de contatos traz inteira, e o custo apareceria como "a tela de
@@ -48,7 +72,10 @@ export function isValidCpf(raw: string): boolean {
 export const contactCreateSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   display_name: z.string().min(1).max(200).optional(),
-  email: z.string().email().optional(),
+  // 320 = teto do RFC 5321 (64 da parte local + @ + 255 do domínio) — mesmo
+  // teto já usado em `emailDoConvidado` (lib/schemas/agenda), item 6 do
+  // pedido do dossiê: duas camadas, nunca só o maxLength do input.
+  email: z.string().trim().email().max(320).optional(),
   phone_number: z
     .string()
     .regex(PHONE_REGEX, "Telefone deve estar em formato E.164 (+5511999998888)")
@@ -58,7 +85,16 @@ export const contactCreateSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
-  tags: z.array(z.string()).optional(),
+  tags: tagsSchema,
+  /** O que a pessoa digitou no dossiê, tal qual — nunca a forma canônica. */
+  phone_raw: z.string().trim().max(30).optional(),
+  website_url: linkSchema(500),
+  instagram_url: linkSchema(500),
+  facebook_url: linkSchema(500),
+  /** Mais longo: a URL de local do Google Maps é naturalmente maior. */
+  google_maps_url: linkSchema(1000),
+  /** Cargo/função do contato na empresa dele — pedido no formulário unificado de "Novo negócio". */
+  job_title: z.string().trim().max(150).optional(),
   source: z.string().min(1).default("manual"),
   source_metadata: z.record(z.string(), z.unknown()).optional(),
   consent: z.record(z.string(), z.unknown()).optional(),

@@ -63,14 +63,39 @@ export default async function PublicLayout({ children }: { children: React.React
                 que o logo da EMPRESA não vaza para cá. Sem ele a spec caía na
                 "primeira <img> da página", e uma asserção de negação com seletor
                 largo passa sozinha assim que outra imagem entra na tela.
+
+                Par claro/escuro por CSS (`dark:`), nunca por JS: esta casca é
+                Server Component (sem `useTheme()` disponível) e o tema já troca de
+                atributo no `<html>` ANTES do primeiro paint — a mesma razão da
+                barra lateral. Só desenha as duas imagens quando divergem; a mesma
+                URL duas vezes não serve a ninguém.
               */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                data-testid="logo-da-fachada"
-                src={marca.logoUrl}
-                alt={marca.nome}
-                className="h-10 w-auto max-w-[12rem] object-contain"
-              />
+              {marca.logoUrlEscuro && marca.logoUrlEscuro !== marca.logoUrl ? (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    data-testid="logo-da-fachada"
+                    src={marca.logoUrl}
+                    alt={marca.nome}
+                    className="h-16 w-auto max-w-[16rem] object-contain dark:hidden"
+                  />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    data-testid="logo-da-fachada-escura"
+                    src={marca.logoUrlEscuro}
+                    alt={marca.nome}
+                    className="hidden h-16 w-auto max-w-[16rem] object-contain dark:block"
+                  />
+                </>
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  data-testid="logo-da-fachada"
+                  src={marca.logoUrl}
+                  alt={marca.nome}
+                  className="h-16 w-auto max-w-[16rem] object-contain"
+                />
+              )}
             </div>
           )}
           {children}

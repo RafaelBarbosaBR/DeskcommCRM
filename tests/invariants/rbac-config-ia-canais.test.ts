@@ -196,6 +196,15 @@ const DIVIDA_RBAC_CONHECIDA = new Set([
   "reentry_template_pointers", "reentry_template_versions", "send_ledger",
   "skill_activations", "skill_pointers", "skill_versions", "storage_redaction_queue",
   "user_recovery_codes",
+  // As duas do dossiê do lead (compromissos leves + listas salvas de filtro):
+  // policy `tenant_isolation_*_all` padrão, sem `fn_role_at_least` — qualquer
+  // papel da organização (inclusive `viewer`) grava/apaga. Dívida herdada de
+  // antes desta varredura ter sido rodada (as migrations 0238/0239 nunca
+  // passaram por `test:invariants` até esta descoberta); registrada aqui em
+  // vez de corrigida porque decidir QUEM pode marcar/desmarcar um
+  // compromisso ou salvar um filtro é decisão de produto, não algo pra
+  // resolver como efeito colateral da tela de auditoria de rastreamento.
+  "crm_lead_appointments", "crm_saved_lead_views",
 ]);
 
 describe("0150 — a dívida de RBAC não cresce", () => {

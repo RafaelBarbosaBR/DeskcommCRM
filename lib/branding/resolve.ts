@@ -81,6 +81,21 @@ export type CamadaDeMarca = {
   readonly nome?: string | null;
   readonly logoUrl?: string | null;
   /**
+   * O logo para o TEMA ESCURO desta camada. Ausente = esta camada não fala
+   * sobre logo escuro — `primeiroDefinido` desce para a de baixo, e o produto
+   * cai no `logoUrl` resolvido quando NINGUÉM fala (ver `resolverMarca`).
+   */
+  readonly logoUrlEscuro?: string | null;
+  /**
+   * O ÍCONE (mark, sem a wordmark) para o favicon desta camada. Ausente = esta
+   * camada não tem um — diferente de `logoUrlEscuro`, NÃO cai no `logoUrl`
+   * sozinho aqui: quem decide o degrade final (ícone → logo inteiro → cor+
+   * inicial) é `app/icon.tsx`, porque só ele sabe se um logo inteiro cabe
+   * razoavelmente num quadrado de 64px — este resolvedor só entrega o que
+   * cada camada declarou.
+   */
+  readonly faviconMarkUrl?: string | null;
+  /**
    * O envelope CRU, como veio da fonte — `unknown` de propósito: validar é
    * trabalho do resolvedor, e uma camada que já entregasse validado esconderia
    * de onde o dado inválido veio.
@@ -98,6 +113,16 @@ export type CorResolvida = {
 
 export type MarcaResolvida = Branding & {
   readonly cor: CorResolvida | null;
+  /**
+   * O logo do TEMA ESCURO, já resolvido. Nunca `null` quando `logoUrl` não é
+   * `null`: sem camada nenhuma declarando um logo escuro próprio, este campo
+   * CAI NO `logoUrl` claro — é o mesmo logo nos dois temas, que é o
+   * comportamento de toda instalação antes desta feature existir.
+   */
+  readonly logoUrlEscuro: string | null;
+  /** O ícone pro favicon, já resolvido. `null` = nenhuma camada tem um — quem
+   * chama degrada pro logo inteiro ou pra cor+inicial (ver `CamadaDeMarca`). */
+  readonly faviconMarkUrl: string | null;
   /** De qual camada veio cada campo — o que torna a precedência auditável. */
   readonly origens: {
     readonly nome: string;
@@ -320,6 +345,16 @@ export function resolverMarca(
   const nome = primeiroDefinido(camadas, (c) => c.nome);
   const logo = primeiroDefinido(camadas, (c) => c.logoUrl);
   const base = resolveBranding(nome?.valor, logo?.valor);
+  // Mesma regra do nome e do logo claro: primeira camada que FALA sobre logo
+  // escuro vence. Ninguém falando cai no logo claro já resolvido — nunca em
+  // `null` com `logoUrl` presente, senão o tema escuro perderia o logo que o
+  // tema claro tem.
+  const logoEscuro = primeiroDefinido(camadas, (c) => c.logoUrlEscuro);
+  const logoUrlEscuro = logoEscuro?.valor ?? base.logoUrl;
+  // SEM fallback pro logo claro — ausência aqui é ausência de verdade (ver o
+  // comentário do campo em `CamadaDeMarca`).
+  const faviconMark = primeiroDefinido(camadas, (c) => c.faviconMarkUrl);
+  const faviconMarkUrl = faviconMark?.valor ?? null;
 
   const motivos: MotivoDaMarca[] = [];
   let cor: CorResolvida | null = null;
@@ -339,6 +374,8 @@ export function resolverMarca(
   return {
     ...base,
     cor,
+    logoUrlEscuro,
+    faviconMarkUrl,
     origens: {
       nome: nome?.origem ?? PADRAO,
       logoUrl: logo?.origem ?? PADRAO,
@@ -375,6 +412,18 @@ export type LinhaDaInstalacao = {
    * então uma instalação pode voltar a rodar código que não conhece esta coluna.
    */
   readonly logo_path?: string | null;
+  /**
+   * O ARQUIVO do tema escuro, mesmo bucket, sem `_url` par — não há semente de
+   * `.env` para um logo escuro (ver a migration 0241, que criou a coluna).
+   * Ausente = o tema escuro usa `logo_path`/`logo_url`, igual a toda
+   * instalação antes desta feature.
+   */
+  readonly logo_dark_path?: string | null;
+  /**
+   * O ARQUIVO do ícone (mark, sem wordmark) pro favicon — mesma forma de
+   * `logo_dark_path`, sem par `_url` (migration 0244).
+   */
+  readonly favicon_mark_path?: string | null;
   readonly accent_hex?: string | null;
 };
 
@@ -397,17 +446,22 @@ export function camadaDaInstalacao(linha: LinhaDaInstalacao | null): CamadaDeMar
   const hex = (linha.accent_hex ?? "").trim();
   // O arquivo subido vence a URL colada, DENTRO desta camada — ver `logoDaCamada`.
   const logoUrl = logoDaCamada(linha.logo_path, linha.logo_url);
+  // Sem `_url` par (ver o tipo acima): `url` sempre `null` aqui.
+  const logoUrlEscuro = logoDaCamada(linha.logo_dark_path, null);
+  const faviconMarkUrl = logoDaCamada(linha.favicon_mark_path, null);
   // Mesma regra do `.env`: campo vazio é ausência de configuração, não cor com
   // defeito. Sem isto, uma linha semeada de um `.env` sem cor emitiria
   // `cor_ausente` em toda instalação de fábrica — e aviso no caso normal ensina
   // o operador a ignorar avisos.
   if (hex.length === 0) {
-    return { origem: "banco", nome: linha.app_name, logoUrl };
+    return { origem: "banco", nome: linha.app_name, logoUrl, logoUrlEscuro, faviconMarkUrl };
   }
   return {
     origem: "banco",
     nome: linha.app_name,
     logoUrl,
+    logoUrlEscuro,
+    faviconMarkUrl,
     cor: envelopeDeSemente(hex),
   };
 }

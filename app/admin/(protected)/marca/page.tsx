@@ -95,6 +95,8 @@ export default async function Page() {
           app_name: linha?.app_name ?? null,
           logo_url: linha?.logo_url ?? null,
           logo_path: linha?.logo_path ?? null,
+          logo_dark_path: linha?.logo_dark_path ?? null,
+          favicon_mark_path: linha?.favicon_mark_path ?? null,
           accent_hex: linha?.accent_hex ?? null,
           // `true` é o default da coluna: sem linha ainda, é o valor que o
           // `upsert` gravaria de qualquer forma.
@@ -102,6 +104,8 @@ export default async function Page() {
         }}
         nomeEmVigor={marca.name}
         logoEmVigor={marca.logoUrl}
+        logoEscuroEmVigor={marca.logoUrlEscuro}
+        faviconEmVigor={marca.faviconMarkUrl}
         logoDoAmbiente={semOArquivo.logoUrl}
         origens={marca.origens}
         // `seeded_from_env` ligado significa que a linha é cópia do arquivo de

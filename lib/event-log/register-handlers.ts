@@ -20,6 +20,8 @@ import { mediaPersistHandler } from "@/workers/media-persist-worker.handler";
 import { mediaDeriveHandler } from "@/workers/media-derive-worker.handler";
 import { webPushInboundHandler } from "@/lib/notifications/push.handler";
 import { conversaoDeVendaHandler } from "@/lib/conversoes/envio.handler";
+import { pipelineDeRastreamentoHandler } from "@/lib/rastreamento/motor/pipeline.handler";
+import { despachoDeRastreamentoHandler } from "@/lib/rastreamento/motor/despacho.handler";
 import { registerHandler } from "@/lib/event-log/dispatcher";
 
 let _registered = false;
@@ -46,5 +48,12 @@ export function ensureHandlersRegistered(): void {
   // fechamento — depende de rede de terceiro e não pode atrasar quem escreve
   // no banco. Falha dele nunca segura os handlers acima.
   registerHandler(conversaoDeVendaHandler);
+  // Motor de rastreamento first-party: dois handlers, mesmo motivo de ordem
+  // (rede de terceiro). `pipeline` traduz mudança de negócio em evento
+  // interno; `despacho` é quem de fato fala com Meta/GA4/Google Ads —
+  // separados porque o segundo roda de novo (via `tracking.internal_event_created`)
+  // sempre que o primeiro grava um evento novo, não a cada tick do drain.
+  registerHandler(pipelineDeRastreamentoHandler);
+  registerHandler(despachoDeRastreamentoHandler);
   _registered = true;
 }

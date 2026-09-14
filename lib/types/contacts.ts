@@ -10,6 +10,18 @@ export interface Contact {
   email: string | null;
   email_normalized: string | null;
   phone_number: string | null;
+  /** O que a pessoa digitou no dossiê, tal qual — `phone_number` é a canônica E.164. */
+  phone_raw: string | null;
+  /** Cargo/função na empresa dele — pedido no formulário unificado de "Novo negócio". */
+  job_title: string | null;
+  website_url: string | null;
+  website_url_normalized: string | null;
+  instagram_url: string | null;
+  instagram_url_normalized: string | null;
+  facebook_url: string | null;
+  facebook_url_normalized: string | null;
+  google_maps_url: string | null;
+  google_maps_url_normalized: string | null;
   cpf_hash: string | null;
   birthdate: string | null;
   is_blocked: boolean;

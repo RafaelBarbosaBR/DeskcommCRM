@@ -316,6 +316,12 @@ const NOME_DO_CAMPO: Record<string, string> = {
   expected_close_date: "a data prevista de fechamento",
   tags: "as tags",
   custom_fields: "os campos personalizados",
+  utm_source: "a origem (UTM)",
+  utm_medium: "a mídia (UTM)",
+  utm_campaign: "a campanha (UTM)",
+  utm_content: "o conteúdo (UTM)",
+  utm_term: "o termo (UTM)",
+  referrer: "o referenciador",
   lost_reason: "o motivo da perda",
 };
 

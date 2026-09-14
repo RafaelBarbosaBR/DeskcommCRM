@@ -426,6 +426,12 @@ export async function updateLeadHandler(
     patch.expected_close_date = input.expected_close_date;
   }
   if (input.tags !== undefined) patch.tags = input.tags;
+  if (input.utm_source !== undefined) patch.utm_source = input.utm_source;
+  if (input.utm_medium !== undefined) patch.utm_medium = input.utm_medium;
+  if (input.utm_campaign !== undefined) patch.utm_campaign = input.utm_campaign;
+  if (input.utm_content !== undefined) patch.utm_content = input.utm_content;
+  if (input.utm_term !== undefined) patch.utm_term = input.utm_term;
+  if (input.referrer !== undefined) patch.referrer = input.referrer;
   if (input.custom_fields !== undefined) {
     const prev =
       existing.custom_fields && typeof existing.custom_fields === "object" && !Array.isArray(existing.custom_fields)

@@ -25,6 +25,13 @@ import type { PlataformaDeAnuncio, TransporteDeConversao } from "./types";
 const TRANSPORTES: Record<PlataformaDeAnuncio, TransporteDeConversao | null> = {
   meta_ads: transporteMeta,
   google_ads: null,
+  // `ga4` entrou no vocabulário (`PlataformaDeAnuncio`) junto com o motor de
+  // rastreamento first-party, que tem seu PRÓPRIO registro
+  // (`lib/rastreamento/motor/registry.ts`) — este aqui é só do pipeline
+  // legado de Purchase-on-won via CTWA, que nunca atribui `ad_platform: "ga4"`
+  // a um contato. Declarado `null` pela mesma razão que `google_ads`: ausência
+  // é REGISTRADA, não deduzida do silêncio.
+  ga4: null,
 };
 
 /** O transporte da plataforma, ou `null` quando ela é conhecida e não tem um. */

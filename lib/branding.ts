@@ -23,6 +23,13 @@ export type Branding = {
   name: string;
   /** URL do logo, ou `null` quando a marca deve aparecer como texto. */
   logoUrl: string | null;
+  /**
+   * URL do logo para o TEMA ESCURO. Ausente/`undefined` neste tipo de propósito:
+   * só `MarcaResolvida` (lib/branding/resolve.ts) sabe resolver um valor —
+   * `resolveBranding` aqui não tem `.env` de onde tirar um. Quem consome trata
+   * ausência como "usa `logoUrl` nos dois temas", nunca como logo apagado.
+   */
+  logoUrlEscuro?: string | null;
   /** Primeira letra do nome — usada onde só cabe um caractere (sidebar recolhida). */
   initial: string;
 };

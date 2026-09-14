@@ -245,6 +245,44 @@ async function withScores(
  * Ordena por `last_message_at` e fica com a primeira de cada contato — as
  * conversas já vêm ordenadas, então o primeiro visto é o mais recente.
  */
+/**
+ * As tags do CONTATO, não do lead — item 1 do pedido do dossiê ("tags
+ * pertencem ao contato, não ao lead individual"). O filtro de tag do board
+ * (FilterBar) lê `contact_tags`, nunca `crm_leads.tags` diretamente: a
+ * coluna do lead continua existindo no banco, só não é mais o que a UI
+ * edita nem o que o filtro compara.
+ */
+async function withContactTags(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  organizationId: string,
+  leads: Lead[],
+): Promise<{ leads: Lead[]; error: string | null }> {
+  const contactIds = [...new Set(leads.map((l) => l.contact_id).filter((c): c is string => !!c))];
+  if (contactIds.length === 0) return { leads, error: null };
+
+  const { data, error } = await supabase
+    .from("contacts")
+    .select("id, tags")
+    .eq("organization_id", organizationId)
+    .in("id", contactIds);
+  if (error) return { leads, error: error.message };
+
+  const porContato = new Map<string, string[]>(
+    ((data ?? []) as Array<{ id: string; tags: string[] | null }>).map((row) => [
+      row.id,
+      row.tags ?? [],
+    ]),
+  );
+
+  return {
+    leads: leads.map((lead) => ({
+      ...lead,
+      contact_tags: lead.contact_id ? (porContato.get(lead.contact_id) ?? []) : [],
+    })),
+    error: null,
+  };
+}
+
 async function withConversas(
   supabase: Awaited<ReturnType<typeof createClient>>,
   organizationId: string,
@@ -429,10 +467,19 @@ export async function GET(_req: NextRequest, ctx: RouteCtx): Promise<Response> {
     return fail("internal_error", leadsComConversa.error, 500, { requestId });
   }
 
+  const leadsComTags = await withContactTags(
+    supabase,
+    (pipeline as Pipeline).organization_id,
+    leadsComConversa.leads,
+  );
+  if (leadsComTags.error) {
+    return fail("internal_error", leadsComTags.error, 500, { requestId });
+  }
+
   const board: BoardData = {
     pipeline: pipeline as Pipeline,
     stages: (stages ?? []) as Stage[],
-    leads: leadsComConversa.leads,
+    leads: leadsComTags.leads,
   };
 
   return ok(board, { requestId });

@@ -20,8 +20,13 @@ interface FormShape {
   title: string;
   description: string;
   valueReais: string;
-  tagsRaw: string;
   expected_close_date: string;
+  utm_source: string;
+  utm_medium: string;
+  utm_campaign: string;
+  utm_content: string;
+  utm_term: string;
+  referrer: string;
 }
 
 interface Props {
@@ -53,13 +58,20 @@ export function LeadFieldsForm({ lead, pipelineId, fieldDefs = [], onSaved, onCa
   const edit = useEditLead(pipelineId);
   const [customFields, setCustomFields] = useState<Record<string, unknown>>(lead.custom_fields ?? {});
 
+  const [origemAberta, setOrigemAberta] = useState(false);
+
   const form = useForm<FormShape>({
     defaultValues: {
       title: lead.title,
       description: lead.description ?? "",
       valueReais: centsToReais(lead.value_cents),
-      tagsRaw: (lead.tags ?? []).join(", "),
       expected_close_date: lead.expected_close_date ?? "",
+      utm_source: lead.utm_source ?? "",
+      utm_medium: lead.utm_medium ?? "",
+      utm_campaign: lead.utm_campaign ?? "",
+      utm_content: lead.utm_content ?? "",
+      utm_term: lead.utm_term ?? "",
+      referrer: lead.referrer ?? "",
     },
   });
 
@@ -68,19 +80,19 @@ export function LeadFieldsForm({ lead, pipelineId, fieldDefs = [], onSaved, onCa
       title: lead.title,
       description: lead.description ?? "",
       valueReais: centsToReais(lead.value_cents),
-      tagsRaw: (lead.tags ?? []).join(", "),
       expected_close_date: lead.expected_close_date ?? "",
+      utm_source: lead.utm_source ?? "",
+      utm_medium: lead.utm_medium ?? "",
+      utm_campaign: lead.utm_campaign ?? "",
+      utm_content: lead.utm_content ?? "",
+      utm_term: lead.utm_term ?? "",
+      referrer: lead.referrer ?? "",
     });
     setCustomFields(lead.custom_fields ?? {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead.id]);
 
   async function onSubmit(values: FormShape) {
-    const tags = values.tagsRaw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
     const reais = values.valueReais.trim();
     let valueCents: number | null = null;
     if (reais.length > 0) {
@@ -95,8 +107,13 @@ export function LeadFieldsForm({ lead, pipelineId, fieldDefs = [], onSaved, onCa
       title: values.title.trim(),
       description: values.description.trim() ? values.description.trim() : null,
       value_cents: valueCents,
-      tags,
       expected_close_date: values.expected_close_date || null,
+      utm_source: values.utm_source.trim() || null,
+      utm_medium: values.utm_medium.trim() || null,
+      utm_campaign: values.utm_campaign.trim() || null,
+      utm_content: values.utm_content.trim() || null,
+      utm_term: values.utm_term.trim() || null,
+      referrer: values.referrer.trim() || null,
       ...(fieldDefs.length > 0 ? { custom_fields: customFields } : {}),
     };
 
@@ -161,9 +178,51 @@ export function LeadFieldsForm({ lead, pipelineId, fieldDefs = [], onSaved, onCa
           </div>
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="tagsRaw">{t("Tags (separadas por vírgula)")}</Label>
-          <Input id="tagsRaw" placeholder="vip, recompra" {...form.register("tagsRaw")} />
+        {/* Item 4a do pedido: bloco EDITÁVEL, recolhido por padrão — nunca
+            confundir com o bloco só-leitura da atribuição de rastreamento
+            (esse mostra o que o tracker capturou de verdade, em outra
+            seção do dossiê, e nunca é sobrescrito por este). */}
+        <div className="border-t border-border pt-3">
+          <button
+            type="button"
+            onClick={() => setOrigemAberta((v) => !v)}
+            className="flex w-full items-center justify-between text-left text-sm font-medium"
+            aria-expanded={origemAberta}
+          >
+            {t("Origem comercial (manual)")}
+            <span className="text-text-muted">{origemAberta ? "−" : "+"}</span>
+          </button>
+          {origemAberta && (
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="utm_source" className="text-xs">utm_source</Label>
+                <Input id="utm_source" maxLength={255} {...form.register("utm_source")} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="utm_medium" className="text-xs">utm_medium</Label>
+                <Input id="utm_medium" maxLength={255} {...form.register("utm_medium")} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="utm_campaign" className="text-xs">utm_campaign</Label>
+                <Input id="utm_campaign" maxLength={255} {...form.register("utm_campaign")} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="utm_content" className="text-xs">utm_content</Label>
+                <Input id="utm_content" maxLength={255} {...form.register("utm_content")} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="utm_term" className="text-xs">utm_term</Label>
+                <Input id="utm_term" maxLength={255} {...form.register("utm_term")} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="referrer" className="text-xs">{t("Referenciador")}</Label>
+                <Input id="referrer" maxLength={255} {...form.register("referrer")} />
+              </div>
+              <p className="col-span-2 text-xs text-muted-foreground">
+                {t("Preencha à mão quando o rastreamento automático não capturou nada, ou capturou errado (ex.: veio de indicação).")}
+              </p>
+            </div>
+          )}
         </div>
 
         {fieldDefs.length > 0 && (

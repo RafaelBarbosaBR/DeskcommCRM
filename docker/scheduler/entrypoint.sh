@@ -66,6 +66,13 @@ CRONS="
 */5 * * * *|25|api/v1/cron/snooze-watcher
 */5 * * * *|25|api/v1/cron/attendant-heartbeat
 */5 * * * *|60|api/v1/cron/webhook-log-retention
+# A fila de retry de rastreamento (auditoria de tracking): tenta de novo o
+# que falhou pra Meta/GA4/Google Ads, na hora que attempt_count/backoff
+# já agendou. A 1ª tentativa é imediata (na mesma execução do evento, sem
+# cron nenhum) — este tick só cobre RETRY, por isso 5min é folgado (o
+# backoff mais curto já é 1min, então um tick de vez em quando chega
+# atrasado a uma tentativa e não a duas).
+*/5 * * * *|45|api/v1/cron/rastreamento-outbound-retry
 */5 * * * *|45|api/v1/cron/channel-health
 */10 * * * *|60|api/v1/cron/contact-avatars
 */10 * * * *|60|api/v1/cron/agenda-google-refresh

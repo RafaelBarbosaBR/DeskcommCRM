@@ -61,6 +61,8 @@ import {
   RETENCAO_ESPELHO_AGENDA_DIAS_PISO,
   RETENCAO_FILA_DIAS_PADRAO,
   RETENCAO_FILA_DIAS_PISO,
+  RETENCAO_RASTREAMENTO_DIAS_PADRAO,
+  RETENCAO_RASTREAMENTO_DIAS_PISO,
   interpretarRetencao,
 } from "@/lib/retencao/politica";
 import {
@@ -101,24 +103,41 @@ export interface ResultadoDaRetencao {
   espelho_apagado: number;
   lotes_espelho: number;
   espelho_tem_resto: boolean;
+  /** Log bruto de tentativa por plataforma (migration 0242) — log técnico, não histórico comercial. */
+  logs_de_plataforma_apagados: number;
+  lotes_logs_de_plataforma: number;
+  logs_de_plataforma_tem_resto: boolean;
+  /** `outbound_events` em status TERMINAL (`sent`/`dead_letter`) — nunca `pending`/`processing`. */
+  outbound_events_apagados: number;
+  lotes_outbound_events: number;
+  outbound_events_tem_resto: boolean;
   retencao_fila_dias: number;
   retencao_auditoria_dias: number;
   retencao_espelho_dias: number;
+  retencao_rastreamento_dias: number;
   /** Avisos de configuração — nunca ausentes em silêncio quando existem. */
   avisos: string[];
 }
 
+type NomeDaFuncaoDePoda =
+  | "fn_podar_fila_de_jobs"
+  | "fn_expurgar_auditoria_vencida"
+  | "fn_expurgar_espelho_da_agenda"
+  | "fn_expurgar_nonces_de_oauth"
+  | "fn_podar_platform_event_logs"
+  | "fn_podar_outbound_events_finalizados";
+
 /** Só a superfície que este cron usa — o teste injeta uma implementação. */
 export interface PodaDb {
   rpc(
-    nome: "fn_podar_fila_de_jobs" | "fn_expurgar_auditoria_vencida" | "fn_expurgar_espelho_da_agenda" | "fn_expurgar_nonces_de_oauth",
+    nome: NomeDaFuncaoDePoda,
     args: { p_retencao_dias: number; p_limite: number },
   ): Promise<{ data: number | null; error: { message: string } | null }>;
 }
 
 async function drenar(
   db: PodaDb,
-  nome: "fn_podar_fila_de_jobs" | "fn_expurgar_auditoria_vencida" | "fn_expurgar_espelho_da_agenda" | "fn_expurgar_nonces_de_oauth",
+  nome: NomeDaFuncaoDePoda,
   dias: number,
 ): Promise<{ apagadas: number; lotes: number; temResto: boolean }> {
   let apagadas = 0;
@@ -150,6 +169,7 @@ export async function podarHistorico(
     JOB_QUEUE_RETENTION_DAYS?: string;
     AUDIT_LOG_RETENTION_DAYS?: string;
     CALENDAR_MIRROR_RETENTION_DAYS?: string;
+    RASTREAMENTO_LOG_RETENTION_DAYS?: string;
   },
 ): Promise<ResultadoDaRetencao> {
   const fila = interpretarRetencao(ambiente.JOB_QUEUE_RETENTION_DAYS, {
@@ -169,6 +189,12 @@ export async function podarHistorico(
     piso: RETENCAO_ESPELHO_AGENDA_DIAS_PISO,
   });
 
+  const rastreamento = interpretarRetencao(ambiente.RASTREAMENTO_LOG_RETENTION_DAYS, {
+    chave: "RASTREAMENTO_LOG_RETENTION_DAYS",
+    padrao: RETENCAO_RASTREAMENTO_DIAS_PADRAO,
+    piso: RETENCAO_RASTREAMENTO_DIAS_PISO,
+  });
+
   const jobs = await drenar(db, "fn_podar_fila_de_jobs", fila.dias);
   const linhas = await drenar(db, "fn_expurgar_auditoria_vencida", auditoria.dias);
   const eventos = await drenar(db, "fn_expurgar_espelho_da_agenda", espelho.dias);
@@ -177,22 +203,40 @@ export async function podarHistorico(
   // cresceria para sempre, uma linha por conexão tentada, num produto que se
   // instala e ninguém monitora.
   const nonces = await drenar(db, "fn_expurgar_nonces_de_oauth", 1);
+  // Quinta e sexta poda: o log técnico da auditoria de rastreamento. Duas
+  // funções porque são duas tabelas com regra própria — a de
+  // `outbound_events` só aceita status TERMINAL, `fn_podar_
+  // outbound_events_finalizados` já recusa o resto dentro dela mesma (ver a
+  // migration 0242); aqui é só o mesmo laço de lotes de sempre.
+  const logsDePlataforma = await drenar(db, "fn_podar_platform_event_logs", rastreamento.dias);
+  const outboundEvents = await drenar(
+    db,
+    "fn_podar_outbound_events_finalizados",
+    rastreamento.dias,
+  );
 
   return {
     jobs_apagados: jobs.apagadas,
     auditoria_apagada: linhas.apagadas,
     espelho_apagado: eventos.apagadas,
     nonces_apagados: nonces.apagadas,
+    logs_de_plataforma_apagados: logsDePlataforma.apagadas,
+    outbound_events_apagados: outboundEvents.apagadas,
     lotes_fila: jobs.lotes,
     lotes_auditoria: linhas.lotes,
     lotes_espelho: eventos.lotes,
+    lotes_logs_de_plataforma: logsDePlataforma.lotes,
+    lotes_outbound_events: outboundEvents.lotes,
     fila_tem_resto: jobs.temResto,
     auditoria_tem_resto: linhas.temResto,
     espelho_tem_resto: eventos.temResto,
+    logs_de_plataforma_tem_resto: logsDePlataforma.temResto,
+    outbound_events_tem_resto: outboundEvents.temResto,
     retencao_fila_dias: fila.dias,
     retencao_auditoria_dias: auditoria.dias,
     retencao_espelho_dias: espelho.dias,
-    avisos: [fila.aviso, auditoria.aviso, espelho.aviso].filter(
+    retencao_rastreamento_dias: rastreamento.dias,
+    avisos: [fila.aviso, auditoria.aviso, espelho.aviso, rastreamento.aviso].filter(
       (a): a is string => a !== null,
     ),
   };
@@ -214,7 +258,11 @@ export function houveEfeito(resultado: ResultadoDaRetencao): boolean {
     // A quarta, pela MESMA razão, e ela quase entrou sem: acrescentei a poda de
     // nonces ao laço e ao retorno e esqueci desta linha. O comentário acima
     // descrevia exatamente o defeito que eu estava criando um parágrafo abaixo.
-    resultado.nonces_apagados > 0
+    resultado.nonces_apagados > 0 ||
+    // A quinta e a sexta, mesma razão de novo: log de rastreamento que some
+    // sem deixar rastro na PRÓPRIA auditoria seria o mesmo furo.
+    resultado.logs_de_plataforma_apagados > 0 ||
+    resultado.outbound_events_apagados > 0
   );
 }
 
@@ -250,6 +298,7 @@ async function handle(req: NextRequest): Promise<Response> {
     resultado = await podarHistorico(db, {
       JOB_QUEUE_RETENTION_DAYS: env.JOB_QUEUE_RETENTION_DAYS,
       AUDIT_LOG_RETENTION_DAYS: env.AUDIT_LOG_RETENTION_DAYS,
+      RASTREAMENTO_LOG_RETENTION_DAYS: env.RASTREAMENTO_LOG_RETENTION_DAYS,
     });
     // ── A cascata de anonimização que ficou pela metade ──────────────────
     //

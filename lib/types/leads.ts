@@ -96,7 +96,25 @@ export interface Lead {
   source_metadata: Record<string, unknown>;
   external_id: string | null;
   custom_fields: Record<string, unknown>;
+  /** @deprecated Tags agora vivem no CONTATO — ver `contact_tags`, abaixo. Coluna preservada no banco, não editada mais pela UI. */
   tags: string[];
+  /**
+   * Derivado (não é coluna): as tags do CONTATO deste lead — item 1 do
+   * pedido ("tags pertencem ao contato, não ao lead individual"). É o que o
+   * filtro de tag do board (`lib/kanban/filters.ts`) de fato compara.
+   */
+  contact_tags?: string[];
+  /**
+   * Bloco UTM EDITÁVEL (origem comercial/override) — item 4a do pedido.
+   * Preenchido à mão pelo atendente; nunca sobrescrito pelo motor de
+   * rastreamento automático (que lê `touchpoints`, projeção à parte).
+   */
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_campaign: string | null;
+  utm_content: string | null;
+  utm_term: string | null;
+  referrer: string | null;
   created_at: string;
   updated_at: string;
   created_by_user_id: string | null;

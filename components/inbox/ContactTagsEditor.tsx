@@ -24,7 +24,7 @@ export function ContactTagsEditor({ contactId, tags }: Props) {
   }
 
   function add(raw: string) {
-    const tag = raw.trim().toLowerCase().slice(0, 40);
+    const tag = raw.trim().toLowerCase().slice(0, 50);
     if (!tag || tags.includes(tag) || tags.length >= 20) return;
     apply([...tags, tag]);
     setDraft("");
@@ -67,8 +67,12 @@ export function ContactTagsEditor({ contactId, tags }: Props) {
               add(draft);
             }
           }}
+          // Item 1 do pedido: adiciona no Enter OU ao perder o foco — sem
+          // isto, sair do campo sem apertar Enter descartava o que a pessoa
+          // digitou em silêncio.
+          onBlur={() => add(draft)}
           placeholder={t("Nova tag…")}
-          maxLength={40}
+          maxLength={50}
           disabled={mutation.isPending || tags.length >= 20}
           className="h-7 text-xs"
           aria-label={t("Adicionar tag ao contato")}
