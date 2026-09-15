@@ -1,0 +1,33 @@
+# Override para PRODUÇÃO LOCAL em Windows/Mac/Linux dev machine.
+# - Expõe o app direto em http://localhost:3000 (sem Caddy/Let's Encrypt).
+# - Desliga o serviço caddy (não faz sentido sem domínio público).
+# - Mantém internal para app/worker/scheduler/waha/redis/srh conversarem.
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.build.yml -f docker-compose.local.yml --env-file .env up -d --build
+
+services:
+  app:
+    ports:
+      - "3000:3000"
+    # Dentro do container, o app precisa alcançar o Supabase local rodando NO HOST
+    # em localhost:55321. Sem este mapping, `localhost` de dentro é o próprio container.
+    # `host-gateway` = o host onde o Docker Desktop está rodando.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  worker:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  scheduler:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # WAHA exposto em 3001 caso queira parear WhatsApp direto (opcional em dev).
+  waha:
+    ports:
+      - "3001:3000"
+
+  # Caddy não sobe: não temos domínio público/ACME. O acesso é pelo :3000.
+  caddy:
+    profiles: ["disabled"]

@@ -6920,6 +6920,38 @@ export type Database = {
           },
         ]
       }
+      org_voice_calls: {
+        Row: {
+          enabled: boolean
+          organization_id: string
+          risco_aceito_em: string | null
+          risco_aceito_por: string | null
+          updated_at: string
+        }
+        Insert: {
+          enabled?: boolean
+          organization_id: string
+          risco_aceito_em?: string | null
+          risco_aceito_por?: string | null
+          updated_at?: string
+        }
+        Update: {
+          enabled?: boolean
+          organization_id?: string
+          risco_aceito_em?: string | null
+          risco_aceito_por?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_voice_calls_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organizations: {
         Row: {
           ai_budget_cents: number | null
@@ -8066,6 +8098,74 @@ export type Database = {
         }
         Relationships: []
       }
+      team_invites: {
+        Row: {
+          accepted_at: string | null
+          created_at: string
+          email: string
+          email_dispatched: boolean
+          expires_at: string
+          id: string
+          interface_settings: Json
+          invited_at: string
+          invited_by: string | null
+          last_resent_at: string | null
+          organization_id: string
+          resent_count: number
+          revoked_at: string | null
+          revoked_by: string | null
+          role: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          created_at?: string
+          email: string
+          email_dispatched?: boolean
+          expires_at: string
+          id: string
+          interface_settings?: Json
+          invited_at?: string
+          invited_by?: string | null
+          last_resent_at?: string | null
+          organization_id: string
+          resent_count?: number
+          revoked_at?: string | null
+          revoked_by?: string | null
+          role: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          accepted_at?: string | null
+          created_at?: string
+          email?: string
+          email_dispatched?: boolean
+          expires_at?: string
+          id?: string
+          interface_settings?: Json
+          invited_at?: string
+          invited_by?: string | null
+          last_resent_at?: string | null
+          organization_id?: string
+          resent_count?: number
+          revoked_at?: string | null
+          revoked_by?: string | null
+          role?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_invites_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tenant_integrations: {
         Row: {
           created_at: string
@@ -8417,6 +8517,122 @@ export type Database = {
             columns: ["tracking_site_id"]
             isOneToOne: false
             referencedRelation: "tracking_sites"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      voice_calls: {
+        Row: {
+          answered_at: string | null
+          contact_id: string | null
+          created_at: string
+          created_by: string | null
+          direction: string
+          duration_ms: number | null
+          end_reason: string | null
+          ended_at: string | null
+          id: string
+          organization_id: string
+          owner_user_id: string | null
+          peer_phone: string
+          started_at: string
+          status: string
+          updated_at: string
+          wacalls_call_id: string
+        }
+        Insert: {
+          answered_at?: string | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          direction: string
+          duration_ms?: number | null
+          end_reason?: string | null
+          ended_at?: string | null
+          id?: string
+          organization_id: string
+          owner_user_id?: string | null
+          peer_phone: string
+          started_at?: string
+          status: string
+          updated_at?: string
+          wacalls_call_id: string
+        }
+        Update: {
+          answered_at?: string | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          direction?: string
+          duration_ms?: number | null
+          end_reason?: string | null
+          ended_at?: string | null
+          id?: string
+          organization_id?: string
+          owner_user_id?: string | null
+          peer_phone?: string
+          started_at?: string
+          status?: string
+          updated_at?: string
+          wacalls_call_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voice_calls_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "voice_calls_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      wacalls_sessions: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          organization_id: string
+          qr: string | null
+          status: string
+          updated_at: string
+          wacalls_jid: string | null
+          wacalls_paired_at: string | null
+          wacalls_session_id: string | null
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          organization_id: string
+          qr?: string | null
+          status?: string
+          updated_at?: string
+          wacalls_jid?: string | null
+          wacalls_paired_at?: string | null
+          wacalls_session_id?: string | null
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          organization_id?: string
+          qr?: string | null
+          status?: string
+          updated_at?: string
+          wacalls_jid?: string | null
+          wacalls_paired_at?: string | null
+          wacalls_session_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wacalls_sessions_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]

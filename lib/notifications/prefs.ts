@@ -56,6 +56,36 @@ export function canalLigado(category: NotifyCategory, channel: NotifyChannelPref
   return lerPrefs()[category][channel];
 }
 
+/**
+ * ASSINATURA DAS PREFERÊNCIAS — para `useSyncExternalStore` (ver
+ * `hooks/notifications/useNotifyPrefs.ts`). Mesmo defeito de hidratação que
+ * `lib/theme.tsx` documenta para o tema: um `useState(() => lerPrefs())`
+ * reexecuta o inicializador na hidratação — agora com `window` de verdade —
+ * e diverge do HTML que o servidor mandou (lá sempre `prefsPadrao()`, nunca
+ * `lerPrefs()`) para quem mudou qualquer um dos ~10 interruptores da tela.
+ */
+type Ouvinte = () => void;
+const ouvintesDePrefs = new Set<Ouvinte>();
+let prefsEmCache: NotifyPrefs | null = null;
+
+export function getPrefsSnapshot(): NotifyPrefs {
+  if (prefsEmCache === null) prefsEmCache = lerPrefs();
+  return prefsEmCache;
+}
+
+export function getPrefsSnapshotDoServidor(): NotifyPrefs {
+  return prefsPadrao();
+}
+
+export function inscreverEmPrefs(ouvinte: Ouvinte): () => void {
+  ouvintesDePrefs.add(ouvinte);
+  return () => ouvintesDePrefs.delete(ouvinte);
+}
+
+function avisarMudancaDePrefs(): void {
+  ouvintesDePrefs.forEach((ouvinte) => ouvinte());
+}
+
 export function gravarCanal(
   category: NotifyCategory,
   channel: NotifyChannelPref,
@@ -71,5 +101,7 @@ export function gravarCanal(
     }
   }
   if (category === "message" && channel === "push") setAlertsEnabled(on);
+  prefsEmCache = next;
+  avisarMudancaDePrefs();
   return next;
 }

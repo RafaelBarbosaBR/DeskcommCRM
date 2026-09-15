@@ -41,6 +41,7 @@ vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => undefined) }));
 vi.mock("@/lib/agenda/consulta", () => ({ listaTiposDeAtendimento: vi.fn() }));
 vi.mock("@/lib/impersonate/support", () => ({ requireSupportWrite: vi.fn(async () => null) }));
 
+import { audit } from "@/lib/audit";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -257,6 +258,90 @@ describe("PATCH /api/v1/agenda/tipos — ligar e desligar depois", () => {
 
     expect(linhas[0]?.reminder_enabled).toBe(false);
     expect(linhas[0]?.reminder_minutes_before).toBe(90);
+  });
+});
+
+describe("PATCH /api/v1/agenda/tipos — reativar", () => {
+  /**
+   * O DEFEITO: `is_active` nunca esteve em `criarSchema`/`alterarSchema`
+   * (`.partial()` só repete os campos de `criarSchema`). O Zod descartava o
+   * campo em silêncio, o corpo virava `{}` depois de tirar o `id`, e a rota
+   * respondia SEMPRE "Nenhum campo para alterar." — mesmo com o clique certo
+   * em "Reativar" na tela, que já manda `{ id, is_active: true }` desde
+   * sempre. O que se prende aqui não é o status: é a LINHA reativada de
+   * verdade, e o audit action próprio (não misturado com "tipo_alterado").
+   */
+  it("reativa o tipo desativado — a linha muda, e não é 'Nenhum campo para alterar.'", async () => {
+    authOk();
+    const linhas = [
+      linha({ id: TIPO_DA_ORG, organization_id: ORG, is_active: false }),
+    ];
+    makeAdmin(linhas);
+    const { PATCH } = await import("./route");
+
+    const res = await PATCH(req("PATCH", { id: TIPO_DA_ORG, is_active: true }));
+
+    expect(res.status).toBe(200);
+    expect(linhas[0]?.is_active).toBe(true);
+    expect(vi.mocked(audit).mock.calls[0]?.[0]).toMatchObject({
+      action: "agenda.tipo_reativado",
+      resourceId: TIPO_DA_ORG,
+    });
+  });
+
+  it("a organização A não reativa um tipo da B", async () => {
+    authOk();
+    const daOutra = linha({ id: TIPO_DA_OUTRA, organization_id: OUTRA_ORG, is_active: false });
+    const linhas = [daOutra];
+    makeAdmin(linhas);
+    const { PATCH } = await import("./route");
+
+    const res = await PATCH(req("PATCH", { id: TIPO_DA_OUTRA, is_active: true }));
+
+    expect(res.status).toBe(404);
+    expect(daOutra.is_active, "a organização A reativou o tipo da B").toBe(false);
+  });
+
+  it("reativar exige manager", async () => {
+    vi.mocked(requireRole).mockResolvedValue({
+      ok: false,
+      response: fail("forbidden", "sem permissão", 403, {}),
+    });
+    const linhas = [linha({ id: TIPO_DA_ORG, organization_id: ORG, is_active: false })];
+    const db = makeAdmin(linhas);
+    const { PATCH } = await import("./route");
+
+    const res = await PATCH(req("PATCH", { id: TIPO_DA_ORG, is_active: true }));
+
+    expect(res.status).toBe(403);
+    expect(db.escritas).toEqual([]);
+  });
+
+  it("recusa is_active:false por aqui — desativar continua sendo o DELETE, não este caminho", async () => {
+    authOk();
+    const linhas = [linha({ id: TIPO_DA_ORG, organization_id: ORG, is_active: true })];
+    const db = makeAdmin(linhas);
+    const { PATCH } = await import("./route");
+
+    const res = await PATCH(req("PATCH", { id: TIPO_DA_ORG, is_active: false }));
+
+    expect(res.status).toBe(422);
+    expect(db.escritas).toEqual([]);
+    expect(linhas[0]?.is_active).toBe(true);
+  });
+
+  it("recusa is_active junto de outros campos — reativar é uma ação própria, não uma edição comum", async () => {
+    authOk();
+    const linhas = [linha({ id: TIPO_DA_ORG, organization_id: ORG, is_active: false })];
+    const db = makeAdmin(linhas);
+    const { PATCH } = await import("./route");
+
+    const res = await PATCH(
+      req("PATCH", { id: TIPO_DA_ORG, is_active: true, name: "Novo nome" }),
+    );
+
+    expect(res.status).toBe(422);
+    expect(db.escritas).toEqual([]);
   });
 });
 

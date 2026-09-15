@@ -65,6 +65,11 @@ export const KIND_LABEL = {
   // Diz o que ACONTECEU com o material, e nunca "a indexação falhou": quem
   // subiu um PDF quer saber que o agente ainda não sabe o que está nele.
   conhecimento_nao_indexado: "Um material que você enviou não entrou na base de conhecimento",
+  // Diz o que aconteceu com o CLIENTE (faltou e não respondeu), não o nome
+  // interno do desfecho do fluxo ("exhausted"). Quem lê a Central precisa
+  // decidir o próximo passo do negócio, não diagnosticar o motor de follow-up.
+  appointment_recovery_exhausted: "Cliente faltou e não respondeu à recuperação",
+  voice_call_missed: "Uma chamada de voz tocou e ninguém atendeu",
   other: "Aviso do assistente",
 } as const satisfies Record<InboxKind, string>;
 

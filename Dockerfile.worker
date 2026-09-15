@@ -16,6 +16,9 @@ ENV APP_VERSION=$APP_VERSION
 RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 COPY package.json pnpm-lock.yaml ./
+# Mesmo motivo do Dockerfile principal: `pnpm.patchedDependencies` exige o
+# arquivo do patch presente ANTES do install, senão ENOENT derruba o build.
+COPY patches ./patches
 RUN pnpm install --frozen-lockfile
 
 COPY . .

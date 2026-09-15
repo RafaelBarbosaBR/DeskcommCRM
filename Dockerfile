@@ -7,6 +7,11 @@ FROM node:22-alpine AS deps
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 COPY package.json pnpm-lock.yaml ./
+# `patches/` ANTES do install: `pnpm.patchedDependencies` (package.json) aponta
+# pra cá, e o pnpm precisa do arquivo do patch presente pra aplicá-lo — sem ele
+# o install inteiro falha com ENOENT, e como este layer é cacheável ANTES de
+# `COPY . .`, faltar aqui derruba o build mesmo com o resto do repo completo.
+COPY patches ./patches
 RUN pnpm install --frozen-lockfile
 
 # ---- build: gera .next/standalone ----

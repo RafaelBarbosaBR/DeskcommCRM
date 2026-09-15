@@ -111,6 +111,14 @@ const criarSchema = z.object(camposDoTipo);
 // duas listas para manter em sincronia, e a segunda envelhece calada.
 const alterarSchema = criarSchema.partial().extend({ id: z.string().uuid() });
 const desativarSchema = z.object({ id: z.string().uuid() });
+/**
+ * Reativar é uma AÇÃO própria, não um campo qualquer de `alterarSchema` — o
+ * mesmo raciocínio do DELETE abaixo (que desativa): outra porta, outro audit
+ * action. `.strict()` recusa vir junto de outros campos no mesmo corpo: quem
+ * quer reativar E editar faz duas chamadas, para o audit log continuar
+ * contando cada intenção como o que ela foi.
+ */
+const reativarSchema = z.object({ id: z.string().uuid(), is_active: z.literal(true) }).strict();
 
 /**
  * O slug sai do NOME, e é estável depois de criado.
@@ -228,7 +236,48 @@ export async function PATCH(req: NextRequest): Promise<Response> {
   if (!autorizado.ok) return autorizado.response;
   const t = (texto: string) => traduzir(texto, autorizado.user.idioma);
 
-  const lido = alterarSchema.safeParse(await req.json().catch(() => ({})));
+  const corpo: unknown = await req.json().catch(() => ({}));
+
+  // `is_active` NUNCA esteve em `criarSchema`/`alterarSchema` — o Zod o
+  // descartava em silêncio, o corpo virava `{}` depois de tirar o `id`, e a
+  // rota respondia sempre "Nenhum campo para alterar.", mesmo com o clique
+  // certo em "Reativar" na tela (que já manda exatamente `{ id, is_active:
+  // true }`). Detectado ANTES do schema geral, para não colidir com ele.
+  if (corpo !== null && typeof corpo === "object" && "is_active" in corpo) {
+    const lidoReativar = reativarSchema.safeParse(corpo);
+    if (!lidoReativar.success) {
+      return fail(
+        "validation_failed",
+        t(lidoReativar.error.issues[0]?.message ?? "corpo inválido"),
+        422,
+        { requestId },
+      );
+    }
+
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("calendar_event_types")
+      .update({ is_active: true })
+      .eq("id", lidoReativar.data.id)
+      .eq("organization_id", autorizado.org.orgId)
+      .select("id")
+      .maybeSingle();
+
+    if (error) return fail("internal_error", error.message, 500, { requestId });
+    if (!data) return fail("not_found", t("Tipo de agendamento não encontrado."), 404, { requestId });
+
+    await audit({
+      actorUserId: autorizado.user.id,
+      action: "agenda.tipo_reativado",
+      organizationId: autorizado.org.orgId,
+      resourceType: "calendar_event_types",
+      resourceId: lidoReativar.data.id,
+      metadata: {},
+    });
+    return ok(data, { requestId });
+  }
+
+  const lido = alterarSchema.safeParse(corpo);
   if (!lido.success) {
     // Idem ao POST: o dicionário na borda, para a recusa do lembrete chegar
     // legível a quem opera em espanhol.

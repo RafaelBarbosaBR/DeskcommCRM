@@ -6,6 +6,7 @@ import { ROLE_RANK } from "@/lib/auth/types";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TeamMembersClient } from "./_components/TeamMembersClient";
+import { TeamInvitesClient } from "./_components/TeamInvitesClient";
 import { AttendantsClient } from "./_components/AttendantsClient";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +23,11 @@ export const dynamic = "force-dynamic";
  * `aba` em português porque é o que aparece na barra de endereço de quem usa o
  * produto; os valores internos das abas seguem os do componente.
  */
-const ABAS: Record<string, string> = { membros: "members", atendimento: "attendants" };
+const ABAS: Record<string, string> = {
+  membros: "members",
+  convites: "invites",
+  atendimento: "attendants",
+};
 
 export default async function TeamPage({
   searchParams,
@@ -61,11 +66,17 @@ export default async function TeamPage({
       <Tabs defaultValue={abaInicial} className="flex flex-1 flex-col">
         <TabsList>
           <TabsTrigger value="members">{t("Membros")}</TabsTrigger>
+          {isManager ? <TabsTrigger value="invites">{t("Convites")}</TabsTrigger> : null}
           <TabsTrigger value="attendants">{t("Atendimento")}</TabsTrigger>
         </TabsList>
         <TabsContent value="members" className="mt-4">
           <TeamMembersClient currentUserId={user.id} canManage={isAdmin} />
         </TabsContent>
+        {isManager ? (
+          <TabsContent value="invites" className="mt-4">
+            <TeamInvitesClient canManage={isAdmin} />
+          </TabsContent>
+        ) : null}
         <TabsContent value="attendants" className="mt-4">
           {isManager ? (
             <AttendantsClient canManage={isManager} />

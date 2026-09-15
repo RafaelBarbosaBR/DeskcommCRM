@@ -1,6 +1,6 @@
 "use client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/types";
@@ -88,6 +88,13 @@ export function UpdatePanel() {
   const nova = semV(data.latest_version);
 
   if (rodando) {
+    // O pedido acabou de ser feito e o agente (que bate a cada 5min) ainda não
+    // pegou — `last_step` continua nulo por até 5min de forma NORMAL. Sem este
+    // estado, a tela desenhava a lista de passos inteira em "○" desde o
+    // primeiro instante, como se estivesse travada.
+    if (!data.run?.last_step) {
+      return <PedidoEnviado nova={nova} desde={data.run?.dispatched_at} />;
+    }
     return (
       <Layout titulo={`${t("Atualizando para a versão")} ${nova}`}>
         <ol className="space-y-2 text-sm">
@@ -469,6 +476,48 @@ function Layout({ titulo, children }: { titulo?: string; children: React.ReactNo
       </header>
       <Card className="p-6">{children}</Card>
     </div>
+  );
+}
+
+/** `mm:ss`, sem hora — o relógio nunca precisa passar de alguns minutos aqui. */
+function relogio(segundos: number): string {
+  const m = Math.floor(segundos / 60);
+  const s = segundos % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * O intervalo entre "cliquei em atualizar" e "o agente pegou o pedido" — até
+ * 5 minutos, porque é de quanto em quanto tempo o host bate (ver
+ * `setup_update_agent_cron` no kit de instalação). Sem este estado a tela
+ * saltava direto para a lista de passos com tudo em "○", indistinguível de
+ * travada para quem está olhando.
+ */
+function PedidoEnviado({ nova, desde }: { nova: string; desde: string | undefined }) {
+  const t = useT();
+  const [agora, setAgora] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setAgora(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const decorridos = desde ? Math.max(0, Math.floor((agora - Date.parse(desde)) / 1000)) : 0;
+
+  return (
+    <Layout titulo={`${t("Atualizando para a versão")} ${nova}`}>
+      <p className="text-sm text-muted-foreground">
+        {t(
+          "Pedido enviado — esperando o servidor pegar. Ele confere a cada poucos minutos, então isto é normal.",
+        )}
+      </p>
+      <p className="mt-2 font-mono text-sm text-muted-foreground">{relogio(decorridos)}</p>
+      <p className="mt-4 text-sm text-muted-foreground">
+        {t(
+          "O sistema sai do ar por alguns instantes e volta sozinho. Pode deixar esta página aberta.",
+        )}
+      </p>
+    </Layout>
   );
 }
 

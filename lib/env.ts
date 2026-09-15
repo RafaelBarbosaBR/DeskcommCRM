@@ -151,6 +151,20 @@ const schema = z.object({
   // assine — aí a verificação passa a ser obrigatória.
   WAHA_WEBHOOK_REQUIRE_SIGNATURE: z.string().optional().default("false"),
 
+  // WaCalls (chamada de voz pelo WhatsApp) — DOIS eixos de desligado, sempre
+  // com `&&`: este (a VPS oferece o serviço) e `org_voice_calls.enabled` (a
+  // organização aceitou o risco). Ausente = feature nem aparece na
+  // instalação, mesmo raciocínio de `optional().default("")` acima (não
+  // `required()`: quem não configurou o serviço de terceiro não pode ter o
+  // boot inteiro derrubado por uma feature opcional).
+  //
+  // SEM token: a API do WaCalls não tem autenticação nenhuma (confirmado na
+  // fonte do terceiro — README dele é explícito: "run it only on a trusted
+  // LAN"). A segurança aqui é de REDE — o serviço entra só na rede `internal`
+  // do compose, sem `ports:` publicado — não de credencial. Ver o cabeçalho
+  // de `Dockerfile.wacalls`.
+  WACALLS_API_BASE_URL: z.string().optional().default(""),
+
   // Upstash Redis
   UPSTASH_REDIS_REST_URL: required("UPSTASH_REDIS_REST_URL"),
   UPSTASH_REDIS_REST_TOKEN: required("UPSTASH_REDIS_REST_TOKEN"),

@@ -224,6 +224,44 @@ services:
     logging: *default-logging
     networks: [internal]
 
+  wacalls:
+    # Chamada de voz pelo WhatsApp (WaCalls) — OPCIONAL, ao contrário de todo
+    # outro serviço deste arquivo: nasce sob `profiles: ["wacalls"]`, então um
+    # `docker compose up -d` comum NUNCA o sobe. Só entra quando o `.env` tem
+    # `COMPOSE_PROFILES=wacalls` — decisão de quem administra a VPS, o mesmo
+    # eixo que `WACALLS_API_BASE_URL` (ver lib/voice/opt-in.ts). As duas
+    # variáveis andam juntas de propósito: subir o contêiner sem apontar
+    # `WACALLS_API_BASE_URL` para ele deixaria um serviço rodando que a
+    # aplicação nunca usa; apontar sem subir o contêiner deixaria a
+    # aplicação falando sozinha com ninguém do outro lado.
+    profiles: ["wacalls"]
+    # Teto de memória conservador — binário Go único + SQLite embutido, sem
+    # browser automation nenhum (ao contrário do WAHA). Ajustar se medição
+    # real numa VPS de produção pedir mais.
+    mem_limit: 256m
+    image: ${WACALLS_IMAGE:-ghcr.io/melgarafael/deskcomm-wacalls:stable}
+    pull_policy: ${WACALLS_PULL_POLICY:-always}
+    build:
+      context: .
+      dockerfile: Dockerfile.wacalls
+    restart: unless-stopped
+    volumes:
+      - wacalls-data:/data
+    # SEM `ports:` — o único caminho até ele é a rede interna do compose. A
+    # API do WaCalls não tem autenticação nenhuma (ver o cabeçalho de
+    # Dockerfile.wacalls); publicar a porta na internet exporia pareamento e
+    # discagem de voz a qualquer um.
+    networks: [internal]
+    healthcheck:
+      # O servidor de terceiro não expõe `/healthz` (conferido na fonte) —
+      # `/api/sessions` sempre responde, mesmo com zero contas pareadas.
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/api/sessions"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -246,6 +284,7 @@ services:
 volumes:
   waha-data:
   waha-media:
+  wacalls-data:
   caddy-data:
   caddy-config:
 

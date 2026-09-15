@@ -117,6 +117,9 @@ jobs:
           - name: deskcomm-scheduler
             dockerfile: Dockerfile.scheduler
             title: DeskcommCRM scheduler
+          - name: deskcomm-wacalls
+            dockerfile: Dockerfile.wacalls
+            title: WaCalls server (vendorizado)
 
     steps:
       - uses: actions/checkout@v7
@@ -351,7 +354,7 @@ jobs:
           # canal deixaria de ser o mesmo manifesto que a versão.
           dono=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
           numero="${VERSAO#v}"
-          for img in deskcommcrm deskcomm-worker deskcomm-scheduler; do
+          for img in deskcommcrm deskcomm-worker deskcomm-scheduler deskcomm-wacalls; do
             echo "::group::${img}"
             docker buildx imagetools create \
               --tag "${REGISTRY}/${dono}/${img}:stable" \

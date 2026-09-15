@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { requireAuth, resolveActiveOrg } from "@/lib/auth/server";
 import { ROLE_RANK } from "@/lib/auth/types";
 import { ConexoesShell } from "@/components/connections/ConexoesShell";
+import { instalacaoOfereceVoz } from "@/lib/voice/opt-in";
 import { traduzir } from "@/lib/i18n/dicionario";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,7 @@ export default async function ConnectionsPage() {
   const wahaConfigured = Boolean(
     process.env.WAHA_API_BASE_URL && key && key !== "dev_plaintext_change_me",
   );
+  const vozOferecida = instalacaoOfereceVoz();
 
   return (
     <div className="flex h-full flex-col gap-6 p-6">
@@ -32,7 +34,7 @@ export default async function ConnectionsPage() {
           )}
         </p>
       </header>
-      <ConexoesShell wahaConfigured={wahaConfigured} />
+      <ConexoesShell wahaConfigured={wahaConfigured} vozOferecida={vozOferecida} />
     </div>
   );
 }

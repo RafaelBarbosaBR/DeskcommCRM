@@ -28,6 +28,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { atualizarModeloPadraoDaOrganizacao } from "@/app/actions/settings/updateDefaultAiModel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -93,6 +94,7 @@ interface Dados {
   provedores: Provedor[];
   credenciais: Credencial[];
   modelos: Modelo[];
+  padraoDaOrganizacao: { provider: string; defaultModel: string | null };
   podeEditar: boolean;
 }
 
@@ -197,6 +199,8 @@ export function PainelDeProvedores() {
         </Card>
       )}
 
+      <PadraoDaOrganizacao dados={dados} aoSalvar={carregar} />
+
       <div className="space-y-8">
         {porPapel.map(({ papel, info, pontos }) => (
           <section key={papel} data-testid={`papel-${papel}`}>
@@ -235,6 +239,122 @@ export function PainelDeProvedores() {
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * O último degrau — vale para todo ponto que não tem escolha própria, 24 dos
+ * 25 numa instalação nova. Fica no TOPO da tela, antes dos grupos, porque é a
+ * configuração que mais gente nunca vai abrir "Configuração avançada" para
+ * encontrar, e é exatamente por isso que o painel existe: sem esta seção, o
+ * valor só era visível e trocável mexendo no banco à mão.
+ */
+function PadraoDaOrganizacao({
+  dados,
+  aoSalvar,
+}: {
+  dados: Dados;
+  aoSalvar: () => Promise<void>;
+}) {
+  const t = useT();
+  const [provider, setProvider] = useState(dados.padraoDaOrganizacao.provider);
+  const [modelId, setModelId] = useState(dados.padraoDaOrganizacao.defaultModel ?? "");
+  const [salvando, setSalvando] = useState(false);
+
+  const modelosDoProvider = dados.modelos.filter((m) => m.provider === provider);
+
+  async function salvar() {
+    setSalvando(true);
+    try {
+      const resultado = await atualizarModeloPadraoDaOrganizacao(provider, modelId);
+      if (!resultado.ok) {
+        toast.error(t(resultado.erro));
+        return;
+      }
+      if (resultado.avisos.length > 0) resultado.avisos.forEach((a) => toast.warning(t(a)));
+      else toast.success(t("Padrão da organização atualizado."));
+      await aoSalvar();
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <Card className="mb-8 p-4" data-testid="padrao-da-organizacao">
+      <h2 className="font-medium">{t("Padrão da organização")}</h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        {t(
+          "O modelo que atende todo ponto que ninguém configurou individualmente — inclusive os que respondem o cliente. Um erro aqui afeta a maior parte do sistema de uma vez.",
+        )}
+      </p>
+
+      {!dados.podeEditar ? (
+        <p className="mt-3 font-mono text-sm">
+          {provider} / {modelId || t("não definido")}
+        </p>
+      ) : (
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div>
+            <Label className="text-xs">{t("Provedor")}</Label>
+            <Select
+              value={provider}
+              onValueChange={(v) => {
+                setProvider(v);
+                setModelId("");
+              }}
+            >
+              <SelectTrigger data-testid="padrao-provider">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {dados.provedores.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.rotulo}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <Label className="text-xs">{t("Modelo")}</Label>
+            {modelosDoProvider.length === 0 ? (
+              <Input
+                value={modelId}
+                onChange={(e) => setModelId(e.target.value)}
+                placeholder="ex.: claude-sonnet-4-6"
+                data-testid="padrao-modelo"
+              />
+            ) : (
+              <Select value={modelId} onValueChange={setModelId}>
+                <SelectTrigger data-testid="padrao-modelo">
+                  <SelectValue placeholder={t("escolha")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {modelosDoProvider.map((m) => (
+                    <SelectItem key={m.model_id} value={m.model_id}>
+                      {m.display_name}
+                      {!m.supports_tools ? ` — ${t("sem ferramentas")}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+
+          <div className="flex items-end">
+            <Button
+              size="sm"
+              disabled={salvando || !modelId}
+              onClick={() => void salvar()}
+              data-testid="padrao-salvar"
+            >
+              {salvando ? t("Salvando…") : t("Salvar")}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 

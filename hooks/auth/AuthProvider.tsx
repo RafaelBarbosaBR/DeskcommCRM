@@ -12,6 +12,9 @@ import { Providers } from "@/app/providers";
 import { createClient, resetRealtimeAuthentication } from "@/lib/supabase/browser";
 import type { AuthUser, ActiveOrg, Role } from "@/lib/auth/types";
 import { ROLE_RANK } from "@/lib/auth/types";
+import { VoiceCallProvider } from "@/components/voice/VoiceCallContext";
+import { IncomingCallBanner } from "@/components/voice/IncomingCallBanner";
+import { ActiveCallPanel } from "@/components/voice/ActiveCallPanel";
 
 interface AuthCtx {
   user: AuthUser;
@@ -86,7 +89,15 @@ export function AuthProvider({
   );
 
   return <Ctx.Provider value={value}>
-    <Providers key={`${user.id}:${activeOrg?.orgId ?? "none"}:${user.support?.id ?? "normal"}:${user.support?.access_mode ?? ""}`}>{children}</Providers>
+    <Providers key={`${user.id}:${activeOrg?.orgId ?? "none"}:${user.support?.id ?? "normal"}:${user.support?.access_mode ?? ""}`}>
+      <VoiceCallProvider>
+        {children}
+        {/* Flutuam sobre QUALQUER rota de /app/* — uma ligação entrando não
+            deveria depender de estar numa tela específica para tocar. */}
+        <IncomingCallBanner />
+        <ActiveCallPanel />
+      </VoiceCallProvider>
+    </Providers>
   </Ctx.Provider>;
 }
 

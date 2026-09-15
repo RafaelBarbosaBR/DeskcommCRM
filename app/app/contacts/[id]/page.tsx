@@ -1,6 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 import { requireAuth, resolveActiveOrg } from "@/lib/auth/server";
 import { createClient } from "@/lib/supabase/server";
+import { chamadaDeVozLigada } from "@/lib/voice/opt-in";
+import { lerEscolhaDaOrg } from "@/lib/voice/guarda";
 import { ContactDetailClient } from "./_client";
 
 export const dynamic = "force-dynamic";
@@ -26,5 +28,9 @@ export default async function ContactDetailPage({
     .eq("id", id)
     .maybeSingle();
   if (!contact) notFound();
-  return <ContactDetailClient contactId={id} />;
+
+  const escolha = await lerEscolhaDaOrg(supabase, activeOrg.orgId);
+  const vozLigada = chamadaDeVozLigada(escolha.enabled);
+
+  return <ContactDetailClient contactId={id} vozLigada={vozLigada} />;
 }

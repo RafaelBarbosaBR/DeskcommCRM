@@ -26,6 +26,8 @@ export interface SystemVersion {
     id: string;
     status: string;
     last_step: string | null;
+    /** Quando o pedido foi criado — base do relógio de "esperando o servidor pegar". */
+    dispatched_at: string;
     /** Versão que estava instalada quando o run começou. */
     from_version: string;
     /** Versão que o run tentou instalar. */

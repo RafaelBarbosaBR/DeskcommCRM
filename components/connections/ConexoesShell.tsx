@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { CanalOficialClient } from "./CanalOficialClient";
 import { CanalParceiroClient } from "./CanalParceiroClient";
+import { CanalVozClient } from "./CanalVozClient";
 import { ConnectionsClient } from "./ConnectionsClient";
 import { TemplatesClient } from "./TemplatesClient";
 import { TemplatesParceiroClient } from "./TemplatesParceiroClient";
@@ -33,12 +34,23 @@ import { useT } from "@/hooks/i18n/useT";
  * apontando a aba certa, e um link colado no chat abre onde deveria. Aba que só
  * existe em `useState` transforma todo link salvo em "abre e procura de novo".
  */
-export function ConexoesShell({ wahaConfigured }: { wahaConfigured: boolean }) {
+export function ConexoesShell({
+  wahaConfigured,
+  vozOferecida,
+}: {
+  wahaConfigured: boolean;
+  /** A instalação tem o serviço de chamada de voz configurado — sem isto a aba nem aparece. */
+  vozOferecida: boolean;
+}) {
   const t = useT();
   const router = useRouter();
   const params = useSearchParams();
   const abaParam = params.get("aba");
-  const aba = abaParam === "oficial" ? "oficial" : abaParam === "parceiro" ? "parceiro" : "numeros";
+  const aba =
+    abaParam === "oficial" ? "oficial"
+    : abaParam === "parceiro" ? "parceiro"
+    : abaParam === "voz" && vozOferecida ? "voz"
+    : "numeros";
   const sub = params.get("sub") === "templates" ? "templates" : "conexao";
 
   const irPara = (proximaAba: string, proximaSub?: string): void => {
@@ -71,11 +83,18 @@ export function ConexoesShell({ wahaConfigured }: { wahaConfigured: boolean }) {
             porque no dia em que houver um segundo parceiro esta aba não muda.
             Aqui fica o CONCEITO; lá dentro o cartão diz de quem se trata. */}
         <TabsTrigger value="parceiro">{t("Provedor parceiro")}</TabsTrigger>
+        {vozOferecida ? <TabsTrigger value="voz">{t("Chamada de voz")}</TabsTrigger> : null}
       </TabsList>
 
       <TabsContent value="numeros" className="mt-0">
         <ConnectionsClient wahaConfigured={wahaConfigured} />
       </TabsContent>
+
+      {vozOferecida ? (
+        <TabsContent value="voz" className="mt-0">
+          <CanalVozClient />
+        </TabsContent>
+      ) : null}
 
       <TabsContent value="parceiro" className="mt-0">
         {/* Sub-abas como no canal oficial, e pelo mesmo motivo: conectar e

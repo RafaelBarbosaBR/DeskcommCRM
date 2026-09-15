@@ -29,11 +29,13 @@ type ContextoGeral = { papel: Role; href: string; rotulo: string };
 interface Politica { refs: readonly InboxRefKind[]; orientacao: string; geral?: ContextoGeral }
 const EVOLUCAO: ContextoGeral = { papel: "manager", href: "/app/ai/evolution", rotulo: "Abrir evolução do assistente" };
 const CONEXOES: ContextoGeral = { papel: "admin", href: "/app/connections", rotulo: "Revisar conexões" };
+const VOZ: ContextoGeral = { papel: "agent", href: "/app/connections?aba=voz", rotulo: "Ver chamadas de voz" };
 
 /** Completude em compile time; pares desconhecidos em clones falham fechados. */
 export const POLITICAS_DE_AVISO = {
   appointment_outcome_required:{refs:["appointment"],orientacao:"Abra o compromisso e confirme a presença."},
   appointment_recovery_review:{refs:["appointment"],orientacao:"Confira o motivo e escolha o próximo passo no compromisso."},
+  appointment_recovery_exhausted:{refs:["appointment"],orientacao:"O cliente não respondeu à régua de recuperação. Decida o próximo passo e mova o card no funil."},
   routing_unassigned: { refs: ["conversation"], orientacao: "Confira os responsáveis em Configurações → Atendimento." },
   qr_rescan: { refs: ["channel_session"], orientacao: "Peça a quem administra para revisar a conexão do WhatsApp." },
   job_dead: { refs: ["conversation", "job_queue", "cron_jobs"], orientacao: "Confira o motivo deste aviso com quem administra antes de tentar a operação novamente." },
@@ -56,6 +58,11 @@ export const POLITICAS_DE_AVISO = {
   promise_unfulfilled: { refs: ["conversation"], orientacao: "Confira o compromisso descrito e defina quem fica responsável." },
   contact_proposal_expired: { refs: ["organization"], orientacao: "A sugestão venceu. Se a informação ainda for relevante, confirme com o cliente antes de editar sua ficha." },
   conhecimento_nao_indexado: { refs: ["ai_knowledge_source"], orientacao: "Peça ao gestor para conferir o material e o motivo da falha na base de conhecimento." },
+  // Chamada de voz recebida sem atendimento. Quando o chamador foi
+  // identificado como contato, o aviso referencia direto o contato
+  // (`ref_kind="contact"`); sem identificação, cai no fallback `geral`
+  // — a lista de chamadas continua alcançável.
+  voice_call_missed: { refs: ["contact"], orientacao: "O telefone tocou e ninguém atendeu. Confira se vale retornar a chamada.", geral: VOZ },
   other: { refs: ["lead", "channel_session", "appointment", "ai_agent"], orientacao: "Confira a situação descrita neste aviso com a pessoa responsável." },
 } satisfies Record<InboxKind, Politica>;
 

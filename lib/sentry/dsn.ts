@@ -39,6 +39,16 @@ export function isCommunityDsn(dsn: string | undefined): boolean {
 export const INTEGRACAO_DE_SESSAO = "BrowserSession";
 
 /**
+ * Integração default que instrumenta Web Vitals/navegação mesmo com
+ * `tracesSampleRate: 0` — a amostragem decide SE um trace é enviado, não se o
+ * coletor roda. No DSN da comunidade ela nunca manda nada (issue #100) e ainda
+ * assim fica ouvindo a Performance API do navegador; uma extensão que mexe
+ * nela pode derrubar esse coletor com erro no console de quem hospeda, sem
+ * nenhum trace ter sido enviado para justificar o custo.
+ */
+export const INTEGRACAO_DE_TRACING = "BrowserTracing";
+
+/**
  * Quais integrações do browser valem para o DSN em uso.
  *
  * A política de `isCommunityDsn` estava DECLARADA e não estava em vigor. As duas
@@ -61,11 +71,19 @@ export const INTEGRACAO_DE_SESSAO = "BrowserSession";
  * Quem aponta para o PRÓPRIO Sentry continua recebendo tudo, sessão inclusive: lá
  * o dado não sai da infraestrutura de quem é dono dele, e release health é
  * legítimo. A assimetria é a mesma das amostragens.
+ *
+ * Pela mesma lógica, `browserTracingIntegration` (Web Vitals/navegação) também
+ * sai: ela entra por default independente de `tracesSampleRate`, então ficava
+ * instrumentando o browser sem nunca mandar um trace no DSN da comunidade — só
+ * o risco de uma extensão de navegador derrubá-la com erro no console de quem
+ * hospeda, por um dado que nunca seria enviado mesmo.
  */
 export function integracoesDoCliente<T extends { name: string }>(
   padraoDoSdk: readonly T[],
   paraAComunidade: boolean,
 ): T[] {
   if (!paraAComunidade) return [...padraoDoSdk];
-  return padraoDoSdk.filter((i) => i.name !== INTEGRACAO_DE_SESSAO);
+  return padraoDoSdk.filter(
+    (i) => i.name !== INTEGRACAO_DE_SESSAO && i.name !== INTEGRACAO_DE_TRACING,
+  );
 }

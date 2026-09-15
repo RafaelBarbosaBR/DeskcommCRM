@@ -11,6 +11,7 @@ import { signInviteToken, INVITE_TTL_SECONDS } from "@/lib/auth/invite-token";
 import { buildInviteEmail } from "@/lib/email/templates/invite";
 import { sendEmail } from "@/lib/email/resend";
 import { marcaDaSaida } from "@/lib/branding/saida";
+import { registrarConvite } from "@/lib/auth/registrar-convite";
 
 /** Link sempre existe, inclusive quando a instalação não configurou e-mail. */
 export async function issueInvite(input: {
@@ -80,6 +81,16 @@ export async function issueInvite(input: {
       resourceId: inviteId,
       requestId: input.requestId,
       metadata: { email, role: input.role, email_dispatched: dispatched },
+    });
+    await registrarConvite({
+      inviteId,
+      organizationId: input.organizationId,
+      email,
+      role: input.role,
+      interfaceSettings,
+      invitedBy: input.inviterId,
+      expiresAt: new Date(exp * 1000),
+      emailDispatched: dispatched,
     });
   }
   return {

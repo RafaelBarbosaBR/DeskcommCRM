@@ -76,15 +76,23 @@ function lerServicos(yaml: string): Map<string, string> {
 
 const servicos = lerServicos(compose);
 
-/** Só as imagens que NÓS publicamos. Upstream tem regra própria, mais abaixo. */
-const NOSSOS = ["app", "worker", "scheduler"] as const;
+/**
+ * Só as imagens que NÓS publicamos. Upstream tem regra própria, mais abaixo.
+ *
+ * `wacalls` entra aqui, não em "upstream": ainda que o BINÁRIO dentro dela
+ * seja vendorizado de terceiro (`Dockerfile.wacalls`, commit fixo), quem
+ * PUBLICA a imagem em si é o nosso GHCR (`deskcomm-wacalls`), com o mesmo
+ * padrão de tag móvel `:stable` + `pull_policy: always` do worker/scheduler
+ * — a mesma classe de decisão que os outros três, não a do WAHA/Redis/Caddy.
+ */
+const NOSSOS = ["app", "worker", "scheduler", "wacalls"] as const;
 
 describe("packaging — o artefato que o cliente instala", () => {
-  it("o parser enxerga os 7 serviços de produção", () => {
+  it("o parser enxerga os 8 serviços de produção", () => {
     // Guarda do próprio instrumento: se o parser parar de enxergar os serviços,
     // todos os testes abaixo passariam vazios — verde por não ter medido nada.
     expect([...servicos.keys()].sort()).toEqual(
-      ["app", "caddy", "redis", "scheduler", "srh", "waha", "worker"].sort(),
+      ["app", "caddy", "redis", "scheduler", "srh", "wacalls", "waha", "worker"].sort(),
     );
   });
 
@@ -212,7 +220,7 @@ describe("packaging — o artefato que o cliente instala", () => {
     // O CI injeta os labels via docker/metadata-action, mas o build local do
     // docker-compose.build.yml não passa por ele. Sem LABEL no arquivo, essa
     // imagem sai sem origem nenhuma — e é justamente a que vira dívida numa VPS.
-    for (const arquivo of ["Dockerfile", "Dockerfile.worker", "Dockerfile.scheduler"]) {
+    for (const arquivo of ["Dockerfile", "Dockerfile.worker", "Dockerfile.scheduler", "Dockerfile.wacalls"]) {
       const conteudo = fs.readFileSync(path.join(RAIZ, arquivo), "utf8");
       expect(conteudo, `${arquivo} sem org.opencontainers.image.source`).toContain(
         "org.opencontainers.image.source",

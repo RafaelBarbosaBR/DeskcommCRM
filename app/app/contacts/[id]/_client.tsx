@@ -23,12 +23,15 @@ import { PropostasDeDado } from "@/components/contacts/PropostasDeDado";
 import { ConversaNoDossie } from "@/components/kanban/ConversaNoDossie";
 import { rotuloDoContato } from "@/lib/contacts/rotulo-do-contato";
 import { phoneForDisplay } from "@/lib/channels/phone-variants";
+import { DialButton } from "@/components/voice/DialButton";
 
 interface Props {
   contactId: string;
+  /** Os dois eixos de "chamada de voz ligada" já resolvidos no servidor — ver `lib/voice/opt-in.ts`. */
+  vozLigada: boolean;
 }
 
-export function ContactDetailClient({ contactId }: Props) {
+export function ContactDetailClient({ contactId, vozLigada }: Props) {
   const localeDaData = useLocaleDeData();
   const t = useT();
   const q = useContact(contactId);
@@ -104,10 +107,15 @@ export function ContactDetailClient({ contactId }: Props) {
           </div>
         </div>
         {!contact.is_anonymized && user.support?.access_mode !== "support_readonly" && (
-          <Button variant="outline" onClick={() => setEditOpen(true)} className="shrink-0">
-            <PencilSimple size={16} weight="bold" aria-hidden />
-            <span>{t("Editar")}</span>
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            {vozLigada && contact.phone_number ? (
+              <DialButton contactId={contact.id} phone={contact.phone_number} />
+            ) : null}
+            <Button variant="outline" onClick={() => setEditOpen(true)}>
+              <PencilSimple size={16} weight="bold" aria-hidden />
+              <span>{t("Editar")}</span>
+            </Button>
+          </div>
         )}
       </header>
 

@@ -1,10 +1,23 @@
 import { beforeEach, expect, it, vi } from "vitest";
-const h = vi.hoisted(() => ({ send: vi.fn(), audit: vi.fn() }));
+const h = vi.hoisted(() => ({ send: vi.fn(), audit: vi.fn(), teamInvitesInsert: vi.fn() }));
 vi.mock("@/lib/env", () => ({ env: { NEXT_PUBLIC_APP_URL: "http://localhost:3013" } }));
 vi.mock("@/lib/email/resend", () => ({ sendEmail: h.send }));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
 vi.mock("@/lib/branding/saida", () => ({ marcaDaSaida: async () => ({ nome: "Local", cor: "#000000" }) }));
 vi.mock("@/lib/email/templates/invite", () => ({ buildInviteEmail: () => ({ subject: "Convite", html: "Convite", text: "Convite" }) }));
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: () => ({
+    from: (tabela: string) => {
+      if (tabela !== "team_invites") throw new Error(`tabela inesperada: ${tabela}`);
+      return {
+        insert: async (v: unknown) => {
+          h.teamInvitesInsert(v);
+          return { error: null };
+        },
+      };
+    },
+  }),
+}));
 import { issueInvite } from "./issue-invite";
 import { verifyInviteToken } from "./invite-token";
 const input = { email: "guest@example.test", role: "admin" as const,
@@ -31,4 +44,17 @@ it("replay usa identidade/prazo estáveis e não reenvia", async () => {
   expect(await issueInvite(args)).toEqual(await issueInvite(args));
   expect(h.send).not.toHaveBeenCalled();
   expect(h.audit).not.toHaveBeenCalled();
+  // `dispatch: false` é o mesmo interruptor que já cala e-mail/auditoria —
+  // sem gravar `team_invites` aqui, todo teste que usa esse atalho (é o caso
+  // de `signUp.test.ts`/afins) passaria a criar linha de convite de verdade.
+  expect(h.teamInvitesInsert).not.toHaveBeenCalled();
+});
+it("grava a linha de team_invites com o MESMO invite_id do token", async () => {
+  h.send.mockResolvedValue({ ok: true });
+  const result = await issueInvite(input);
+  const token = result.accept_url.split("/").at(-1)!;
+  const payload = verifyInviteToken(token)!;
+  expect(h.teamInvitesInsert).toHaveBeenCalledWith(
+    expect.objectContaining({ id: payload.invite_id, email: input.email, role: "admin" }),
+  );
 });

@@ -34,6 +34,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   INTEGRACAO_DE_SESSAO,
+  INTEGRACAO_DE_TRACING,
   integracoesDoCliente,
   isCommunityDsn,
   resolveSentryDsn,
@@ -43,6 +44,7 @@ const PADRAO_FALSO = [
   { name: "InboundFilters" },
   { name: "Breadcrumbs" },
   { name: INTEGRACAO_DE_SESSAO },
+  { name: INTEGRACAO_DE_TRACING },
   { name: "GlobalHandlers" },
 ] as const;
 
@@ -50,6 +52,15 @@ describe("integracoesDoCliente", () => {
   it("no DSN da comunidade a sessão de release health NÃO vai", () => {
     const saida = integracoesDoCliente(PADRAO_FALSO, true).map((i) => i.name);
     expect(saida).not.toContain(INTEGRACAO_DE_SESSAO);
+  });
+
+  it("no DSN da comunidade o tracing (Web Vitals/navegação) também NÃO vai", () => {
+    // browserTracingIntegration entra por default independente de
+    // `tracesSampleRate` — ela instrumentava o browser mesmo no DSN da
+    // comunidade, sem nunca mandar um trace, só o risco de uma extensão de
+    // navegador derrubá-la com erro no console de quem hospeda.
+    const saida = integracoesDoCliente(PADRAO_FALSO, true).map((i) => i.name);
+    expect(saida).not.toContain(INTEGRACAO_DE_TRACING);
   });
 
   it("no DSN da comunidade o RESTO continua — não é desligar telemetria, é escolher o quê", () => {
@@ -116,6 +127,38 @@ describe("o nome da integração casa com o SDK instalado", () => {
       "não achei o módulo da integração de sessão do @sentry/browser — ENSINE ESTE TESTE",
     ).toBeTruthy();
     expect(fonte).toContain(`name: "${INTEGRACAO_DE_SESSAO}"`);
+  });
+
+  it("o @sentry/browser instalado ainda chama a integração de tracing assim", () => {
+    const store = path.join(process.cwd(), "node_modules", ".pnpm");
+    const pastas = readdirSync(store).filter((d) => d.startsWith("@sentry+browser@"));
+    expect(
+      pastas.length,
+      "não achei o @sentry/browser no store do pnpm — ENSINE ESTE TESTE",
+    ).toBeGreaterThan(0);
+
+    const fonte = pastas
+      .map((d) =>
+        path.join(
+          store,
+          d,
+          "node_modules/@sentry/browser/build/npm/cjs/prod/tracing/browserTracingIntegration.js",
+        ),
+      )
+      .map((p) => {
+        try {
+          return readFileSync(p, "utf8");
+        } catch {
+          return "";
+        }
+      })
+      .find((c) => c.length > 0);
+
+    expect(
+      fonte,
+      "não achei o módulo de tracing do @sentry/browser — ENSINE ESTE TESTE",
+    ).toBeTruthy();
+    expect(fonte).toContain(`"${INTEGRACAO_DE_TRACING}"`);
   });
 });
 

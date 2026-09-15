@@ -266,6 +266,42 @@ const PROVA_PROPRIA: readonly Excecao[] = [
       "da organização viraram venda, e quem o lê é o servidor com o admin client " +
       "filtrando organization_id à mão (a tela `/app/settings/conversoes`).",
   },
+  {
+    tabela: "team_invites",
+    razao:
+      "tests/invariants/convites-de-equipe-rls.test.ts — migration 0245. " +
+      "Isolamento cross-tenant (admin A não lê/escreve org B) MAIS o gate de " +
+      "papel nos dois eixos: leitura exige manager+ (agent não lê), escrita " +
+      "exige admin+ (manager não revoga). Fica fora de TABLES de propósito: " +
+      "o usuário semeado ali é `agent`, e o controle positivo de leitura " +
+      "falharia por ACERTO — mesmo caso de webhook_lead_captures acima.",
+  },
+  {
+    tabela: "wacalls_sessions",
+    razao:
+      "tests/invariants/chamada-de-voz-rls.test.ts — migration 0247. " +
+      "Isolamento cross-tenant MAIS o gate de escrita (agent não desparea, " +
+      "só admin+). Fica fora de TABLES porque aquele molde só mede leitura " +
+      "— a leitura aqui é aberta a todo membro e passaria sem medir o eixo " +
+      "que importa (a escrita fechada por papel).",
+  },
+  {
+    tabela: "org_voice_calls",
+    razao:
+      "tests/invariants/chamada-de-voz-rls.test.ts — migration 0247. " +
+      "Isolamento cross-tenant MAIS o gate de escrita (agent não liga/desliga " +
+      "a chamada de voz da organização, só admin+). Mesmo motivo de " +
+      "wacalls_sessions para ficar fora de TABLES.",
+  },
+  {
+    tabela: "voice_calls",
+    razao:
+      "tests/invariants/chamada-de-voz-rls.test.ts — migration 0247. " +
+      "Isolamento cross-tenant MAIS o gate de escrita (viewer não disca, só " +
+      "agent+). Leitura aberta a todo membro (é histórico de contato com o " +
+      "cliente, mesmo raciocínio de conversations/messages) — por isso fica " +
+      "fora de TABLES, que mediria só a metade fácil.",
+  },
 ];
 
 /**

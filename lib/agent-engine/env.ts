@@ -80,6 +80,14 @@ const envSchema = z.object({
   WATCHDOG_REDRIVE_MIN_AGE_MS: z.coerce.number().int().positive().default(30_000),
   WATCHDOG_REDRIVE_BATCH_SIZE: z.coerce.number().int().positive().default(10),
   WATCHDOG_REDRIVE_SPACING_MS: z.coerce.number().int().positive().default(4_000),
+  // Bridge de eventos da chamada de voz (WaCalls, migration 0247) — mesmo
+  // raciocínio do watchdog acima: opcional no boot, sem ela o loop fica OFF
+  // (warn), nunca derruba o worker. Único serviço da instalação (não é por
+  // organização): a organização liga/desliga por cima, via `org_voice_calls`.
+  // SEM token — a API do WaCalls não tem autenticação (ver o cabeçalho de
+  // `Dockerfile.wacalls`); a segurança é a rede `internal`, sem porta publicada.
+  WACALLS_API_BASE_URL: z.string().url().optional(),
+  VOICE_BRIDGE_MAX_BACKOFF_MS: z.coerce.number().int().positive().default(30_000),
   // Dono ÚNICO dos eventos ai_agent.dispatch_requested (mesma chave do app):
   // 'engine' (default) = o drain deste worker consome; 'native' = o dispatcher
   // EPIC-13 consome e o drain daqui NÃO liga. Nunca os dois.

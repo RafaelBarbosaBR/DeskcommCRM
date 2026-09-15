@@ -19,6 +19,9 @@
  *    da bolha de voz. E a Meta **não converte** — quem manda mp3 com `voice:true` erra;
  *    o outro canal converte por nós, este não.
  */
+import { assertDestinoResolvidoSeguro } from "@/lib/automation/outbound-ip";
+import { assertSafeOutboundUrl } from "@/lib/automation/outbound-url";
+import { MAX_MEDIA_BYTES, MediaTooLargeError, type FetchedMedia } from "@/lib/messaging/media/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { metaContactsPayload } from "@/lib/channels/meta/contact-card";
 import { resolveMetaCreds } from "../meta/credentials";
@@ -183,6 +186,81 @@ export const metaCloudAdapter: ChannelAdapter = {
     notConfigured: "meta_not_configured",
     sendFailed: "meta_error",
     unknownError: "meta_unknown",
+  },
+
+  /**
+   * Baixa o anexo que o cliente mandou.
+   *
+   * A Meta não manda URL nenhuma no webhook — só o `media.id` (ver
+   * `lib/channels/meta/ingest.ts`, que grava esse id como `media_url` por não
+   * ter outra coisa pra gravar). `input.url` aqui é ESSE id, não uma URL:
+   * "cada canal sabe o que fazer com ela" é literal.
+   *
+   * O download é em DOIS passos, os dois autenticados com o MESMO Bearer:
+   *
+   *   1. `GET /{media-id}` devolve metadado — entre eles, a URL de verdade,
+   *      assinada e de vida curta (documentado pela Meta como ~5 minutos).
+   *      Não dá pra guardar essa URL: por isso o passo 2 acontece no mesmo
+   *      request, nunca persistido entre um e outro.
+   *   2. `GET` nessa URL, AINDA com o Bearer — sem ele a Meta devolve 401,
+   *      diferente de um link público comum.
+   *
+   * A URL do passo 2 vem da PRÓPRIA Meta (resposta do passo 1 autenticado
+   * contra `graph.facebook.com`), não do payload de um webhook — bem menos
+   * exposta que o caso do canal intermediado (`zernio.ts`, onde a URL vem
+   * direto do provider por fora). Mesmo assim passa pelas mesmas guardas de
+   * SSRF que o resto do repo usa pra URL de fora: defesa em profundidade não
+   * custa caro, e uma resposta inesperada não é motivo pra pular a checagem.
+   */
+  async fetchInboundMedia(input: ChannelTenantScope & {
+    sessionRef: string;
+    url: string;
+    hintMime?: string | null;
+  }): Promise<FetchedMedia> {
+    const creds = await resolveMetaCreds(createAdminClient(), {
+      organizationId: input.organizationId,
+      phoneNumberId: input.sessionRef,
+    });
+    if (!creds) throw new Error("meta_not_configured: sem credencial para baixar a mídia.");
+
+    const mediaId = input.url;
+    const metaRes = await fetch(`https://graph.facebook.com/${creds.graphVersion}/${mediaId}`, {
+      headers: { Authorization: `Bearer ${creds.token}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    const metaBody = (await metaRes.json().catch(() => ({}))) as {
+      url?: string;
+      mime_type?: string;
+      file_size?: number;
+      error?: { message?: string; code?: number };
+    };
+    if (!metaRes.ok || metaBody.error || !metaBody.url) {
+      const detalhe = metaBody.error?.message ?? `http_${metaRes.status}`;
+      throw new Error(`meta_media_lookup_failed: ${detalhe}`);
+    }
+    if (metaBody.file_size && metaBody.file_size > MAX_MEDIA_BYTES) throw new MediaTooLargeError();
+
+    assertSafeOutboundUrl(metaBody.url);
+    await assertDestinoResolvidoSeguro(new URL(metaBody.url).hostname);
+
+    const res = await fetch(metaBody.url, {
+      headers: { Authorization: `Bearer ${creds.token}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) throw new Error(`meta_media_download_failed: http_${res.status}`);
+
+    const declared = Number(res.headers.get("content-length") ?? 0);
+    if (declared > MAX_MEDIA_BYTES) throw new MediaTooLargeError();
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.byteLength > MAX_MEDIA_BYTES) throw new MediaTooLargeError();
+
+    const mime =
+      res.headers.get("content-type")?.split(";")[0]?.trim() ||
+      metaBody.mime_type ||
+      input.hintMime ||
+      "application/octet-stream";
+    return { buffer, mime };
   },
 
   async send(envelope: OutboundEnvelope): Promise<{ externalId: string | null }> {

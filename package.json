@@ -134,6 +134,9 @@
       "fast-uri": "^3.1.7",
       "qs": "^6.16.0",
       "browserslist": "^4.28.8"
+    },
+    "patchedDependencies": {
+      "@react-pdf/hyphenate@0.1.0": "patches/@react-pdf__hyphenate@0.1.0.patch"
     }
   }
 }

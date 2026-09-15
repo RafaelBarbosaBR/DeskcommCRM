@@ -30,6 +30,8 @@ import { describe, expect, it } from "vitest";
 const INGEST = readFileSync("lib/channels/zernio/ingest.ts", "utf8");
 const WORKER = readFileSync("workers/media-persist-worker.ts", "utf8");
 const TYPES = readFileSync("lib/channels/types.ts", "utf8");
+const META_INGEST = readFileSync("lib/channels/meta/ingest.ts", "utf8");
+const META_ADAPTER = readFileSync("lib/channels/adapters/meta-cloud.ts", "utf8");
 
 describe("elo 1 — a URL é gravada onde o worker a procura", () => {
   it("grava `media_url` do primeiro anexo", () => {
@@ -145,5 +147,55 @@ describe("o que cada canal faz com a URL", () => {
     // Um segundo tipo com os mesmos campos diverge em silêncio na primeira vez
     // que um lado ganhar um campo — é a doutrina do topo de `types.ts`.
     expect(TYPES).toMatch(/\}\): Promise<FetchedMedia>;/);
+  });
+});
+
+/**
+ * O CANAL OFICIAL (META) — o terceiro elo, com um detalhe que os outros dois
+ * não têm: a Meta NUNCA manda URL nenhuma no webhook, só o `media.id`. Sem os
+ * mesmos dois primeiros elos (gravar ALGO em `media_url`, emitir o evento), a
+ * mídia recebida pelo canal oficial tinha o mesmo destino da do intermediado
+ * antes do conserto: linha sem bytes, "imagem" sem imagem.
+ */
+describe("elo 1 e 2 (Meta) — media_url gravado e o worker acordado", () => {
+  it("grava o media id COMO media_url — é o único ponteiro que a Meta dá no webhook", () => {
+    expect(META_INGEST).toMatch(/media_url: e\.media\.id/);
+  });
+
+  it("só quando HÁ mídia — mensagem de texto não ganha media_url vazio", () => {
+    expect(META_INGEST).toMatch(/\.\.\.\(e\.media \? \{ media_url: e\.media\.id \} : \{\}\)/);
+  });
+
+  it("emite `media.persist_requested`, com o MESMO payload dos outros dois canais", () => {
+    expect(META_INGEST).toMatch(/p_event_type: "media\.persist_requested"/);
+    expect(META_INGEST).toMatch(/p_payload: \{ message_id: messageId, conversation_id: conversationId \}/);
+  });
+
+  it("NÃO pede persistência para mensagem sem mídia", () => {
+    expect(META_INGEST).toMatch(/if \(messageId && e\.media\)/);
+  });
+
+  it("falha do emit NÃO derruba a ingestão — best-effort, como nos outros canais", () => {
+    expect(META_INGEST).toMatch(/logger\.warn\("\[meta\.ingest\] emit media\.persist_requested falhou"/);
+  });
+});
+
+describe("elo 3 (Meta) — fetchInboundMedia existe e não reimplementa o transporte errado", () => {
+  it("o adapter implementa `fetchInboundMedia`", () => {
+    expect(META_ADAPTER).toMatch(/async fetchInboundMedia\(input: ChannelTenantScope & \{/);
+  });
+
+  it("não usa `fetchWahaMedia` nem `zernioMediaFetchInit` — transporte é o da Graph API", () => {
+    expect(META_ADAPTER, "o adapter da Meta pegou o transporte de outro canal").not.toMatch(
+      /fetchWahaMedia|zernioMediaFetchInit/,
+    );
+  });
+
+  it("a URL do passo 2 passa pelas MESMAS guardas de SSRF do resto do repo", () => {
+    // Mesmo vindo da própria Meta (resposta autenticada do passo 1), e não do
+    // payload de um webhook — defesa em profundidade documentada no próprio
+    // comentário do método.
+    expect(META_ADAPTER).toMatch(/assertSafeOutboundUrl\(metaBody\.url\)/);
+    expect(META_ADAPTER).toMatch(/assertDestinoResolvidoSeguro\(new URL\(metaBody\.url\)\.hostname\)/);
   });
 });

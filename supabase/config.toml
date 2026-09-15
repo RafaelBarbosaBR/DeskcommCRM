@@ -6,19 +6,19 @@ project_id = "deskcomm-crm"
 
 [api]
 enabled = true
-port = 54321
+port = 55321
 schemas = ["public", "storage", "graphql_public"]
 extra_search_path = ["public", "extensions"]
 max_rows = 1000
 
 [db]
-port = 54322
-shadow_port = 54320
+port = 55322
+shadow_port = 55320
 major_version = 15
 
 [db.pooler]
 enabled = false
-port = 54329
+port = 55329
 pool_mode = "transaction"
 default_pool_size = 20
 max_client_conn = 100
@@ -28,12 +28,12 @@ enabled = true
 
 [studio]
 enabled = true
-port = 54323
-api_url = "http://127.0.0.1:54321"
+port = 55323
+api_url = "http://127.0.0.1:55321"
 
 [inbucket]
 enabled = true
-port = 54324
+port = 55324
 
 [storage]
 enabled = true

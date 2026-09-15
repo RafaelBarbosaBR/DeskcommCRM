@@ -63,6 +63,29 @@ const ALLOWED = [
   /^lib\/rastreamento\//,
   // O transporte que o adapter embrulha; some quando a Fase 3 o absorver.
   /^lib\/waha\//,
+  // QUARTA FRONTEIRA — chamada de voz pelo WhatsApp (WaCalls, migration 0247).
+  // Mesmo raciocínio de `lib/plataformas-de-anuncio/`/`lib/rastreamento/`: eixo
+  // independente de `lib/channels/` (não implementa `ChannelAdapter` — chamada
+  // de voz não manda mensagem, não tem janela de 24h nem template).
+  //
+  // DUAS pastas, não uma: `lib/wacalls/` é o transporte (cliente REST, sessão,
+  // bridge de eventos) e `lib/voice/` é a política por cima (os dois eixos de
+  // desligado, o guard de rota, desparear). A diferença de `lib/channels/` é
+  // que aqui há UM SÓ backend possível — não uma abstração escolhendo entre
+  // vários —, então a política legitimamente precisa nomear a única
+  // implementação que existe (`getWacallsClient`, a tabela `wacalls_sessions`).
+  // Fingir uma fronteira agnóstica que a feature não tem seria o mesmo
+  // "álibi" que o cabeçalho deste arquivo já recusa para prosa.
+  //
+  // `app/api/v1/voice/` entra na MESMA exceção: são as rotas que falam com o
+  // servidor WaCalls (sessão, chamada, sinalização WebRTC) — a superfície de
+  // TRANSPORTE da feature, mesmo raciocínio do grupo 1 de `KNOWN_DEBT` para
+  // `channel-sessions`/`webhooks/waha` (que não puderam entrar em ALLOWED
+  // por serem dívida pré-existente; aqui, feature nova, a fronteira já nasce
+  // correta em vez de nascer dívida).
+  /^lib\/wacalls\//,
+  /^lib\/voice\//,
+  /^app\/api\/v1\/voice\//,
   // Saída de `supabase gen types`: os nomes são COLUNAS. Editar à mão é o defeito.
   /^lib\/database\.types\.ts$/,
 ];

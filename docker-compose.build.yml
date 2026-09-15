@@ -38,3 +38,11 @@ services:
         APP_VERSION: ${APP_VERSION:-local}
     image: ${SCHEDULER_IMAGE:-deskcomm-scheduler:local}
     pull_policy: never
+
+  # Sem `args: {APP_VERSION}` — `Dockerfile.wacalls` não tem esse ARG (é um
+  # build vendorizado de terceiro, versionado por `WACALLS_COMMIT`, não pela
+  # nossa release). Só entra em `up`/`build` quando `COMPOSE_PROFILES=wacalls`
+  # está no `.env` — ver o cabeçalho do serviço em docker-compose.prod.yml.
+  wacalls:
+    image: ${WACALLS_IMAGE:-deskcomm-wacalls:local}
+    pull_policy: never

@@ -229,10 +229,24 @@ describe("o kit aponta para o que o CI realmente publica", () => {
     );
   });
 
-  it("as três imagens do kit são exatamente as três que o workflow constrói", () => {
+  it("as três imagens do kit são exatamente as três que o workflow constrói, mais a exceção documentada", () => {
+    // `deskcomm-wacalls` (migration 0247) é a ÚNICA imagem da matriz que fica
+    // FORA da âncora `IMG_NS`/`reposDoKit()` de propósito: é um vendorizado de
+    // terceiro (`Dockerfile.wacalls`, commit fixo do upstream), com o próprio
+    // `WACALLS_IMAGE` no compose — nunca escrito por `install.sh` (a feature é
+    // opt-in manual, ver o cabeçalho do serviço em docker-compose.prod.yml), e
+    // por isso nunca precisou entrar em `_common.sh` como `IMG_WACALLS`. Uma
+    // imagem NOVA e não vendorizada que aparecer aqui sem estar em
+    // `reposDoKit()` ainda reprova — a exceção é nomeada, não uma porta aberta.
+    const EXCECAO_VENDORIZADA = "deskcomm-wacalls";
     const naMatriz = [...PUBLICA.matchAll(/^\s{10}- name: (\S+)$/gm)].map((m) => m[1]);
-    expect(naMatriz.length, "a matriz de publish-image.yml não tem mais três imagens").toBe(3);
-    expect([...naMatriz].sort()).toEqual([...reposDoKit()].sort());
+    expect(
+      naMatriz.length,
+      "a matriz de publish-image.yml não tem mais três imagens + a exceção vendorizada",
+    ).toBe(4);
+    expect([...naMatriz].sort()).toEqual(
+      [...reposDoKit(), EXCECAO_VENDORIZADA].sort(),
+    );
   });
 });
 

@@ -66,6 +66,14 @@ export type InboxKind =
   // nenhum trecho foi gravado. UM kind e não dois, porque quem lê a Central
   // quer saber que o material não entrou — o porquê é o corpo do aviso.
   | 'conhecimento_nao_indexado'
+  // (migration 0246) A régua de recuperação de falta rodou até o fim e o
+  // cliente nunca respondeu — `fn_followup_patch` cria este aviso quando
+  // `followup_enrollments` fecha com `outcome='exhausted'` num enrollment
+  // ligado a um compromisso.
+  | 'appointment_recovery_exhausted'
+  // (migration 0247) Uma chamada de voz recebida tocou e ninguém
+  // atendeu — não existe atendimento automático de voz.
+  | 'voice_call_missed'
   | 'other';
 
 export interface InboxItemRow {

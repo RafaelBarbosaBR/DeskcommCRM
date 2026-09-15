@@ -34,10 +34,30 @@ export async function aplicarConvite(params: {
   requestId?: string | null;
 }): Promise<ResultadoDoConvite> {
   const { userId, payload, requestId } = params;
+  const admin = createAdminClient();
+
+  // REVOGAR IMPEDE O ACEITE MESMO COM O LINK AINDA DENTRO DA VALIDADE.
+  //
+  // `verifyInviteToken` (chamado por quem invoca esta função) só confere a
+  // ASSINATURA e o `exp` embutidos no próprio token — ele não sabe que
+  // alguém, depois de emitir o link, mudou de ideia e revogou o convite pela
+  // tela. `team_invites` (migration 0245) é a única fonte que sabe disso.
+  //
+  // Ausência de linha NÃO bloqueia: convite emitido antes da 0245 existir não
+  // tem `team_invites` nenhuma, e tratar "não achei a linha" como "revogado"
+  // quebraria todo link já em trânsito no dia do deploy.
+  const { data: linhaDoConvite } = await admin
+    .from("team_invites")
+    .select("status")
+    .eq("id", payload.invite_id)
+    .maybeSingle();
+  if ((linhaDoConvite as { status?: string } | null)?.status === "revoked") {
+    return { ok: false, motivo: "invalid_or_expired" };
+  }
 
   // Org, papel e convidador vêm EXCLUSIVAMENTE do token assinado; o usuário,
   // de quem chamou. Nada aqui vem de body de requisição.
-  const { data: resultado, error } = await createAdminClient().rpc("fn_accept_team_invite", {
+  const { data: resultado, error } = await admin.rpc("fn_accept_team_invite", {
     p_interface_settings: payload.interface_settings ?? { preset: "completa" },
     p_user: userId,
     p_org: payload.organization_id,
@@ -67,6 +87,17 @@ export async function aplicarConvite(params: {
       requestId: requestId ?? null,
     });
   }
+
+  // Best-effort, e SEM `if (changed)`: mesmo num reaceite (link clicado duas
+  // vezes, `changed: false`), a linha do convite precisa terminar como
+  // "Aceito" na aba — não como "Pendente" para sempre, que é o que ficaria se
+  // isto só rodasse na primeira vez. Ausência de linha (convite anterior à
+  // 0245) não é erro: não há o que atualizar.
+  await admin
+    .from("team_invites")
+    .update({ status: "accepted", accepted_at: new Date().toISOString() })
+    .eq("id", payload.invite_id)
+    .neq("status", "revoked");
 
   // Sem isto a pessoa entra sem organização escolhida e o app não sabe qual
   // mostrar — o mesmo motivo pelo qual o botão de aceite sempre gravou aqui.

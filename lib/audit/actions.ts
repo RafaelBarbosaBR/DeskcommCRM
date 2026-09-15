@@ -72,6 +72,11 @@ export const AUDIT_ACTIONS = [
   // pergunta "quem devolveu o acesso desta pessoa, e quando?" só tem resposta
   // aqui — a coluna `revoked_at` volta a NULL e não guarda histórico.
   "member.reactivated",
+  // A aba "Convites" (migration 0245): reenviar preserva o `invite_id` e só
+  // avança o prazo; revogar é o que faz `aplicarConvite` recusar o aceite
+  // mesmo com o link ainda dentro da validade do HMAC.
+  "member.invite_resent",
+  "member.invite_revoked",
   "token.created",
   "token.revoked",
   "profile.updated",
@@ -358,6 +363,12 @@ export const AUDIT_ACTIONS = [
   "security.mfa_exigida",
   "security.mfa_dispensada",
   "security.mfa_desativada",
+  // Chamada de voz pelo WhatsApp (migration 0247) é uma capacidade nova que traz
+  // risco explícito (áudio de terceiro, WebRTC) — o aceite de um admin é o
+  // que liga `org_voice_calls.enabled`, e precisa ficar registrado como
+  // qualquer outra mudança de política de segurança.
+  "voice.enabled",
+  "voice.disabled",
   // Havia convite no signup e ele não valia (expirado, ou emitido para outro
   // e-mail). Não é falha de sistema: é a recusa deliberada de abrir organização
   // nova para quem estava tentando entrar numa existente.
@@ -421,6 +432,7 @@ export const AUDIT_ACTIONS = [
   "agenda.tipo_criado",
   "agenda.tipo_alterado",
   "agenda.tipo_desativado",
+  "agenda.tipo_reativado",
   // A rodada que AVISOU alguém do próprio compromisso. Mensagem que saiu para o
   // telefone de um cliente é efeito, e efeito audita — mas só a rodada que
   // enviou: a que varreu e não achou ninguém a avisar não é mutação.

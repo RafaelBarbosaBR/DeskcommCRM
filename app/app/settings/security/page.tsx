@@ -1,6 +1,9 @@
 import { requireAuth, isMfaEnrolled, resolveActiveOrg, requiresMfa } from "@/lib/auth/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { empresaExigeMfa } from "@/lib/auth/politica-mfa";
+import { instalacaoOfereceVoz } from "@/lib/voice/opt-in";
+import { lerEscolhaDaOrg } from "@/lib/voice/guarda";
 import { SecurityClient } from "./_client";
 import { traduzir } from "@/lib/i18n/dicionario";
 
@@ -38,6 +41,11 @@ export default async function SecurityPage() {
   const obrigatorio = await requiresMfa(org?.role, user.is_platform_admin, user.id, org?.orgId);
   const idioma = user.idioma;
 
+  const vozInstalacaoOferece = instalacaoOfereceVoz();
+  const vozEscolha = org && vozInstalacaoOferece
+    ? await lerEscolhaDaOrg(await createClient(), org.orgId)
+    : { enabled: false };
+
   return (
     <div className="flex h-full flex-col gap-6 p-6">
       <header>
@@ -55,6 +63,8 @@ export default async function SecurityPage() {
         obrigatorio={obrigatorio}
         podeExigirDaEquipe={org?.role === "admin"}
         empresaExige={empresaExige}
+        vozInstalacaoOferece={vozInstalacaoOferece}
+        vozOrganizacaoAceitou={vozEscolha.enabled}
       />
     </div>
   );

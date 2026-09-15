@@ -8186,6 +8186,74 @@ export const DICIONARIO: Traducoes = {
   "Este ponto usa o modelo definido na versão publicada do agente; a escolha do painel não se aplica.": {
     es: "Este punto usa el modelo definido en la versión publicada del agente; la elección del panel no se aplica.",
   },
+
+  // ─── migration 0246 — aviso de falta sem retorno (lib/ai/inbox-destino.ts, lib/ai/agent-inbox-copy.ts) ───
+  "O cliente não respondeu à régua de recuperação. Decida o próximo passo e mova o card no funil.": {
+    es: "El cliente no respondió a la secuencia de recuperación. Decide el próximo paso y mueve la tarjeta en el embudo.",
+  },
+  "Cliente faltou e não respondeu à recuperação": { es: "El cliente faltó y no respondió a la recuperación" },
+
+  // ─── migration 0247 — chamada de voz pelo WhatsApp ───
+  "O telefone tocou e ninguém atendeu. Confira se vale retornar a chamada.": {
+    es: "El teléfono sonó y nadie atendió. Revisa si vale la pena devolver la llamada.",
+  },
+  "Uma chamada de voz tocou e ninguém atendeu": { es: "Sonó una llamada de voz y nadie atendió" },
+  "Ver chamadas de voz": { es: "Ver llamadas de voz" },
+  "Chamada de voz pelo WhatsApp": { es: "Llamada de voz por WhatsApp" },
+  "Liga a chamada de voz pelo número conectado (pareamento próprio, separado do WhatsApp de mensagens). É uma integração com um serviço de terceiro, ligada aqui de forma explícita.": {
+    es: "Activa la llamada de voz por el número conectado (emparejamiento propio, separado del WhatsApp de mensajes). Es una integración con un servicio de terceros, activada aquí de forma explícita.",
+  },
+  "Ligar a chamada de voz para esta organização?": { es: "¿Activar la llamada de voz para esta organización?" },
+  "Chamada de voz ligada.": { es: "Llamada de voz activada." },
+  "Chamada de voz desligada.": { es: "Llamada de voz desactivada." },
+  "Chamada de voz": { es: "Llamada de voz" },
+  "Pareamento próprio para chamada de voz pelo WhatsApp — separado da conexão de mensagens.": {
+    es: "Emparejamiento propio para llamada de voz por WhatsApp — separado de la conexión de mensajes.",
+  },
+  "Pareado": { es: "Emparejado" },
+  "Não pareado": { es: "No emparejado" },
+  "Número pareado": { es: "Número emparejado" },
+  "Desparear a chamada de voz? Você vai precisar escanear o QR de novo para usar.": {
+    es: "¿Desemparejar la llamada de voz? Necesitarás escanear el QR de nuevo para usarla.",
+  },
+  "Desparado.": { es: "Desemparejado." },
+  "Desparando…": { es: "Desemparejando…" },
+  "Desparear": { es: "Desemparejar" },
+  "QR code para parear a chamada de voz": { es: "Código QR para emparejar la llamada de voz" },
+  "Aguardando QR…": { es: "Esperando QR…" },
+  "Abra o WhatsApp do número que vai fazer chamadas → Aparelhos conectados → escaneie o código.": {
+    es: "Abre el WhatsApp del número que hará las llamadas → Dispositivos vinculados → escanea el código.",
+  },
+  "Parear número": { es: "Emparejar número" },
+  "Não consegui encerrar agora.": { es: "No pude finalizar ahora." },
+  "Em chamada": { es: "En llamada" },
+  "Encerrada": { es: "Finalizada" },
+  "Ativar microfone": { es: "Activar micrófono" },
+  "Silenciar microfone": { es: "Silenciar micrófono" },
+  "Encerrar chamada": { es: "Finalizar llamada" },
+  "Não consegui discar agora.": { es: "No pude marcar ahora." },
+  "Discando…": { es: "Marcando…" },
+  "Não consegui atender agora.": { es: "No pude atender ahora." },
+  "Não consegui recusar agora.": { es: "No pude rechazar ahora." },
+  "Chamada de voz de": { es: "Llamada de voz de" },
+  "Recusar": { es: "Rechazar" },
+  "Atender": { es: "Atender" },
+
+  // ─── migration 0245 — aba de Convites em Equipe (app/app/team) ───
+  "Convites": { es: "Invitaciones" },
+  "Erro ao carregar convites.": { es: "Error al cargar invitaciones." },
+  "Nenhum convite enviado ainda.": { es: "Ninguna invitación enviada todavía." },
+  "Convite reenviado.": { es: "Invitación reenviada." },
+  "O e-mail não saiu — copie o link e mande manualmente.": {
+    es: "El correo no salió — copia el enlace y envíalo manualmente.",
+  },
+  "Papel": { es: "Rol" },
+  "Enviado em": { es: "Enviado el" },
+  "Revogar convite": { es: "Revocar invitación" },
+  "não vai mais conseguir aceitar este convite, mesmo com o link ainda dentro da validade.": {
+    es: "ya no podrá aceptar esta invitación, aunque el enlace todavía esté vigente.",
+  },
+  "Convite revogado.": { es: "Invitación revocada." },
 };
 
 /**

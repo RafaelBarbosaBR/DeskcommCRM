@@ -129,7 +129,17 @@ export type ActivityType =
    * doutrina de migrations), então o banco aceitaria a divergência calado e a
    * timeline cairia no fallback.
    */
-  | "contacts_merged";
+  | "contacts_merged"
+  /**
+   * A CHAMADA DE VOZ pelo WhatsApp, na timeline do negócio. São DUAS pelo mesmo
+   * motivo de `appointment_completed`/`appointment_no_show`: "atendida" e
+   * "perdida" são fatos diferentes, e só o par diz se o telefone tocou e
+   * ninguém respondeu ou se houve conversa de verdade. Não entra na lista
+   * positiva de `fn_update_last_activity_at` a `voice_call_missed` — telefone
+   * que tocou sem resposta não é interação, é o oposto dela.
+   */
+  | "voice_call"
+  | "voice_call_missed";
 
 export const ACTIVITY_LABELS: Record<ActivityType, string> = {
   lead_created: "Entrou pelo WhatsApp",
@@ -226,6 +236,8 @@ export const ACTIVITY_LABELS: Record<ActivityType, string> = {
   // cadastros da mesma pessoa viraram um — e é por isso que este negócio pode
   // ter mudado de contato sem ninguém tê-lo movido.
   contacts_merged: "Contatos duplicados juntados",
+  voice_call: "Chamada de voz",
+  voice_call_missed: "Chamada de voz perdida",
 };
 
 /** Quando o tipo é legado/desconhecido, a linha ainda é honesta — sem jargão. */

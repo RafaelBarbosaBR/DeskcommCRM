@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { FlowNode } from "@/lib/followup/graph-schema";
 import type { RFNode, RFNodeData } from "@/lib/followup/graph-mappers";
+import { Trash } from "@/lib/ui/icons";
 import { useT } from "@/hooks/i18n/useT";
 
 import { ActionForm } from "./forms/ActionForm";
@@ -23,6 +25,12 @@ interface Props {
   onChange: (patch: Partial<RFNodeData>) => void;
   /** Ramos deste nó que já têm aresta — quem sabe isso é o canvas, que é dono do grafo. */
   ramosLigados?: string[];
+  /**
+   * Ausente para o `trigger`: todo fluxo precisa de exatamente um início, e um
+   * botão de excluir sobre ele levaria o canvas a um estado que o publish já
+   * recusa (grafo sem raiz), só que sem dizer por quê.
+   */
+  onDelete?: () => void;
 }
 
 /**
@@ -34,7 +42,7 @@ interface Props {
  * quando o candidato passa no schema — senão mostra erro inline e o canvas
  * mantém a última config válida (nunca um valor pela metade rio acima).
  */
-export function NodeConfigPanel({ node, onChange, ramosLigados }: Props) {
+export function NodeConfigPanel({ node, onChange, ramosLigados, onDelete }: Props) {
   const t = useT();
   const type = node.type as FlowNode["type"];
   const visual = NODE_VISUALS[type];
@@ -55,12 +63,26 @@ export function NodeConfigPanel({ node, onChange, ramosLigados }: Props) {
   return (
     <div className="flex h-full flex-col gap-5 overflow-y-auto" data-testid="node-config-panel">
       <div className="space-y-1">
-        <h2 className="flex items-center gap-2 text-base font-semibold text-text">
-          <span className={`flex h-6 w-6 items-center justify-center rounded-full ${visual.chipClassName}`}>
-            <Icon size={14} aria-hidden />
-          </span>
-          {t(visual.paletteLabel)}
-        </h2>
+        <div className="flex items-start justify-between gap-2">
+          <h2 className="flex items-center gap-2 text-base font-semibold text-text">
+            <span className={`flex h-6 w-6 items-center justify-center rounded-full ${visual.chipClassName}`}>
+              <Icon size={14} aria-hidden />
+            </span>
+            {t(visual.paletteLabel)}
+          </h2>
+          {onDelete && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onDelete}
+              aria-label={t("Excluir nó")}
+              data-testid="excluir-no"
+            >
+              <Trash size={16} aria-hidden />
+            </Button>
+          )}
+        </div>
         <p className="text-sm text-text-muted">
           {t("Alterações aplicam no rascunho ao digitar — salve na barra de publicação.")}
         </p>

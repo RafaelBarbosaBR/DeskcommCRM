@@ -56,6 +56,8 @@ export {
   X,
   Plus,
   Trash,
+  // "Organizar" do editor de follow-up — auto-layout do canvas
+  SquaresFour,
   PencilSimple,
   MagnifyingGlass,
   Pause,
@@ -90,8 +92,12 @@ export {
   // conversation
   ChatCircle,
   Phone,
+  PhoneIncoming,
+  PhoneOutgoing,
+  PhoneX,
   Paperclip,
   Microphone,
+  MicrophoneSlash,
   Image as ImageIcon,
   ImageSquare,
   MusicNote,

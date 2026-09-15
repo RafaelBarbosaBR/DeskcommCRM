@@ -924,3 +924,21 @@
     transform: none;
   }
 }
+
+/* Os controles de zoom do editor de follow-up (@xyflow/react) vêm com um
+   branco/preto FIXO por padrão — no tema escuro os botões ficavam quase
+   invisíveis, um retângulo escuro sobre o fundo do canvas já escuro. As
+   variáveis abaixo são as que a v12 do React Flow lê para desenhar
+   `.react-flow__controls` — trocá-las pelos tokens do produto faz os botões
+   seguirem o tema em vez de carregar a própria paleta fixa. */
+.react-flow__controls {
+  --xy-controls-button-background-color-props: var(--color-surface);
+  --xy-controls-button-background-color-hover-props: var(--color-surface-hover);
+  --xy-controls-button-color-props: var(--color-text);
+  /* A cadeia de fallback do próprio React Flow não usa a variável acima como
+     fallback da versão ":hover" — sem esta linha explícita, o texto no hover
+     caía no `inherit` default do pacote em vez de seguir o tema. */
+  --xy-controls-button-color-hover-props: var(--color-text);
+  --xy-controls-button-border-color-props: var(--color-border);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--color-text) 20%, transparent);
+}

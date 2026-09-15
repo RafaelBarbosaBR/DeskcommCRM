@@ -9,6 +9,7 @@ import { generateReplyDraft } from "@/lib/agent-engine/agent/reply-drafts";
 import { ok, fail } from "@/lib/api/wrappers";
 import { audit } from "@/lib/audit";
 import { traduzir } from "@/lib/i18n/dicionario";
+import { logger } from "@/lib/logger";
 export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string }> };
 async function context(ctx: Ctx, requestId: string) {
@@ -71,10 +72,36 @@ export async function POST(_req: NextRequest, ctx: Ctx) {
       { draft: draft.original_body ?? "", draft_id: draft.id, status: draft.status },
       { requestId },
     );
-  } catch {
+  } catch (err) {
+    // `generateReplyDraft` nomeia as próprias causas (`reply_no_agent`,
+    // `reply_context_unavailable`) com `throw new Error(...)`. O catch antigo
+    // descartava `err` inteiro — nenhuma delas chegava à tela, sempre a mesma
+    // frase genérica, e o `requestId` mostrado ao lado não levava a nada
+    // gravado. As duas causas conhecidas ganham mensagem própria; qualquer
+    // outra causa é logada com o motivo real, para o requestId apontar pra
+    // alguma coisa quando alguém for investigar.
+    const motivo = err instanceof Error ? err.message : String(err);
+    const mensagensConhecidas: Record<string, string> = {
+      reply_no_agent: c.t(
+        "Não há nenhum agente de IA publicado para este canal. Configure e publique um agente antes de pedir sugestões.",
+      ),
+      reply_context_unavailable: c.t(
+        "Não consigo montar o contexto desta conversa agora — o contato pode estar bloqueado, anonimizado por LGPD, ou o histórico indisponível no momento.",
+      ),
+    };
+    const mensagem = mensagensConhecidas[motivo];
+    if (!mensagem) {
+      logger.error("[draft-reply] falha ao gerar sugestão", {
+        requestId,
+        conversationId,
+        organizationId: c.auth.org.orgId,
+        error: motivo,
+      });
+    }
     return fail(
       "reply_unavailable",
-      c.t("Não foi possível gerar a sugestão. Confira a publicação e a configuração do agente."),
+      mensagem ??
+        c.t("Não foi possível gerar a sugestão. Confira a publicação e a configuração do agente."),
       422,
       { requestId },
     );

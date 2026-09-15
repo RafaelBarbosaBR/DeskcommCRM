@@ -311,3 +311,9 @@ To re-apply on a fresh Supabase project, replay the migrations in version order 
 | `20260914160000` | `0243_cascata_lgpd_alcanca_touchpoints` | `fn_lgpd_cascade_redact_contact` ganha o passo de `touchpoints` (achado pela varredura `lgpd-cascata-alcanca-quem-guarda-pessoa.test.ts`): soft de-link de `contact_id` + limpeza de `url`/`referrer`/`utm_content`; atribuição de campanha (fbclid/gclid/utm_source/medium/campaign/term) fica intocada. |
 
 | `20260914170000` | `0244_marca_do_favicon` | `platform_branding.favicon_mark_path` — terceiro slot de logo, o ÍCONE (mark, sem a wordmark) usado só no favicon. Ausente = favicon cai no logo inteiro ou na cor+inicial gerada. |
+
+| `20260914180000` | `0245_convites_de_equipe` | `team_invites` — a metade que faltava do convite HMAC stateless (`lib/auth/invite-token.ts`): antes o token não tinha linha nenhuma no banco, então não havia como listar "quem foi convidado", reenviar preservando o `invite_id`, nem revogar um link antes do TTL de 24h esgotar. `id` da linha é o MESMO `invite_id` do payload assinado. |
+
+| `20260914190000` | `0246_aviso_de_falta_sem_retorno` | `agent_inbox_items` ganha o kind `appointment_recovery_exhausted`; `fn_followup_patch` (o único caminho por onde uma `followup_enrollments` muda de status) passa a criar o aviso quando a régua de recuperação de falta fecha com `outcome='exhausted'` num enrollment ligado a um compromisso — reusa o índice de dedup `inbox_appointment_revision_unique` já existente da 0224. |
+
+| `20260914200000` | `0247_chamada_de_voz_wacalls` | `wacalls_sessions` (pareamento por org, independente de `channel_sessions` — não é um 4º `provider`), `voice_calls` (histórico de chamada, publicado em `supabase_realtime`), `org_voice_calls` (`enabled`/aceite de risco, desligado por padrão); `agent_inbox_items` ganha o kind `voice_call_missed`. |

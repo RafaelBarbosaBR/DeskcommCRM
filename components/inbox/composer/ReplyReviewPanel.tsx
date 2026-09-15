@@ -16,6 +16,16 @@ type Draft = {
   error_code: string | null;
   proposals: Array<{ tool: string; arguments: unknown }>;
 };
+/**
+ * Status em que o painel de revisão (texto, propostas, aprovar/rejeitar) faz
+ * sentido na tela. `dismissed`/`stale`/`sent` ficam de fora DE PROPÓSITO: sem
+ * este filtro, `drafts[0]` (o mais recente) continuava sendo essa sugestão já
+ * decidida, e o painel inteiro — textarea desabilitada, propostas, tudo —
+ * ficava preso na tela em vez de voltar para o botão "Sugerir resposta". Uma
+ * sugestão que FALHOU continua aqui de propósito: é a única que carrega a
+ * pista do motivo (ver `draft.status === "failed"` abaixo).
+ */
+const STATUS_ATIVOS = new Set(["generating", "pending", "approved", "sending", "failed"]);
 export function ReplyReviewPanel({
   conversationId,
   disabled,
@@ -43,7 +53,8 @@ export function ReplyReviewPanel({
       message: string;
       kind: "success" | "error";
     } | null>(null);
-  const draft = query.data?.data.drafts[0];
+  const ultimo = query.data?.data.drafts[0];
+  const draft = ultimo && STATUS_ATIVOS.has(ultimo.status) ? ultimo : undefined;
   const body = draft ? (edits[draft.id] ?? draft.edited_body ?? draft.original_body ?? "") : "";
   async function generate() {
     setNotice(null);
@@ -184,11 +195,15 @@ export function ReplyReviewPanel({
           )}
         </>
       )}
+      {/* `ultimo`, não `draft`: rejeitar leva o status para "dismissed", que
+          `STATUS_ATIVOS` exclui de propósito (ver acima) — um gate em `draft`
+          apagaria o aviso de "Sugestão rejeitada" no exato instante em que ele
+          precisa aparecer. */}
       {notice &&
-        draft &&
-        notice.draftId === draft.id &&
+        ultimo &&
+        notice.draftId === ultimo.id &&
         (notice.kind === "error" ||
-          ["approved", "sending", "sent", "dismissed"].includes(draft.status)) && (
+          ["approved", "sending", "sent", "dismissed"].includes(ultimo.status)) && (
           <p role="status" className="text-xs">
             {notice.message}
           </p>

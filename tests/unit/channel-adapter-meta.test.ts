@@ -243,3 +243,170 @@ describe("credencial por sessão — o que destrava multi-tenant", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok");
   });
 });
+
+/**
+ * A MÍDIA QUE O CLIENTE MANDA — SEM URL NENHUMA NO WEBHOOK, SÓ O `media.id`.
+ *
+ * Ao contrário do canal intermediado (URL vem no payload do webhook), a Meta
+ * exige DOIS passos autenticados: `GET /{media-id}` devolve a URL de verdade
+ * (assinada, de vida curta), e só ela é buscada de fato — com o MESMO Bearer,
+ * porque a Meta recusa essa URL sem autenticação (diferente de um link
+ * público comum).
+ *
+ * `input.url` aqui é o `media.id`, nunca uma URL — é o que
+ * `lib/channels/meta/ingest.ts` grava em `media_url` por não ter outra coisa
+ * pra gravar (ver o comentário lá: "cada canal sabe o que fazer com ela").
+ */
+describe("adapter meta_cloud — fetchInboundMedia (mídia recebida)", () => {
+  /**
+   * Só arma o passo 1. Se o código sob teste chamar `fetch` uma 2ª vez sem
+   * dever, o mock não tem mais resposta enfileirada e o `.json()`/`.headers`
+   * do valor `undefined` estoura — falha ruidosa, mas falha. O que prende o
+   * caso de verdade é sempre o `toHaveBeenCalledTimes(1)` ao lado.
+   */
+  function stubFetchPasso1(passo1: unknown, passo1Ok = true): ReturnType<typeof vi.fn> {
+    const spy = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: passo1Ok, status: passo1Ok ? 200 : 400, json: async () => passo1 });
+    vi.stubGlobal("fetch", spy);
+    return spy;
+  }
+
+  it("baixa em dois passos: metadado (com o media id na URL) e depois os bytes", async () => {
+    configurar();
+    const spy = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ url: "https://graph.facebook.com/v22.0/assinada", mime_type: "image/jpeg" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => new ArrayBuffer(4),
+        headers: new Headers({ "content-type": "image/jpeg" }),
+      });
+    vi.stubGlobal("fetch", spy);
+
+    const r = await a().fetchInboundMedia!({
+      organizationId: ORG,
+      sessionRef: "1103328999528818",
+      url: "1234567890",
+    });
+
+    expect(r.mime).toBe("image/jpeg");
+    expect(spy).toHaveBeenCalledTimes(2);
+    const [urlPasso1, initPasso1] = spy.mock.calls[0]!;
+    expect(urlPasso1).toContain("/v22.0/1234567890");
+    expect((initPasso1.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+    const [urlPasso2, initPasso2] = spy.mock.calls[1]!;
+    expect(urlPasso2).toBe("https://graph.facebook.com/v22.0/assinada");
+    // MESMO Bearer no passo 2 — sem ele a Meta devolve 401 nesta URL, ao
+    // contrário de um link público comum.
+    expect((initPasso2.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+  });
+
+  it("sem credencial, lança SEM chamar fetch — a mídia não é ponto de exceção à regra", async () => {
+    vi.stubEnv("META_PHONE_NUMBER_ID", "");
+    vi.stubEnv("META_SYSTEM_USER_TOKEN", "");
+    const spy = vi.fn();
+    vi.stubGlobal("fetch", spy);
+
+    await expect(
+      a().fetchInboundMedia!({ organizationId: ORG, sessionRef: "x", url: "123" }),
+    ).rejects.toThrow(/meta_not_configured/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("o passo 1 devolvendo erro da Graph API lança com a mensagem, sem tentar o passo 2", async () => {
+    configurar();
+    const spy = stubFetchPasso1(
+      { error: { code: 190, message: "Error validating access token" } },
+      false,
+    );
+
+    await expect(
+      a().fetchInboundMedia!({ organizationId: ORG, sessionRef: "x", url: "123" }),
+    ).rejects.toThrow(/Error validating access token/);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * DEFESA EM PROFUNDIDADE: mesmo a URL vindo da PRÓPRIA Meta (resposta do
+   * passo 1, nunca do payload do webhook) passa pela mesma guarda de SSRF que
+   * o resto do repo usa pra URL de fora. Uma resposta inesperada não é motivo
+   * pra pular a checagem.
+   */
+  it("recusa baixar de um host privado mesmo que tenha vindo na resposta do passo 1", async () => {
+    configurar();
+    const spy = stubFetchPasso1({
+      url: "http://169.254.169.254/latest/meta-data/",
+      mime_type: "image/jpeg",
+    });
+
+    await expect(
+      a().fetchInboundMedia!({ organizationId: ORG, sessionRef: "x", url: "123" }),
+    ).rejects.toThrow();
+    expect(spy, "o passo 2 não pode rodar sobre um host privado").toHaveBeenCalledTimes(1);
+  });
+
+  it("arquivo maior que o teto, anunciado no passo 1: recusa sem baixar o passo 2", async () => {
+    configurar();
+    const spy = stubFetchPasso1({
+      url: "https://graph.facebook.com/v22.0/assinada",
+      mime_type: "video/mp4",
+      file_size: 52_428_800 + 1,
+    });
+
+    await expect(
+      a().fetchInboundMedia!({ organizationId: ORG, sessionRef: "x", url: "123" }),
+    ).rejects.toThrow(/exceeds/);
+    expect(spy, "não precisava baixar pra saber que é grande demais").toHaveBeenCalledTimes(1);
+  });
+
+  it("arquivo maior que o teto, só anunciado no content-length do passo 2: recusa sem bufferizar", async () => {
+    configurar();
+    const spy = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ url: "https://graph.facebook.com/v22.0/assinada", mime_type: "video/mp4" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => {
+          throw new Error("não devia ter tentado ler o corpo");
+        },
+        headers: new Headers({ "content-length": String(52_428_800 + 1) }),
+      });
+    vi.stubGlobal("fetch", spy);
+
+    await expect(
+      a().fetchInboundMedia!({ organizationId: ORG, sessionRef: "x", url: "123" }),
+    ).rejects.toThrow(/exceeds/);
+  });
+
+  it("o content-type da resposta manda sobre o mime_type do passo 1", async () => {
+    configurar();
+    const spy = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ url: "https://graph.facebook.com/v22.0/assinada", mime_type: "application/octet-stream" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => new ArrayBuffer(2),
+        headers: new Headers({ "content-type": "audio/ogg" }),
+      });
+    vi.stubGlobal("fetch", spy);
+
+    const r = await a().fetchInboundMedia!({ organizationId: ORG, sessionRef: "x", url: "123" });
+    expect(r.mime).toBe("audio/ogg");
+  });
+});

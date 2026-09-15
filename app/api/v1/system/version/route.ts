@@ -154,6 +154,7 @@ export async function GET(_req: NextRequest): Promise<Response> {
               ? ("unknown" as const)
               : (run.status as RunStatus),
           last_step: (run.last_step as RunStep | null) ?? null,
+          dispatched_at: run.dispatched_at,
           from_version: run.from_version ?? "",
           to_version: run.to_version ?? "",
           log_tail: run.log_tail ?? "",

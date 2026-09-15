@@ -190,6 +190,11 @@ export async function GET(): Promise<Response> {
     provedores: PROVEDORES,
     credenciais: credsRes.data ?? [],
     modelos,
+    // A tela do padrão da organização (`app/actions/settings/updateDefaultAiModel.ts`)
+    // precisa saber o que está gravado HOJE para desenhar o select já
+    // preenchido — sem isto ela sempre abriria em branco, mesmo depois de
+    // salvar.
+    padraoDaOrganizacao,
     podeEditar: roleAtLeast(org.role, "admin"),
   });
 }

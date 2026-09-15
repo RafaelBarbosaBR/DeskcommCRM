@@ -12,6 +12,7 @@ import {
   definirExigenciaDeMfa,
   desativarMfaDaConta,
 } from "@/app/actions/auth/politicaDeMfa";
+import { definirChamadaDeVoz } from "@/app/actions/settings/politicaDeVoz";
 import { useT } from "@/hooks/i18n/useT";
 
 export function SecurityClient({
@@ -19,6 +20,8 @@ export function SecurityClient({
   obrigatorio,
   podeExigirDaEquipe,
   empresaExige,
+  vozInstalacaoOferece,
+  vozOrganizacaoAceitou,
 }: {
   mfaEnrolled: boolean;
   /** A política obriga esta pessoa a ter a verificação? */
@@ -26,6 +29,10 @@ export function SecurityClient({
   /** Só admin muda a regra da empresa. */
   podeExigirDaEquipe: boolean;
   empresaExige: boolean;
+  /** A VPS tem o serviço de chamada de voz configurado — sem isto o painel nem aparece. */
+  vozInstalacaoOferece: boolean;
+  /** Esta organização já aceitou o risco de ligar a chamada de voz. */
+  vozOrganizacaoAceitou: boolean;
 }) {
   const t = useT();
   const [codes, setCodes] = useState<string[] | null>(null);
@@ -33,6 +40,8 @@ export function SecurityClient({
   const [isSigningOut, startSignOut] = useTransition();
   const [ativando, setAtivando] = useState(false);
   const [mexendo, startMexer] = useTransition();
+  const [vozAceita, setVozAceita] = useState(vozOrganizacaoAceitou);
+  const [mexendoVoz, startMexerVoz] = useTransition();
 
   function handleRegenerate() {
     if (
@@ -168,6 +177,53 @@ export function SecurityClient({
               </span>
             </span>
           </label>
+        </Card>
+      ) : null}
+
+      {/* Sem gate cosmético: se a VPS não configurou o serviço, o painel nem
+          aparece — não há o que "ligar" nesta organização de verdade. */}
+      {podeExigirDaEquipe && vozInstalacaoOferece ? (
+        <Card className="space-y-3 p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-semibold">{t("Chamada de voz pelo WhatsApp")}</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t(
+                  "Liga a chamada de voz pelo número conectado (pareamento próprio, separado do WhatsApp de mensagens). É uma integração com um serviço de terceiro, ligada aqui de forma explícita.",
+                )}
+              </p>
+            </div>
+            <span
+              className={
+                "shrink-0 rounded-full px-2 py-0.5 text-xs " +
+                (vozAceita
+                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                  : "bg-muted text-muted-foreground")
+              }
+            >
+              {vozAceita ? t("Ligada") : t("Desligada")}
+            </span>
+          </div>
+          <Button
+            variant={vozAceita ? "outline" : "default"}
+            size="sm"
+            disabled={mexendoVoz}
+            onClick={() => {
+              const aceitar = !vozAceita;
+              if (aceitar && !confirm(t("Ligar a chamada de voz para esta organização?"))) return;
+              startMexerVoz(async () => {
+                const r = await definirChamadaDeVoz(aceitar);
+                if (!r.ok) {
+                  toast.error(t(r.erro));
+                  return;
+                }
+                setVozAceita(aceitar);
+                toast.success(aceitar ? t("Chamada de voz ligada.") : t("Chamada de voz desligada."));
+              });
+            }}
+          >
+            {mexendoVoz ? t("Salvando…") : vozAceita ? t("Desligar") : t("Ligar")}
+          </Button>
         </Card>
       ) : null}
 

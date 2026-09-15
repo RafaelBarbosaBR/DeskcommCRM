@@ -6,6 +6,7 @@ import {
   ReactFlowProvider,
   Background,
   Controls,
+  Panel,
   addEdge,
   useNodesState,
   useEdgesState,
@@ -26,6 +27,7 @@ import {
   type RFEdge,
   type RFNodeData,
 } from "@/lib/followup/graph-mappers";
+import { organizarFluxo } from "@/lib/followup/auto-layout";
 import { conditionLabel } from "@/lib/followup/edge-condition-options";
 import {
   branchIdForCondition,
@@ -40,7 +42,7 @@ import { useFollowupFlow, type FollowupFlowDetailRow } from "@/hooks/followup/us
 import { useT } from "@/hooks/i18n/useT";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import { Plus, X } from "@/lib/ui/icons";
+import { Plus, SquaresFour, X } from "@/lib/ui/icons";
 import { NodeConfigPanel } from "./NodeConfigPanel";
 import { EdgeConfigPanel } from "./EdgeConfigPanel";
 import { NodePalette } from "./NodePalette";
@@ -218,6 +220,36 @@ function FlowCanvasInner({ flowId, initialData }: Props) {
     [setNodes, t],
   );
 
+  // `trigger` não sai daqui — todo fluxo precisa de exatamente um início, e um
+  // botão de excluir sobre ele deixaria o canvas num estado que o publish já
+  // recusa (grafo sem raiz), sem dizer por quê. O painel nem oferece o botão
+  // pra esse tipo (ver `NodeConfigPanel`); isto é a segunda trava, não a
+  // primeira — um `id` de trigger chegando aqui por outro caminho não apaga.
+  const deleteNode = useCallback(
+    (id: string) => {
+      const alvo = nodes.find((n) => n.id === id);
+      if (!alvo || alvo.type === "trigger") return;
+      setNodes((nds) => nds.filter((n) => n.id !== id));
+      // Sem isto a aresta ficava órfã — apontando para um nó que não existe
+      // mais — e o publish reprovava com um erro que não nomeia o motivo real.
+      setEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id));
+      setSelectedNodeId((atual) => (atual === id ? null : atual));
+    },
+    [nodes, setNodes, setEdges],
+  );
+
+  const deleteEdge = useCallback(
+    (id: string) => {
+      setEdges((eds) => eds.filter((e) => e.id !== id));
+      setSelectedEdgeId((atual) => (atual === id ? null : atual));
+    },
+    [setEdges],
+  );
+
+  const organizar = useCallback(() => {
+    setNodes((nds) => organizarFluxo(nds, edges));
+  }, [setNodes, edges]);
+
   const onPaletteAdd = useCallback(
     (type: NodeType) => {
       const index = nodes.length;
@@ -283,10 +315,26 @@ function FlowCanvasInner({ flowId, initialData }: Props) {
             onNodeClick={onNodeClick}
             onEdgeClick={onEdgeClick}
             onPaneClick={onPaneClick}
+            // Em degrau (não diagonal por cima dos blocos) — as arestas
+            // cruzavam os cards de nó no meio do caminho quando o layout não
+            // era um alinhamento perfeito em linha reta.
+            defaultEdgeOptions={{ type: "step" }}
             fitView
           >
             <Background />
             <Controls />
+            <Panel position="top-right">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="shadow-md"
+                onClick={organizar}
+                data-testid="organizar-fluxo"
+              >
+                <SquaresFour size={14} aria-hidden /> {t("Organizar")}
+              </Button>
+            </Panel>
           </ReactFlow>
           <Button
             type="button"
@@ -333,6 +381,9 @@ function FlowCanvasInner({ flowId, initialData }: Props) {
                 node={selectedNode}
                 onChange={(patch) => updateNodeData(selectedNode.id, patch)}
                 ramosLigados={ramosLigadosDoSelecionado}
+                onDelete={
+                  selectedNode.type === "trigger" ? undefined : () => deleteNode(selectedNode.id)
+                }
               />
             </div>
           </aside>
@@ -361,6 +412,7 @@ function FlowCanvasInner({ flowId, initialData }: Props) {
                 targetNode={selectedEdgeTarget ? toFlowNode(selectedEdgeTarget) : undefined}
                 condition={selectedEdge.data?.condition ?? { type: "always" }}
                 onChange={(condition) => updateEdgeCondition(selectedEdge.id, condition)}
+                onDelete={() => deleteEdge(selectedEdge.id)}
               />
             </div>
           </aside>

@@ -1,0 +1,62 @@
+# DeskcommCRM — override para VPS que JÁ TEM um Nginx Proxy Manager (NPM).
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.npm.yml up -d
+#
+# QUANDO USAR
+# -----------
+# O stack padrão sobe um Caddy que publica as portas 80 e 443 — o certo numa
+# VPS "cru". Mas quem já hospeda outros sites com o Nginx Proxy Manager
+# (`jc21/nginx-proxy-manager`) tem essas portas ocupadas por ele, e é o NPM
+# que dá HTTPS automático (Let's Encrypt) a tudo que já está publicado ali —
+# desligá-lo quebraria os outros sites da mesma VPS.
+#
+# DIFERENÇA PARA O OVERRIDE DO TRAEFIK
+# -------------------------------------
+# O Traefik descobre serviço por LABEL no próprio contêiner — por isso
+# `docker-compose.traefik.yml` é cheio deles. O NPM não lê labels: ele é
+# configurado pela própria interface web dele (Admin → Proxy Hosts), apontando
+# manualmente para `app:3000` como "Forward Hostname/IP" — daí este arquivo
+# ser tão mais simples que o do Traefik: a ÚNICA coisa que falta para o NPM
+# alcançar o CRM é os dois contêineres estarem na MESMA rede Docker.
+#
+# CONFIGURAR PELA PRIMEIRA VEZ CONTINUA SENDO MANUAL — o NPM não anuncia a
+# própria configuração como o Traefik faz por label, então não há o que este
+# kit detecte ou preencha sozinho. Depois de subir com este override:
+#   1. abra o painel do NPM;
+#   2. Proxy Hosts → Add Proxy Host;
+#   3. Domain Names: o seu domínio; Forward Hostname/IP: `app`; Forward Port: 3000;
+#   4. na aba SSL, peça um certificado Let's Encrypt para o mesmo domínio.
+#
+# O comportamento padrão (sem este arquivo) fica EXATAMENTE como antes: quem
+# não passa `-f docker-compose.npm.yml` não é afetado por nada aqui.
+#
+# A REDE onde o NPM encontra o app é NPM_NETWORK — o nome da rede Docker que
+# o SEU Nginx Proxy Manager já usa (confira em `docker network ls` ou no
+# compose do próprio NPM). Sem ela definida no `.env`, o default abaixo
+# ("npm") cobre a instalação mais comum (o compose oficial do NPM cria uma
+# rede com esse nome quando ninguém personaliza).
+
+services:
+  app:
+    # Só o `app` entra na rede do NPM — mesmo raciocínio do override do
+    # Traefik: juntar o NPM à rede `internal` colocaria um contêiner que serve
+    # OUTROS sites da VPS dentro de uma rede onde o redis roda sem senha.
+    networks:
+      - internal
+      - proxy
+
+  # O Caddy não é removido do compose (exigiria editar o arquivo base) — só
+  # ganha um profile que nunca é ativado, então o compose não o cria. Mesmo
+  # mecanismo do override do Traefik; ver o comentário lá para o detalhe do
+  # `up -d caddy` explícito que ativaria o profile por engano.
+  caddy:
+    profiles: ["caddy-nao-usado-com-proxy-externo"]
+
+# `external: true` = quem cria esta rede não é este compose — é o compose do
+# próprio NPM, que já existe quando o `up -d` deste projeto roda. Rede externa
+# ausente é recusada ANTES de o compose criar qualquer coisa (mesmo
+# comportamento documentado no override do Traefik).
+networks:
+  proxy:
+    external: true
+    name: "${NPM_NETWORK:-npm}"

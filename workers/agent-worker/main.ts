@@ -92,6 +92,7 @@ import { enforceHolds, sessionHealthMetrics } from "@/lib/agent-engine/edge/crm/
 import { runSessionWatchdogLoop } from "@/lib/agent-engine/edge/crm/session-reconciler";
 import { runHealthLoop } from "@/lib/agent-engine/health/circuit";
 import { runFlywheelLoop } from "@/lib/agent-engine/flywheel/live";
+import { runVoiceCallsBridgeLoop } from "@/lib/wacalls/events-bridge";
 import { llmEdgeConfigFromEnv } from "@/lib/agent-engine/edge/llm/run-model-call";
 import { loadEnv, type Env } from "@/lib/agent-engine/env";
 import { createLogger, type Logger } from "@/lib/agent-engine/obs/logger";
@@ -365,6 +366,22 @@ export async function startWorker(
         )
       : Promise.resolve();
 
+  // Bridge de eventos da chamada de voz (WaCalls, migration 0247) — liga só
+  // com as credenciais no env (sem elas: warn + off), mesmo padrão do
+  // watchdog de sessão acima. Um serviço só por instalação, não por
+  // organização — cada organização liga/desliga por cima, via
+  // `org_voice_calls` (`lib/voice/opt-in.ts`).
+  const voiceCallsBridgeLoop =
+    env.WACALLS_API_BASE_URL !== undefined
+      ? runVoiceCallsBridgeLoop(
+          pool,
+          { maxBackoffMs: env.VOICE_BRIDGE_MAX_BACKOFF_MS },
+          log,
+          loopsAbort.signal,
+        )
+      : (log.warn("bridge de chamada de voz OFF — WACALLS_API_BASE_URL ausente no env", {}),
+        Promise.resolve());
+
   // Cron persistente por contato (follow-up) — só enfileira em job_queue.
   const cronLoop = runCronLoop(
     pool,
@@ -524,6 +541,7 @@ export async function startWorker(
       cronLoop,
       sessionWatchdogLoop,
       flywheelLoop,
+      voiceCallsBridgeLoop,
     ]);
     await workerLoop;
     let graceTimer: NodeJS.Timeout | undefined;

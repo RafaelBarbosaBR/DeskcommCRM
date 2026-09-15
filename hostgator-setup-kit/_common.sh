@@ -4,6 +4,7 @@ set -euo pipefail
 
 COMPOSE="docker-compose.prod.yml"
 COMPOSE_TRAEFIK="docker-compose.traefik.yml"
+COMPOSE_NPM="docker-compose.npm.yml"
 
 # Proxy reverso desta instalação. Vem do .env (load_env), com default 'caddy' —
 # ou seja, toda instalação que já existe continua exatamente como está.
@@ -12,26 +13,31 @@ COMPOSE_TRAEFIK="docker-compose.traefik.yml"
 #   traefik → a VPS JÁ tem um Traefik nessas portas (Hostinger, Coolify,
 #             Dokploy...). Entra o override, que desliga o Caddy e publica o app
 #             por labels. Ver o cabeçalho de docker-compose.traefik.yml.
+#   npm     → a VPS JÁ tem um Nginx Proxy Manager nessas portas. Entra o
+#             override, que desliga o Caddy e só anexa o app à rede do NPM —
+#             a configuração da rota em si é manual, pela interface do NPM
+#             (ele não lê labels do Docker como o Traefik). Ver o cabeçalho de
+#             docker-compose.npm.yml.
 #
 # Todo `docker compose` do kit passa por aqui: com proxy externo, um comando sem
-# o override subiria o Caddy e ele iria bater de frente com o Traefik.
+# o override subiria o Caddy e ele iria bater de frente com o proxy de fora.
 dc() {
-  if [ "${REVERSE_PROXY:-caddy}" = "traefik" ]; then
-    docker compose -f "$COMPOSE" -f "$COMPOSE_TRAEFIK" "$@"
-  else
-    docker compose -f "$COMPOSE" "$@"
-  fi
+  case "${REVERSE_PROXY:-caddy}" in
+  traefik) docker compose -f "$COMPOSE" -f "$COMPOSE_TRAEFIK" "$@" ;;
+  npm) docker compose -f "$COMPOSE" -f "$COMPOSE_NPM" "$@" ;;
+  *) docker compose -f "$COMPOSE" "$@" ;;
+  esac
 }
 
 # A mesma lista de -f, como texto, para as mensagens que ensinam o comando ao
 # dono. Se a mensagem omitisse o override numa instalação com proxy externo, o
 # próprio dono derrubaria o site seguindo a instrução do kit.
 dc_files() {
-  if [ "${REVERSE_PROXY:-caddy}" = "traefik" ]; then
-    printf -- '-f %s -f %s' "$COMPOSE" "$COMPOSE_TRAEFIK"
-  else
-    printf -- '-f %s' "$COMPOSE"
-  fi
+  case "${REVERSE_PROXY:-caddy}" in
+  traefik) printf -- '-f %s -f %s' "$COMPOSE" "$COMPOSE_TRAEFIK" ;;
+  npm) printf -- '-f %s -f %s' "$COMPOSE" "$COMPOSE_NPM" ;;
+  *) printf -- '-f %s' "$COMPOSE" ;;
+  esac
 }
 
 # ── A rede externa por onde o proxy de fora alcança o app ────────────────────
@@ -171,7 +177,13 @@ veredito_rede_do_proxy() {  # veredito_rede_do_proxy <driver encontrado> <rede> 
 # Define TRAEFIK_NETWORK quando ela vem vazia — de propósito, é o mesmo default
 # que o instalador grava no .env.
 garantir_rede_do_proxy() {
-  [ "${REVERSE_PROXY:-caddy}" = "traefik" ] || return 0
+  case "${REVERSE_PROXY:-caddy}" in
+  traefik) garantir_rede_do_traefik ;;
+  npm) garantir_rede_do_npm ;;
+  esac
+}
+
+garantir_rede_do_traefik() {
   local nossa drv erro
   nossa="$(rede_reservada_do_proxy)"
   TRAEFIK_NETWORK="${TRAEFIK_NETWORK:-traefik}"
@@ -208,6 +220,30 @@ TRAEFIK_NETWORK do .env: o kit cria e usa a rede '$nossa'.
 Senão, rode 'docker network ls' e ponha a bridge certa em TRAEFIK_NETWORK no .env.
 Se for uma overlay do Swarm, ela precisa ter sido criada com --attachable —
 sem isso um contêiner de compose comum não consegue entrar nela."
+    ;;
+  esac
+}
+
+# Mais simples que a do Traefik de propósito: o NPM não tem o cenário "modo
+# host" que justifica a bridge própria reservada por este kit (o compose
+# oficial do projeto NPM sempre publica um bridge normal). Sem essa
+# ambiguidade, não há "criar a nossa" — só confere que a rede que o dono
+# apontou (ou o default "npm") existe e serve, e explica o que fazer quando
+# não serve. A checagem em si — driver bridge, ou overlay attachable —
+# reusa `veredito_rede_do_proxy`, que já resolve exatamente essa pergunta.
+garantir_rede_do_npm() {
+  local drv att
+  NPM_NETWORK="${NPM_NETWORK:-npm}"
+  drv="$(docker network inspect -f '{{.Driver}}' "$NPM_NETWORK" 2>/dev/null || true)"
+  att="$(docker network inspect -f '{{.Attachable}}' "$NPM_NETWORK" 2>/dev/null || true)"
+  case "$(veredito_rede_do_proxy "$drv" "$NPM_NETWORK" "" "$att")" in
+  ok) : ;;
+  *)
+    die "A rede Docker '$NPM_NETWORK' não existe (ou não é uma bridge/overlay
+attachable). Rode 'docker network ls', identifique a rede do seu Nginx Proxy
+Manager e ponha NPM_NETWORK=<nome> no .env antes de tentar de novo — o nome
+mais comum é o que o compose oficial do NPM cria quando ninguém personaliza
+('npm', o default aqui)."
     ;;
   esac
 }
@@ -756,7 +792,16 @@ setup_event_log_drain_cron() {
   if crontab -l 2>/dev/null | grep -qF -e "$url_drain"; then first_time=0; fi
 
   local cron_line="* * * * * curl -fsS -H \"Authorization: Bearer ${secret}\" \"${url_drain}\" >/dev/null 2>&1 ${marcador}"
-  ( crontab -l 2>/dev/null | cron_merge "$marcador" "$url_drain" "$cron_line" ) | crontab -
+  # `crontab -l` sai != 0 numa VPS nova (root ainda sem crontab nenhum), e com
+  # `set -euo pipefail` isso derruba o script bem depois de a instalação já
+  # estar correta — "Ativando as automações" foi visto travando exatamente
+  # aqui. Captura em variável ANTES do pipe, com `|| true` NA ATRIBUIÇÃO (não
+  # dentro de um pipe): é o único jeito que testei imune a `errexit` — colocar
+  # o `crontab -l` como primeiro estágio de um pipe (mesmo com `; true` depois,
+  # num subshell) ainda disparava `ERR` em alguns bashes por causa de como
+  # `pipefail` marca a falha ANTES do subshell terminar de rodar `true`.
+  local crontab_atual; crontab_atual="$(crontab -l 2>/dev/null || true)"
+  printf '%s\n' "$crontab_atual" | cron_merge "$marcador" "$url_drain" "$cron_line" | crontab -
   c_grn "✓ automações ativas (cron do event-log-drain, a cada minuto)"
 
   if [ "$first_time" = 1 ]; then
@@ -795,7 +840,12 @@ setup_update_agent_cron() {
   local legado="cd ${PROJECT_DIR} && bash hostgator-setup-kit/agent.sh"
   local marcador; marcador="$(cron_tag agent)"
   local cron_line="*/5 * * * * ${legado} >/dev/null 2>&1 ${marcador}"
-  ( crontab -l 2>/dev/null | cron_merge "$marcador" "$legado" "$cron_line" ) | crontab -
+  # Mesmo motivo do event-log-drain acima: `crontab -l` sai != 0 numa VPS
+  # nova, e com `set -euo pipefail` isso derruba o script aqui. Captura em
+  # variável ANTES do pipe, com `|| true` na atribuição (não dentro de um
+  # subshell num pipe) — é o padrão comprovado imune a `errexit`.
+  local crontab_atual; crontab_atual="$(crontab -l 2>/dev/null || true)"
+  printf '%s\n' "$crontab_atual" | cron_merge "$marcador" "$legado" "$cron_line" | crontab -
   c_grn "✓ atualização pela tela ativa (agente a cada 5 minutos)"
 }
 

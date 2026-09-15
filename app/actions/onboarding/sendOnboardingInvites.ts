@@ -17,6 +17,8 @@ import { signInviteToken, INVITE_TTL_SECONDS } from "@/lib/auth/invite-token";
 import { buildInviteEmail } from "@/lib/email/templates/invite";
 import { sendEmail } from "@/lib/email/resend";
 import { marcaDaSaida } from "@/lib/branding/saida";
+import { registrarConvite } from "@/lib/auth/registrar-convite";
+import { INTERFACE_COMPLETA } from "@/lib/navigation/interface";
 import { inviteOnboardingSchema } from "@/lib/schemas/onboarding";
 import { requireOnboardingCtx, patchOnboardingState, OnboardingError } from "./_shared";
 
@@ -130,6 +132,18 @@ export async function sendOnboardingInvites(payload: InvitePayload): Promise<Sen
         email_dispatched: result.ok,
         source: "onboarding",
       },
+    });
+    await registrarConvite({
+      inviteId,
+      organizationId: ctx.orgId,
+      email,
+      role: inv.role,
+      // Este fluxo não oferece perfil de interface na tela — nasce no
+      // mesmo padrão que `issueInvite` já usa quando ninguém escolhe.
+      interfaceSettings: INTERFACE_COMPLETA,
+      invitedBy: ctx.userId,
+      expiresAt,
+      emailDispatched: result.ok,
     });
   }
 

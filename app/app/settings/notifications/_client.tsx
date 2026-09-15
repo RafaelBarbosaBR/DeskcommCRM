@@ -2,19 +2,15 @@
 
 import { useT } from "@/hooks/i18n/useT";
 
-import { useState } from "react";
-
 import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { useNotificationPermission } from "@/hooks/notifications/useNotificationPermission";
+import { useNotifyPrefs } from "@/hooks/notifications/useNotifyPrefs";
 import {
   NOTIFY_UI_CATEGORIES,
-  canalLigado,
   gravarCanal,
-  lerPrefs,
   type NotifyCategory,
   type NotifyChannelPref,
-  type NotifyPrefs,
 } from "@/lib/notifications/prefs";
 
 const LABELS: Record<NotifyCategory, string> = {
@@ -28,7 +24,7 @@ const LABELS: Record<NotifyCategory, string> = {
 export function NotificationPrefsClient() {
   const t = useT();
   const { permission, request } = useNotificationPermission();
-  const [prefs, setPrefs] = useState<NotifyPrefs>(() => lerPrefs());
+  const prefs = useNotifyPrefs();
   const denied = permission === "denied";
   const unsupported = permission === "unsupported";
 
@@ -39,7 +35,7 @@ export function NotificationPrefsClient() {
         if (next !== "granted") return;
       }
     }
-    setPrefs(gravarCanal(category, channel, on));
+    gravarCanal(category, channel, on);
   }
 
   return (
@@ -82,7 +78,7 @@ export function NotificationPrefsClient() {
                   disabled={denied || unsupported}
                   onCheckedChange={(on) => void onToggle(cat, "push", on)}
                   aria-label={`${t(LABELS[cat])} via push`}
-                  data-testid={cat === "message" ? (canalLigado("message", "push") ? "alerts-toggle" : "alerts-enable") : undefined}
+                  data-testid={cat === "message" ? (prefs.message.push ? "alerts-toggle" : "alerts-enable") : undefined}
                 />
               </td>
             </tr>

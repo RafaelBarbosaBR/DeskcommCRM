@@ -1,0 +1,77 @@
+# Servidor WaCalls — chamada de voz pelo WhatsApp (whatsmeow + pion/webrtc),
+# terceiro MIT, vendorizado por COMMIT FIXO (não por branch — main pode mudar
+# de baixo do nosso build sem aviso nenhum).
+#
+# Fonte: https://github.com/JotaDev66/WaCalls (Go puro, SQLite pure-Go via
+# modernc.org/sqlite — SEM cgo, confirmado no go.mod: nenhuma dependência
+# nativa, então `CGO_ENABLED=0` produz um binário estático de verdade).
+#
+# NÃO buildamos o client React deles (`client/`, Vite): o produto tem a
+# própria UI de pareamento/discagem (`components/voice/`, `/app/connections`).
+# O servidor sobe SEM `-static`, só a API — a mesma superfície que
+# `lib/wacalls/client.ts` fala.
+#
+# ⚠️ SEM AUTENTICAÇÃO NA API (documentado no próprio README deles: "anyone
+# with HTTP access can create accounts, place calls, and read history — run
+# it only on a trusted LAN"). A segurança AQUI é de REDE, não de credencial:
+# este serviço entra SÓ na rede `internal` do compose, SEM `ports:` — o único
+# caminho até ele é o app/worker desta instalação, nunca a internet.
+
+FROM golang:1.26-alpine AS build
+
+# Procedência (doutrina de packaging, invariante 2) — do TERCEIRO, não nossa.
+LABEL org.opencontainers.image.source="https://github.com/JotaDev66/WaCalls" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.title="WaCalls server (vendorizado)"
+
+# Aceito e ignorado: o workflow de publicação (`.github/workflows/
+# publish-image.yml`) manda `APP_VERSION` para TODAS as imagens da matriz —
+# esta é a única que não o usa (é build vendorizado de terceiro, versionado
+# por `WACALLS_COMMIT` abaixo, não pela nossa release). Sem este ARG
+# declarado, o build funciona do mesmo jeito; só ganha um aviso de
+# "build-arg não consumido" no log do CI a cada run.
+ARG APP_VERSION=unused
+
+RUN apk add --no-cache git
+
+WORKDIR /src
+# Commit fixo, não branch — atualizar aqui é decisão deliberada (rever antes
+# de trocar: mudanças de contrato de API quebram lib/wacalls/client.ts em
+# silêncio, sem `go build` nenhum do nosso lado para acusar).
+ARG WACALLS_COMMIT=edeb31f0427aba896639db503153b777a405eccf
+RUN git init -q . \
+ && git remote add origin https://github.com/JotaDev66/WaCalls.git \
+ && git fetch --depth 1 origin "${WACALLS_COMMIT}" \
+ && git checkout -q FETCH_HEAD
+
+RUN go mod download
+
+# CGO_ENABLED=0: nenhuma dependência nativa (confirmado no go.mod — MLow é Go
+# puro vendorizado, SQLite é modernc.org/sqlite) — binário estático de verdade,
+# roda em alpine sem glibc nem libsqlite.
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/wacalls-server ./cmd/server
+
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates \
+ && addgroup -S wacalls && adduser -S wacalls -G wacalls \
+ && mkdir -p /data && chown wacalls:wacalls /data
+
+COPY --from=build /out/wacalls-server /usr/local/bin/wacalls-server
+
+USER wacalls
+WORKDIR /data
+EXPOSE 8080
+
+# Sem `/healthz` no servidor de terceiro (conferido na fonte) — `/api/sessions`
+# sempre responde (mesmo com zero sessões), é o alvo mais barato que prova o
+# processo vivo sem inventar rota que não existe.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://127.0.0.1:8080/api/sessions || exit 1
+
+# `-db`: persistido no volume nomeado `wacalls-data` (ver docker-compose.prod.yml)
+# — sem isto, toda credencial de pareamento se perde a cada `up -d --force-recreate`.
+# `-static` OMITIDO de propósito: sem client/dist a servir, e o flag default
+# apontaria para um caminho que não existe nesta imagem (inofensivo — o server
+# só faz `os.Stat` e segue sem servir estático —, mas explícito é melhor).
+ENTRYPOINT ["/usr/local/bin/wacalls-server", "-db", "/data/wacalls.db", "-static", ""]
