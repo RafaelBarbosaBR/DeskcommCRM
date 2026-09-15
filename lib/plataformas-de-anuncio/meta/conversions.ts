@@ -35,6 +35,7 @@
 import { createHash } from "node:crypto";
 
 import { logger } from "@/lib/logger";
+import { DEFAULT_META_GRAPH_VERSION } from "@/lib/channels/meta/graph-version";
 import type {
   ConversaoOffline,
   CredencialDeConversao,
@@ -46,9 +47,11 @@ import type {
  * Fixada no código, e não em env nova (item 9 do DoD pede env em dois lugares e
  * este eixo não deve herdar a variável do canal de mensagem — são credenciais e
  * ciclos de vida diferentes). Mesma versão que o transporte de mensagens usa
- * como default hoje, para a instalação não conviver com duas.
+ * como default hoje, para a instalação não conviver com duas — por isso o
+ * literal vem do mesmo lugar (`lib/channels/meta/graph-version.ts`), mas SÓ o
+ * fallback fixo: nunca `metaGraphVersion()`, que lê `META_GRAPH_VERSION`.
  */
-const VERSAO_DA_API = "v22.0";
+const VERSAO_DA_API = DEFAULT_META_GRAPH_VERSION;
 
 /** O teto da plataforma. Evento mais velho que isto é recusado. */
 const IDADE_MAXIMA_MS = 7 * 24 * 60 * 60 * 1000;

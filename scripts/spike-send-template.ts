@@ -16,6 +16,7 @@
  */
 import { buildComponents, missingSlots } from "@/lib/channels/meta/build-components";
 import { deriveTemplateContract, describeAddress } from "@/lib/channels/meta/template-contract";
+import { metaGraphVersion } from "@/lib/channels/meta/graph-version";
 
 const TEMPLATE = "jaspers_market_order_confirmation_v1";
 const TO = process.env.META_TEST_RECIPIENT ?? "5531998966398";
@@ -26,7 +27,7 @@ function env(name: string): string {
   return v;
 }
 
-const VERSION = process.env.META_GRAPH_VERSION ?? "v22.0";
+const VERSION = metaGraphVersion();
 const BASE = `https://graph.facebook.com/${VERSION}`;
 const TOKEN = env("META_SYSTEM_USER_TOKEN");
 

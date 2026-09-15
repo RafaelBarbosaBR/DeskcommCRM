@@ -911,6 +911,69 @@ describe('graph-schema', () => {
       expect(result.success).toBe(true); // Edges can be empty
     });
 
+    it('rejects an edge whose source points at a node that does not exist', () => {
+      const result = flowGraphSchema.safeParse({
+        nodes: [
+          { id: 'trigger-1', type: 'trigger', label: 'Start', position: { x: 0, y: 0 }, config: {} },
+          { id: 'end-1', type: 'end', label: 'End', position: { x: 100, y: 100 }, config: { outcome: 'converted' } },
+        ],
+        edges: [
+          { id: 'edge-1', source: 'no-existe', target: 'end-1', condition: { type: 'always' } },
+        ],
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(JSON.stringify(result.error.issues)).toContain('no-existe');
+      }
+    });
+
+    it('rejects an edge whose target points at a node that does not exist', () => {
+      const result = flowGraphSchema.safeParse({
+        nodes: [
+          { id: 'trigger-1', type: 'trigger', label: 'Start', position: { x: 0, y: 0 }, config: {} },
+          { id: 'end-1', type: 'end', label: 'End', position: { x: 100, y: 100 }, config: { outcome: 'converted' } },
+        ],
+        edges: [
+          { id: 'edge-1', source: 'trigger-1', target: 'no-existe', condition: { type: 'always' } },
+        ],
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(JSON.stringify(result.error.issues)).toContain('no-existe');
+      }
+    });
+
+    it('rejects two nodes sharing the same id', () => {
+      const result = flowGraphSchema.safeParse({
+        nodes: [
+          { id: 'dup', type: 'trigger', label: 'Start', position: { x: 0, y: 0 }, config: {} },
+          { id: 'dup', type: 'end', label: 'End', position: { x: 100, y: 100 }, config: { outcome: 'converted' } },
+        ],
+        edges: [],
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(JSON.stringify(result.error.issues)).toContain('dup');
+      }
+    });
+
+    it('rejects two edges sharing the same id', () => {
+      const result = flowGraphSchema.safeParse({
+        nodes: [
+          { id: 'trigger-1', type: 'trigger', label: 'Start', position: { x: 0, y: 0 }, config: {} },
+          { id: 'end-1', type: 'end', label: 'End', position: { x: 100, y: 100 }, config: { outcome: 'converted' } },
+        ],
+        edges: [
+          { id: 'dup-edge', source: 'trigger-1', target: 'end-1', condition: { type: 'always' } },
+          { id: 'dup-edge', source: 'trigger-1', target: 'end-1', condition: { type: 'always' } },
+        ],
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(JSON.stringify(result.error.issues)).toContain('dup-edge');
+      }
+    });
+
     it('rejects extra keys in graph', () => {
       const result = flowGraphSchema.safeParse({
         nodes: [

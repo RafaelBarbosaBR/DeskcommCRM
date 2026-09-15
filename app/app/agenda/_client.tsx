@@ -448,6 +448,13 @@ export function AgendaClient({
             // não usado reapareceria na PRÓXIMA marcação, que é de outro
             // cliente — convite para a pessoa errada, sem ninguém ter pedido.
             setEmailConvidado("");
+            // E o cliente vinculado (chegado por `?contato=&conversa=` na URL,
+            // ao abrir a partir de uma conversa) também precisa sumir: sem
+            // isto, fechar sem confirmar e depois clicar no botão avulso
+            // "Novo agendamento" reabria "Quem será atendido" com o cliente
+            // da vez anterior, em vez de "Compromisso pessoal, sem cliente".
+            setContactId("");
+            setConversationId("");
           }
         }}
       >

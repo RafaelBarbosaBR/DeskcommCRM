@@ -71,7 +71,7 @@ export function NewFlowDialog({ open, onOpenChange }: Props) {
         </DialogHeader>
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="flow-name">Nome</Label>
+            <Label htmlFor="flow-name">{t("Nome")}</Label>
             <Input
               id="flow-name"
               value={name}
@@ -94,10 +94,10 @@ export function NewFlowDialog({ open, onOpenChange }: Props) {
               onClick={() => onOpenChange(false)}
               disabled={create.isPending}
             >
-              Cancelar
+              {t("Cancelar")}
             </Button>
             <Button type="submit" disabled={create.isPending || name.trim().length === 0}>
-              {create.isPending ? "Criando…" : "Criar fluxo"}
+              {create.isPending ? t("Criando…") : t("Criar fluxo")}
             </Button>
           </DialogFooter>
         </form>

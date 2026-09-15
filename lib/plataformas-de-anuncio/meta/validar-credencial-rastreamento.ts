@@ -5,13 +5,18 @@
  * WhatsApp) — chamada síncrona dentro do próprio salvamento, não um botão de
  * "ping" separado.
  */
+import { DEFAULT_META_GRAPH_VERSION } from "@/lib/channels/meta/graph-version";
+
 export type ResultadoDeValidacaoMeta = { ok: true } | { ok: false; motivo: string };
 
 export async function validarCredencialMeta(
   pixelId: string,
   accessToken: string,
 ): Promise<ResultadoDeValidacaoMeta> {
-  const url = `https://graph.facebook.com/v22.0/${encodeURIComponent(pixelId)}?fields=id&access_token=${encodeURIComponent(accessToken)}`;
+  // Versão fixa, igual às outras chamadas deste eixo (`conversions.ts`,
+  // `rastreamento.ts`) — não lê `META_GRAPH_VERSION`, que é do canal de
+  // mensagem, um ciclo de vida diferente.
+  const url = `https://graph.facebook.com/${DEFAULT_META_GRAPH_VERSION}/${encodeURIComponent(pixelId)}?fields=id&access_token=${encodeURIComponent(accessToken)}`;
   let resposta: Response;
   try {
     resposta = await fetch(url, { method: "GET", signal: AbortSignal.timeout(10_000) });

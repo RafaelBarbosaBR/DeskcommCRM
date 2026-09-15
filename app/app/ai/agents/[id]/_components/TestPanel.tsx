@@ -174,6 +174,13 @@ export function TestPanel({ agent, draft, published, readOnly }: Props) {
       const res = await apiClient.post<TestResponse>(
         `/api/v1/ai/agents/${agent.id}/versions/${target.id}/test`,
         body,
+        // Sem isto herda os 10s padrão do cliente — curtos demais para uma
+        // chamada de LLM real (pior com ferramentas em cadeia), e o timeout
+        // dispara RETRY (`lib/api/client.ts`, `MAX_ATTEMPTS=3`). Esta rota
+        // não é idempotente: cada tentativa cria uma `ai_agent_runs` nova E
+        // gasta crédito de novo — um teste "lento, mas ia responder" virava
+        // três chamadas cobradas por um clique só.
+        { timeoutMs: 120_000 },
       );
       setResult(res.data);
       qc.invalidateQueries({ queryKey: agentRunsKey(agent.id) });

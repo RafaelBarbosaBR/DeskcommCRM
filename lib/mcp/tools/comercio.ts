@@ -254,8 +254,9 @@ export const crmSearchProducts: McpToolDefinition<typeof produtosInputShape> = {
         produtos: [],
         mensagem: varreduraParcial
           ? `não encontrei entre os ${linhas.length} produtos que consegui consultar, e o catálogo ` +
-            `desta loja tem ${total}. NÃO diga que a loja não tem — diga que vai confirmar com a ` +
-            "equipe. Se a pessoa souber o código ou o nome exato, peça: com ele a busca acha."
+            `desta loja tem ${total === null ? "um total que não consegui confirmar" : `${total} produtos`}. ` +
+            "NÃO diga que a loja não tem — diga que vai confirmar com a equipe. Se a pessoa souber o " +
+            "código ou o nome exato, peça: com ele a busca acha."
           : "não há nada com esse nome no catálogo da loja. Não invente preço — diga que vai confirmar com a equipe.",
       };
     }

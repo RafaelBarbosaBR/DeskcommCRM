@@ -1794,6 +1794,7 @@ export const DICIONARIO: Traducoes = {
     es: "Escribe como se lo explicarías a un atendente nuevo: en qué situación cae aquí el cliente.",
   },
   "Já existe outra intenção com este nome.": { es: "Ya existe otra intención con este nombre." },
+  "Já existe um contato com este telefone.": { es: "Ya existe un contacto con este teléfono." },
   "Frases de exemplo (opcional)": { es: "Frases de ejemplo (opcional)" },
   "Remover exemplo": { es: "Quitar ejemplo" },
   "Sem frases de exemplo.": { es: "Sin frases de ejemplo." },

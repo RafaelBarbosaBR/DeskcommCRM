@@ -40,6 +40,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { ARCHIVED_AT, queryTolerantToMissingArchived } from "../archived";
 import { decryptWebhookSecret } from "@/lib/webhooks/secrets";
+import { metaGraphVersion } from "./graph-version";
 
 export interface MetaCredentials {
   phoneNumberId: string;
@@ -59,11 +60,6 @@ export interface MetaCredsLookup {
   phoneNumberId: string;
 }
 
-/** Versão da Graph API. Explícita de propósito: bump é decisão, não deriva. */
-function graphVersion(): string {
-  return process.env.META_GRAPH_VERSION ?? "v22.0";
-}
-
 /**
  * Credencial do ambiente. `null` quando não configurada — o chamador trata como
  * canal não conectado (noop), nunca como erro.
@@ -72,7 +68,7 @@ export function metaCredsFromEnv(): MetaCredentials | null {
   const phoneNumberId = process.env.META_PHONE_NUMBER_ID;
   const token = process.env.META_SYSTEM_USER_TOKEN;
   if (!phoneNumberId || !token) return null;
-  return { phoneNumberId, token, graphVersion: graphVersion(), source: "env" };
+  return { phoneNumberId, token, graphVersion: metaGraphVersion(), source: "env" };
 }
 
 /**
@@ -128,7 +124,7 @@ export async function metaCredsForPhoneNumberId(
   return {
     phoneNumberId: data.meta_phone_number_id as string,
     token,
-    graphVersion: graphVersion(),
+    graphVersion: metaGraphVersion(),
     source: "session",
   };
 }

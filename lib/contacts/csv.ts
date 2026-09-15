@@ -1,4 +1,5 @@
 import { normalizePhoneBR } from "@/lib/webhooks/inbound";
+import { decodificarTexto } from "@/lib/text/decodificar-texto";
 /**
  * Parser de CSV para importação de contatos — RFC 4180, zero dependências.
  *
@@ -64,39 +65,20 @@ import { normalizePhoneBR } from "@/lib/webhooks/inbound";
  * ORIGEM — "AÃ§Ã£o", UTF-8 já gravado como latin-1 pelo sistema que gerou a
  * planilha — é UTF-8 VÁLIDO, não tem U+FFFD nenhum, e passa limpo. É outro
  * defeito, com outra evidência.
- */
-/**
- * A partir de quantos bytes por substituição o arquivo deixa de ser "latin-1" e
- * passa a ser "UTF-8 com um byte ruim".
  *
- * 100 fica entre as duas causas medidas (5 e 5.692 bytes por U+FFFD) com folga
- * de mais de uma ordem de grandeza para cada lado — não é um número escolhido
- * para caber num caso, é o meio de um vale largo.
+ * A heurística de densidade (o "1 U+FFFD a cada N bytes" acima) mora em
+ * `lib/text/decodificar-texto.ts` — extraída para ser reusada fora de CSV, a
+ * base de conhecimento (`.txt`/`.md`) tinha o MESMO defeito.
  */
-const MAX_BYTES_POR_SUBSTITUICAO = 100;
-
 export function decodificarCsv(bytes: ArrayBuffer | Uint8Array): { texto: string } | { erro: string } {
-  const buf = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-
-  const utf8 = new TextDecoder("utf-8").decode(buf);
-  const substituicoes = (utf8.match(/\uFFFD/g) ?? []).length;
-  // Sem nenhuma: UTF-8 válido, e a prova é completa.
-  if (substituicoes === 0) return { texto: semBom(utf8) };
-  // Com poucas: é UTF-8 com sujeira pontual, não outro charset. Trocar de
-  // decoder aqui estragaria o arquivo inteiro para consertar um caractere.
-  if (buf.byteLength / substituicoes > MAX_BYTES_POR_SUBSTITUICAO) {
-    return { texto: semBom(utf8) };
-  }
-
-  const latin = new TextDecoder("windows-1252").decode(buf);
-  // eslint-disable-next-line no-control-regex -- é exatamente o que se procura
-  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(latin)) {
+  const { texto, usouWindows1252 } = decodificarTexto(bytes);
+  if (usouWindows1252 && /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(texto)) {
     return {
       erro:
         "Este arquivo não parece ser um CSV de texto. No Excel use “Salvar como” → “CSV UTF-8 (delimitado por vírgulas)”.",
     };
   }
-  return { texto: semBom(latin) };
+  return { texto: semBom(texto) };
 }
 
 /** O BOM vira caractere invisível no primeiro cabeçalho e cria coluna fantasma. */

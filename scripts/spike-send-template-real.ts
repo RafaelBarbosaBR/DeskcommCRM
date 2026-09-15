@@ -8,6 +8,7 @@
  */
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendTemplate } from "@/lib/channels/meta/send-template";
+import { metaGraphVersion } from "@/lib/channels/meta/graph-version";
 
 const TEMPLATE = "deskcomm_prova_webhook_0088";
 const IDIOMA = "pt_BR";
@@ -31,7 +32,7 @@ async function main() {
   const resultado = await sendTemplate({
     phoneNumberId: process.env.META_PHONE_NUMBER_ID ?? "",
     token: process.env.META_SYSTEM_USER_TOKEN ?? "",
-    graphVersion: process.env.META_GRAPH_VERSION ?? "v22.0",
+    graphVersion: metaGraphVersion(),
     to: DESTINO,
     binding: {
       name: linha.name,

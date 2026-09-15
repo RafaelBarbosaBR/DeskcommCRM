@@ -46,6 +46,7 @@
  * ao carregar" — o operador precisa saber que a espera resolve.
  */
 import { logger } from "@/lib/logger";
+import { DEFAULT_META_GRAPH_VERSION } from "@/lib/channels/meta/graph-version";
 import type {
   ContaDeAnuncio,
   FalhaDeLeitura,
@@ -55,10 +56,11 @@ import type {
 /**
  * A MESMA versão que `conversions.ts` fixa, e pelo mesmo motivo: a instalação
  * não deve conviver com duas versões da mesma plataforma. Subir de versão é uma
- * mudança deliberada, feita nos dois arquivos, depois de reconferir os campos —
- * a lição do achado 2 acima é justamente que campo válido some entre versões.
+ * mudança deliberada, feita nos arquivos que usam este fallback, depois de
+ * reconferir os campos — a lição do achado 2 acima é justamente que campo
+ * válido some entre versões.
  */
-const VERSAO_DA_API = "v22.0";
+const VERSAO_DA_API = DEFAULT_META_GRAPH_VERSION;
 
 const TEMPO_LIMITE_MS = 20_000;
 

@@ -25,6 +25,7 @@ import { MAX_MEDIA_BYTES, MediaTooLargeError, type FetchedMedia } from "@/lib/me
 import { createAdminClient } from "@/lib/supabase/admin";
 import { metaContactsPayload } from "@/lib/channels/meta/contact-card";
 import { resolveMetaCreds } from "../meta/credentials";
+import { metaGraphVersion } from "../meta/graph-version";
 import type {
   ChannelAdapter,
   ChannelHealth,
@@ -151,7 +152,7 @@ export const metaCloudAdapter: ChannelAdapter = {
     });
     if (!creds) return { reachable: false, status: null, detail: "sem_credencial_para_a_sessao" };
 
-    const version = process.env.META_GRAPH_VERSION ?? "v22.0";
+    const version = metaGraphVersion();
     try {
       const res = await fetch(
         `https://graph.facebook.com/${version}/${input.sessionRef}?fields=display_phone_number,quality_rating`,

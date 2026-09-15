@@ -418,10 +418,59 @@ export type FlowEdgeCondition = FlowEdge['condition'];
  * Complete flow graph schema.
  * Contains nodes and edges defining the flow automation.
  */
-export const flowGraphSchema = z.strictObject({
-  nodes: z.array(flowNodeSchema).min(2).max(60),
-  edges: z.array(flowEdgeSchema).max(120),
-});
+export const flowGraphSchema = z
+  .strictObject({
+    nodes: z.array(flowNodeSchema).min(2).max(60),
+    edges: z.array(flowEdgeSchema).max(120),
+  })
+  /**
+   * Um grafo salvo com o id certo mas o `source`/`target` errado (ou um id
+   * duplicado, de um copiar-colar no builder) passava neste schema hoje —
+   * cada nó/aresta é válido isolado, e nada aqui comparava um contra o
+   * outro. O motor (`engine.ts`) só descobria a aresta órfã em RUNTIME, ao
+   * tentar rotear por um nó que não existe — silencioso até alguém cair
+   * nesse ramo. Nomeia o id ofensor na mensagem, como o upstream faz.
+   */
+  .superRefine((graph, ctx) => {
+    const idsDeNo = new Set<string>();
+    graph.nodes.forEach((no, i) => {
+      if (idsDeNo.has(no.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `node id duplicado: ${no.id}`,
+          path: ['nodes', i, 'id'],
+        });
+      }
+      idsDeNo.add(no.id);
+    });
+
+    const idsDeAresta = new Set<string>();
+    graph.edges.forEach((aresta, i) => {
+      if (idsDeAresta.has(aresta.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `edge id duplicado: ${aresta.id}`,
+          path: ['edges', i, 'id'],
+        });
+      }
+      idsDeAresta.add(aresta.id);
+
+      if (!idsDeNo.has(aresta.source)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `edge "${aresta.id}" aponta source para um nó que não existe: ${aresta.source}`,
+          path: ['edges', i, 'source'],
+        });
+      }
+      if (!idsDeNo.has(aresta.target)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `edge "${aresta.id}" aponta target para um nó que não existe: ${aresta.target}`,
+          path: ['edges', i, 'target'],
+        });
+      }
+    });
+  });
 
 export type FlowGraph = z.infer<typeof flowGraphSchema>;
 

@@ -29,12 +29,45 @@ import { testAgentVersion } from "@/lib/agent-engine/agent/sandbox";
 import { requestTurnDeps } from "@/lib/agent-engine/agent/request-deps";
 import { getRequestPool } from "@/lib/agent-engine/db/request-pool";
 import { traduzir } from "@/lib/i18n/dicionario";
+import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 
 const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Ctx = { params: Promise<{ id: string; vid: string }> };
+
+/**
+ * A ÚNICA escrita que tira a run de `status:"running"`. Nenhum reaper cobre
+ * este caminho hoje (ao contrário de `lib/agent-engine/queue/queue.ts`, que
+ * tem `reapExpiredJobs`) — então um erro aqui deixava a run PRESA para
+ * sempre, sem nenhum sinal, nem nos logs. Uma tentativa extra cobre o caso
+ * comum (blip de rede/pool); se a segunda também falhar, ao menos fica
+ * registrado QUAL run e QUAL erro, para quem for investigar uma run travada
+ * saber onde procurar.
+ */
+async function finalizarRun(
+  admin: ReturnType<typeof createAdminClient>,
+  orgId: string,
+  runId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  for (let tentativa = 1; tentativa <= 2; tentativa++) {
+    const { error } = await admin
+      .from("ai_agent_runs")
+      .update(patch)
+      .eq("organization_id", orgId)
+      .eq("id", runId);
+    if (!error) return;
+    if (tentativa === 2) {
+      logger.error("[ai.agents.test] falha ao finalizar ai_agent_runs — run fica presa em running", {
+        run_id: runId,
+        organization_id: orgId,
+        detail: error.message,
+      });
+    }
+  }
+}
 
 export async function POST(req: NextRequest, ctx: Ctx): Promise<Response> {
   const supportDenied = await requireSupportWrite();
@@ -126,25 +159,17 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<Response> {
       stub: process.env.INTERNAL_AGENT_RUN_STUB === "true",
       guardrails: avaliarRespostaDeTeste(finalText),
     };
-    await admin
-      .from("ai_agent_runs")
-      .update({
-        status: "ok",
-        completed_at: new Date().toISOString(),
-        tool_calls: JSON.parse(JSON.stringify(result.proposals)),
-      })
-      .eq("organization_id", activeOrg.orgId)
-      .eq("id", runRow.id);
+    await finalizarRun(admin, activeOrg.orgId, runRow.id, {
+      status: "ok",
+      completed_at: new Date().toISOString(),
+      tool_calls: JSON.parse(JSON.stringify(result.proposals)),
+    });
   } catch {
-    await admin
-      .from("ai_agent_runs")
-      .update({
-        status: "error",
-        completed_at: new Date().toISOString(),
-        error_code: "preview_failed",
-      })
-      .eq("organization_id", activeOrg.orgId)
-      .eq("id", runRow.id);
+    await finalizarRun(admin, activeOrg.orgId, runRow.id, {
+      status: "error",
+      completed_at: new Date().toISOString(),
+      error_code: "preview_failed",
+    });
     return fail(
       "preview_failed",
       t("Não foi possível executar o teste. Confira modelo, credencial e materiais do agente."),

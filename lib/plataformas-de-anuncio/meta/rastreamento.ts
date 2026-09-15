@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { logger } from "@/lib/logger";
+import { DEFAULT_META_GRAPH_VERSION } from "@/lib/channels/meta/graph-version";
 import type {
   ConversaoOffline,
   ResultadoDeEnvio,
@@ -19,7 +20,7 @@ import type { CredencialMetaRastreamento } from "./credenciais-rastreamento";
  * Mesma classificação de erro 4xx-vs-5xx-vs-throttle do transporte legado —
  * a física da falha (Meta) não mudou, só o payload.
  */
-const VERSAO_DA_API = "v22.0";
+const VERSAO_DA_API = DEFAULT_META_GRAPH_VERSION;
 const IDADE_MAXIMA_MS = 7 * 24 * 60 * 60 * 1000;
 const TEMPO_LIMITE_MS = 10_000;
 

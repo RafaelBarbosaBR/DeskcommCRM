@@ -247,6 +247,17 @@ export function DetalheDoCompromisso({
                   {t("Ao confirmar, você valida o significado da mensagem para este compromisso.")}
                 </p>
                 <div className="flex flex-wrap gap-2">
+                  {a.status === "pending" ? (
+                    // O pedido pendente confirma sem passar por Compareceu/Faltou
+                    // — aquele par é DESFECHO (o compromisso já aconteceu), e
+                    // "Confirmar" é ANTES dele: só garante o horário.
+                    <Button
+                      onClick={() => decide({ status: "confirmed" })}
+                      disabled={mutation.isPending || staleDraft}
+                    >
+                      {t("Confirmar")}
+                    </Button>
+                  ) : null}
                   {(
                     [
                       ["completed", "Compareceu"],

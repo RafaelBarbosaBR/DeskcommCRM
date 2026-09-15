@@ -6,6 +6,7 @@
  */
 import { createAdminClient } from "@/lib/supabase/admin";
 import { syncTemplates } from "@/lib/channels/meta/template-sync";
+import { metaGraphVersion } from "@/lib/channels/meta/graph-version";
 
 async function main() {
   const db = createAdminClient();
@@ -24,7 +25,7 @@ async function main() {
     organizationId: sessao.organization_id,
     wabaId: sessao.meta_waba_id,
     token: process.env.META_SYSTEM_USER_TOKEN ?? "",
-    graphVersion: process.env.META_GRAPH_VERSION ?? "v22.0",
+    graphVersion: metaGraphVersion(),
   });
 
   console.info("sync:", JSON.stringify(counts));

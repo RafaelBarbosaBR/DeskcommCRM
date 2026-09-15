@@ -417,6 +417,28 @@ export async function createContactHandler(
     .single();
 
   if (insErr) {
+    // `23505` = unique_violation. `uniq_contacts_org_phone` é a única unique
+    // que este INSERT pode furar (email/cpf não têm índice único hoje) — um
+    // 500 genérico aqui mandava quem chama tentar de novo, e tentar de novo
+    // batia na mesma constraint pra sempre.
+    if (insErr.code === "23505") {
+      const telefoneCanonico = insertRow.phone_number as string | null;
+      const { data: existente } = telefoneCanonico
+        ? await supabase
+            .from("contacts")
+            .select("id")
+            .eq("organization_id", ctx.organization_id)
+            .eq("phone_number", telefoneCanonico)
+            .maybeSingle()
+        : { data: null };
+      throw new ApiError(
+        409,
+        "contact_exists",
+        existente ? { contact_id: existente.id } : undefined,
+        ctx.requestId,
+        traduzir("Já existe um contato com este telefone.", ctx.idioma ?? "pt-BR"),
+      );
+    }
     throw new ApiError(500, "internal_error", undefined, ctx.requestId, insErr.message);
   }
 
