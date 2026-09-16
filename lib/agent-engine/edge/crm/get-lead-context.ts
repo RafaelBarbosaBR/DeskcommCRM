@@ -306,14 +306,8 @@ function fitToBudget(
   fuso: string,
 ): LeadContext {
   let messages: LeadContextMessage[] = history.map((m) => {
+    const body = deriveMessageBody(m);
     const hasMedia = Boolean(m.media_storage_path || m.media_url);
-    const derived = m.media_derived_text;
-    // Onda 3: legenda e derivado (transcrição/visão/pdf) COEXISTEM, e o derivado
-    // vem ENQUADRADO (frameMediaBody) — sem isso o agente caía no reflexo
-    // "não consigo ver mídia" mesmo tendo o conteúdo. Sem derivado, marcador [tipo].
-    const body = derived
-      ? frameMediaBody(m.type, m.body, derived)
-      : (m.body ?? (hasMedia ? `[${m.type}]` : ''));
     return {
       direction: m.direction,
       body,
@@ -334,6 +328,33 @@ function fitToBudget(
     messages = [{ ...messages[0]!, body: messages[0]!.body.slice(0, Math.floor(messages[0]!.body.length / 2)) }];
   }
   return build(messages);
+}
+
+export interface MensagemComMidiaDerivada {
+  type: string;
+  body: string | null;
+  media_storage_path: string | null;
+  media_url: string | null;
+  media_derived_text: string | null;
+}
+
+/**
+ * O corpo que o agente de fato lê para uma mensagem: legenda, `[tipo]` de
+ * mídia ainda sem processamento, ou a transcrição/descrição já ENQUADRADA
+ * (`frameMediaBody`) quando o derivado chegou. Onda 3: legenda e derivado
+ * COEXISTEM — sem o enquadramento o agente caía no reflexo "não consigo ver
+ * mídia" mesmo tendo o conteúdo.
+ *
+ * Extraída como a ÚNICA fonte desta regra (Onda 2, item 2.4): `inbound-turn.ts`
+ * (`loadInboundBodyForJob`) tinha a PRÓPRIA cópia, que lia só a coluna `body`
+ * crua — mídia sem legenda vem com `body=''` (nunca `null`), então o `?? '[tipo]'`
+ * de lá nunca caía, e o agente via um turno "vazio" mesmo com transcrição já
+ * gravada. Duas fontes da mesma regra, uma delas sem o derivado — agora é uma.
+ */
+export function deriveMessageBody(m: MensagemComMidiaDerivada): string {
+  const hasMedia = Boolean(m.media_storage_path || m.media_url);
+  const derived = m.media_derived_text;
+  return derived ? frameMediaBody(m.type, m.body, derived) : (m.body ?? (hasMedia ? `[${m.type}]` : ''));
 }
 
 /** Substantivo pt-br por tipo de mídia (p/ o enquadramento do derivado). */

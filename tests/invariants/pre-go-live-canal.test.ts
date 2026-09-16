@@ -36,6 +36,20 @@ describe("pré-go-live no banco que o self-host instala", () => {
     const { rows } = await pool.query("select metadata from channel_sessions where id=$1", [canal]);
     expect(rows[0].metadata).toMatchObject({ transport: { keep: true }, ai_gate: "open", ai_test_phone_numbers: [telefone] });
   });
+  it("ai_gate_mode espelha o modo pedido nos dois sentidos (migration 0249)", async () => {
+    // Bug latente corrigido pela 0249: `ai_gate_mode` gravava 'pre_go_live'
+    // incondicionalmente, mesmo abrindo o canal — mascarado porque
+    // `lerModoDeAcessoDaIa` checa `ai_gate` primeiro. Prova direta na coluna.
+    await configurar("pre_go_live", [telefone]);
+    let metadata = (await pool.query("select metadata from channel_sessions where id=$1", [canal])).rows[0].metadata;
+    expect(metadata.ai_gate_mode).toBe("pre_go_live");
+
+    await configurar("open", [telefone]);
+    metadata = (await pool.query("select metadata from channel_sessions where id=$1", [canal])).rows[0].metadata;
+    expect(metadata.ai_gate_mode).toBe("open");
+    expect(metadata.ai_gate_mode).not.toBe("pre_go_live");
+  });
+
   it("não altera canal de outra organização", async () => {
     expect((await configurar("pre_go_live", [], outraOrg)).rows[0].n).toBe(0);
     expect(await decidirElegibilidadeDaConversa(pool, { organizationId: outraOrg, conversationId: conversa, agora: new Date(), ttlMs: 1 })).toBeNull();

@@ -46,7 +46,14 @@ export default async function TiposDeAgendamentoPage() {
     supabase
       .from("calendar_event_types")
       .select(
-        "id, name, slug, description, category, duration_minutes, location_kind, location_details, default_owner_user_id, requires_confirmation, is_active, reminder_enabled, reminder_minutes_before",
+        // ⚠️ `additional_reminders` estava AUSENTE daqui (migration 0252, Onda
+        // 3.2) — `LembreteDoCompromisso` (`_client.tsx`) faz
+        // `tipo.additional_reminders.map(...)` incondicionalmente no estado
+        // inicial, então abrir "Editar" em qualquer tipo quebrava com
+        // "Cannot read properties of undefined". O teste do componente nunca
+        // pegou porque usa fixture própria, sem passar por este SELECT.
+        // `pending_expiration_hours` é novo (Onda 4.5, migration 0255).
+        "id, name, slug, description, category, duration_minutes, location_kind, location_details, default_owner_user_id, requires_confirmation, is_active, reminder_enabled, reminder_minutes_before, additional_reminders, pending_expiration_hours",
       )
       .eq("organization_id", activeOrg.orgId)
       .order("is_active", { ascending: false })

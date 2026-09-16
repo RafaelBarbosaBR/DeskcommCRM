@@ -35,6 +35,56 @@ function backoffAt(attempts: number): string {
   return new Date(Date.now() + minutes * 60_000).toISOString();
 }
 
+/**
+ * O `event_dead` ÓRFÃO (Onda 4.6): este ramo marcava `status='dead'` sem
+ * nunca abrir aviso — o `event_type` some do produto sem deixar rastro
+ * visível a quem opera. Os 3 tipos contáveis (`crm.activity_write_failed`,
+ * `whatsapp.chat_id_not_recognized`, `whatsapp.conversation_mark_failed`,
+ * Onda 2.6) nascem já `done` e nunca chegam aqui — todo `dead` que passa por
+ * este ponto é, por construção, acionável.
+ *
+ * Mesmo padrão de `avisarMidiaNaoLida` (`workers/media-derive-worker.ts`): um
+ * aviso por organização enquanto o problema durar, fire-and-forget (o dreno
+ * não pode travar porque o aviso falhou), erro do INSERT CONFERIDO (não só
+ * capturado) — supabase-js devolve `{ error }` em vez de lançar.
+ */
+async function avisarEventoMorto(
+  admin: SupabaseClient,
+  row: EventRow,
+  motivo: string,
+): Promise<void> {
+  try {
+    const { data: jaAberto } = await admin
+      .from("agent_inbox_items")
+      .select("id")
+      .eq("organization_id", row.organization_id)
+      .eq("kind", "event_dead")
+      .eq("status", "open")
+      .limit(1)
+      .maybeSingle();
+    if (jaAberto) return;
+
+    const { error } = await admin.from("agent_inbox_items").insert({
+      organization_id: row.organization_id,
+      kind: "event_dead",
+      severity: "critical",
+      title: "Um evento recebido não pôde ser processado",
+      body: `event_type=${row.event_type}; attempts=${row.attempts + 1}\nMotivo: ${motivo.slice(0, 400)}`,
+    });
+    if (error) {
+      logger.warn("[event-log.drain] o banco recusou o aviso de event_dead", {
+        organization_id: row.organization_id,
+        error: error.message,
+      });
+    }
+  } catch (err) {
+    logger.warn("[event-log.drain] falha ao avisar event_dead", {
+      organization_id: row.organization_id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 export async function drainEventLog(
   admin: SupabaseClient,
   opts: {
@@ -192,6 +242,13 @@ export async function drainEventLog(
         })
         .eq("id", row.id);
       summary[dead ? "dead" : "failed"] += 1;
+      if (dead) {
+        await avisarEventoMorto(
+          admin,
+          row,
+          errors.map((e) => `${e.consumer_key}: ${e.detail ?? "error"}`).join("; "),
+        );
+      }
     } else {
       // O MOTIVO DE UM `skipped` SOBREVIVE À LINHA.
       //

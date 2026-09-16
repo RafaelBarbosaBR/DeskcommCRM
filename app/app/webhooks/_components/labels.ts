@@ -20,6 +20,11 @@ export const TRIGGER_LABELS: Record<TriggerEvent, string> = {
   "message.received": "Quando chegar mensagem no WhatsApp",
   "lead.tag_added": "Quando um lead ganhar uma tag",
   "contact.tag_added": "Quando um contato ganhar uma tag",
+  "agenda.appointment_scheduled": "Quando um horário for marcado",
+  "agenda.appointment_confirmed": "Quando um horário pendente for confirmado",
+  "agenda.appointment_rescheduled": "Quando um horário for remarcado",
+  "agenda.appointment_cancelled": "Quando um horário for cancelado",
+  "contact.birthday": "Quando for o aniversário do contato",
 };
 
 export const ACTION_LABELS: Record<ActionType, string> = {

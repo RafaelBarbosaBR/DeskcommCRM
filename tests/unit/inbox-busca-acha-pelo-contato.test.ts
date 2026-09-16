@@ -35,7 +35,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { listConversationsHandler } from "@/app/api/v1/conversations/_handler";
+import { listConversationsHandler, tokenizarTermoDeBusca } from "@/app/api/v1/conversations/_handler";
 
 interface Chamada {
   tabela: string;
@@ -160,6 +160,59 @@ describe("busca do inbox — o contato entra no predicado", () => {
     expect(
       chamadas.filter((x) => x.tabela === "contacts"),
       "consultou contatos sem ninguém ter buscado — uma ida ao banco por listagem",
+    ).toEqual([]);
+  });
+});
+
+describe("tokenizarTermoDeBusca — 'Paulo Jr' ~ 'Paulo Lima Jr'", () => {
+  it("separa por espaço", () => {
+    expect(tokenizarTermoDeBusca("Paulo Jr")).toEqual(["Paulo", "Jr"]);
+  });
+  it("vírgula, ponto-e-vírgula e espaço duplicado contam como UM separador", () => {
+    expect(tokenizarTermoDeBusca("Silva,  João;;Jr")).toEqual(["Silva", "João", "Jr"]);
+  });
+  it("termo de uma palavra só continua sendo um token só", () => {
+    expect(tokenizarTermoDeBusca("Maria")).toEqual(["Maria"]);
+  });
+  it("termo só de separadores vira lista vazia, não token vazio", () => {
+    expect(tokenizarTermoDeBusca(",,,   ;")).toEqual([]);
+  });
+});
+
+describe("busca do inbox — todos os tokens precisam bater, não a frase inteira", () => {
+  it('⭐ "Paulo Jr" acha via and(display_name...) com os DOIS tokens, não a frase contígua', async () => {
+    const c = await buscar("Paulo Jr", [{ id: "contato-paulo" }]);
+    const grupo = args(c, "contacts", "or");
+    // O grupo tem que exigir os dois tokens no MESMO campo — "and(" é a
+    // gramática que expressa isso; a frase "Paulo Jr" inteira não pode
+    // aparecer sozinha (isso seria o defeito antigo, contíguo).
+    expect(grupo).toContain("and(display_name.ilike.*Paulo*,display_name.ilike.*Jr*)");
+    expect(grupo).toContain("and(name.ilike.*Paulo*,name.ilike.*Jr*)");
+  });
+
+  it("termo com vírgula solta (separador duplicado) tokeniza em vez de quebrar a sintaxe", async () => {
+    const c = await buscar("Silva,, João", [{ id: "contato-silva" }]);
+    const grupo = args(c, "contacts", "or");
+    expect(grupo).toContain("and(display_name.ilike.*Silva*,display_name.ilike.*João*)");
+  });
+
+  it("busca por conteúdo (sem contato casado) também exige todos os tokens — encadeando ilike", async () => {
+    const c = await buscar("prazo entrega", []);
+    const chamadasDeIlike = c.filter(
+      (x) => x.tabela === "conversations" && x.metodo === "ilike",
+    );
+    expect(chamadasDeIlike.map((x) => x.args.join("|"))).toEqual([
+      "last_message_preview|%prazo%",
+      "last_message_preview|%entrega%",
+    ]);
+  });
+
+  it("termo só de separadores (\",,,\") não quebra a busca — se comporta como sem termo nenhum", async () => {
+    const { client, chamadas } = fakeSupabase([]);
+    await listConversationsHandler(client, ctx, { limit: 50, search: ",,, " } as never);
+    expect(
+      chamadas.filter((x) => x.tabela === "contacts"),
+      "tokenizou pra lista vazia e ainda assim consultou contacts",
     ).toEqual([]);
   });
 });

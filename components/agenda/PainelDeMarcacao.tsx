@@ -49,6 +49,7 @@ export function PainelDeMarcacao({
   onConfirmar,
   onVerNaAgenda,
   className,
+  permiteForaDaGrade = false,
 }: {
   ancora: Date;
   agora: Date;
@@ -139,8 +140,18 @@ export function PainelDeMarcacao({
    * ofereceria.
    */
   horarioInicial?: HorarioLivre;
-  onConfirmar?: (instante: string) => void | Promise<unknown>;
+  onConfirmar?: (instante: string, opts?: { foraDaGrade?: boolean }) => void | Promise<unknown>;
   className?: string;
+  /**
+   * Onda 4.2 — libera "Outro horário": digitar um instante que não é um dos
+   * oferecidos pela grade. `undefined`/`false` por padrão de propósito — este
+   * painel é o MESMO componente da vitrine pública (`app/vitrine-agenda/
+   * _client.tsx`), e um cliente anônimo encaixando por cima de outro é o
+   * oposto do que a Onda 4.2 pediu ("papel autorizado, agent+ logado"). Só
+   * `app/app/agenda/_client.tsx` (tela interna, atrás de `requireRole
+   * ("agent")`) passa `true`.
+   */
+  permiteForaDaGrade?: boolean;
 }) {
   const localeDaData = useLocaleDeData();
   const t = useT();
@@ -155,6 +166,18 @@ export function PainelDeMarcacao({
   const [mes, setMes] = React.useState(() =>
     startOfMonth(horarioInicial ? new Date(horarioInicial.instante) : ancora),
   );
+  // Onda 4.2 — "Outro horário". `horarioEhForaDaGrade` viaja separado de
+  // `horario` (que é o CONTRATO já usado pela vitrine pública) para não
+  // arriscar um consumidor antigo interpretando um campo novo que ele nunca
+  // pediu. O `<input type="datetime-local">` é lido em fuso do NAVEGADOR, não
+  // no `fuso` da regra — decisão deliberada: quem usa este caminho é a
+  // equipe encaixando manualmente, tipicamente no mesmo fuso do atendimento,
+  // e importar a conversão de fuso do lado do servidor (`lib/agenda/fuso.ts`)
+  // só para este caso puxaria lib server-side para dentro do bundle do
+  // cliente pela primeira vez neste componente.
+  const [foraDaGradeAberto, setForaDaGradeAberto] = React.useState(false);
+  const [instanteDigitado, setInstanteDigitado] = React.useState("");
+  const [horarioEhForaDaGrade, setHorarioEhForaDaGrade] = React.useState(false);
 
   /**
    * O painel pode continuar montado entre duas aberturas (o `Sheet` decide
@@ -281,7 +304,7 @@ export function PainelDeMarcacao({
             </p>
           )}
           <div className="mt-5 flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => { setMarcado(null); setHorario(null); setDia(null); }}>
+            <Button variant="outline" size="sm" onClick={() => { setMarcado(null); setHorario(null); setDia(null); setHorarioEhForaDaGrade(false); }}>
               {t("Marcar outro")}
             </Button>
             {/*
@@ -577,6 +600,15 @@ export function PainelDeMarcacao({
               </span>
             </p>
 
+            {horarioEhForaDaGrade && (
+              // A equipe precisa SABER que está fora do que a grade oferece —
+              // é justamente o caso em que ela pode ter escolhido por engano
+              // um horário que não é o que pretendia clicar.
+              <p data-testid="aviso-fora-da-grade" className="mt-1 text-xs text-warning">
+                {t("Fora da grade publicada — encaixe manual.")}
+              </p>
+            )}
+
             {quemSeraAtendido && !quemSeraAtendido.aceitaMensagem && (
               // Aviso, não bloqueio: o botão de confirmar continua ativo logo
               // abaixo. E ele diz o que FAZER no lugar ("combine por telefone"),
@@ -595,7 +627,7 @@ export function PainelDeMarcacao({
               </div>
             )}
             <div className="mt-3 flex items-center justify-end gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setHorario(null)}>
+              <Button variant="ghost" size="sm" onClick={() => { setHorario(null); setHorarioEhForaDaGrade(false); }}>
                 {t("Voltar")}
               </Button>
               <Button
@@ -613,7 +645,7 @@ export function PainelDeMarcacao({
                   // `showApiError` aparece e o painel fica onde estava, com o
                   // horário ainda escolhido para tentar de novo.
                   try {
-                    await onConfirmar?.(horario.instante);
+                    await onConfirmar?.(horario.instante, { foraDaGrade: horarioEhForaDaGrade });
                     setMarcado(horario);
                   } catch {
                     // silêncio proposital: quem reporta é o `showApiError` da
@@ -664,7 +696,7 @@ export function PainelDeMarcacao({
                 key={h.instante}
                 type="button"
                 data-testid={`horario-${h.rotulo}`}
-                onClick={() => setHorario(h)}
+                onClick={() => { setHorario(h); setHorarioEhForaDaGrade(false); }}
                 className={cn(
                   // Alvo de toque generoso: quem marca consulta faz isso no
                   // celular, com o cliente esperando na frente.
@@ -679,6 +711,52 @@ export function PainelDeMarcacao({
               </button>
             ))}
           </div>
+
+          {permiteForaDaGrade && (
+            // "Outro horário" — o escape hatch da Onda 4.2. Fica FORA de
+            // `lista-de-horarios` de propósito: não é mais um horário
+            // OFERECIDO, é o caminho pra pedir um que a grade não ofereceu.
+            <div className="mt-2 shrink-0 border-t border-border pt-2">
+              {foraDaGradeAberto ? (
+                <div className="flex flex-col gap-1.5">
+                  <input
+                    type="datetime-local"
+                    data-testid="outro-horario-input"
+                    value={instanteDigitado}
+                    onChange={(e) => setInstanteDigitado(e.target.value)}
+                    className="h-9 rounded-sm border border-border bg-surface px-2 text-sm tabular-nums"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    data-testid="outro-horario-usar"
+                    disabled={!instanteDigitado}
+                    onClick={() => {
+                      const d = new Date(instanteDigitado);
+                      if (Number.isNaN(d.getTime())) return;
+                      setDia(d);
+                      setMes(startOfMonth(d));
+                      setHorario({ instante: d.toISOString(), rotulo: format(d, "HH:mm") });
+                      setHorarioEhForaDaGrade(true);
+                      setForaDaGradeAberto(false);
+                    }}
+                  >
+                    {t("Usar este horário")}
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  data-testid="abrir-outro-horario"
+                  className="w-full justify-start text-text-muted"
+                  onClick={() => setForaDaGradeAberto(true)}
+                >
+                  {t("Outro horário…")}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

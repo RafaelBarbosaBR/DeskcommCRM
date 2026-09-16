@@ -36,7 +36,7 @@ export function TenantOverviewClient({ id }: TenantOverviewClientProps) {
     );
   }
 
-  const { organization, counts, integrations } = data.data;
+  const { organization, counts, integrations, agents } = data.data;
 
   return (
     <div className="space-y-6">
@@ -49,6 +49,7 @@ export function TenantOverviewClient({ id }: TenantOverviewClientProps) {
           organization={organization}
           counts={counts}
           integrations={integrations}
+          agents={agents}
         />
         <TenantActions
           organizationId={organization.id}

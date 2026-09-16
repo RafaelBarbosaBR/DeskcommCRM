@@ -104,6 +104,34 @@ const camposDoTipo = {
     .min(15, { message: "O lembrete precisa sair pelo menos 15 minutos antes do compromisso." })
     .max(10_080, { message: "O lembrete não pode sair mais de 7 dias (10080 minutos) antes." })
     .optional(),
+  /**
+   * Lembretes ALÉM do escalar acima — até 3, mesmos limites (migration 0252).
+   * O CHECK do banco só garante "array de até 3 elementos"; a faixa 15..10080
+   * de cada entrada é checada aqui, pelo mesmo motivo do campo irmão.
+   */
+  additional_reminders: z
+    .array(
+      z
+        .number()
+        .int()
+        .min(15, { message: "Cada lembrete extra precisa sair pelo menos 15 minutos antes." })
+        .max(10_080, { message: "Nenhum lembrete extra pode sair mais de 7 dias (10080 minutos) antes." }),
+    )
+    .max(3, { message: "No máximo 3 lembretes extras." })
+    .optional(),
+  /**
+   * O PRAZO — até quando um pedido `pending` (`requires_confirmation`)
+   * espera confirmação antes do cron `agenda-pending-expirer` cancelá-lo e
+   * devolver o horário (Onda 4.5, migration 0255). Mesma faixa do CHECK do
+   * banco (1..720h): aqui não há a assimetria do lembrete (nenhuma borda do
+   * CHECK produz um comportamento sem sentido), então os limites coincidem.
+   */
+  pending_expiration_hours: z
+    .number()
+    .int()
+    .min(1, { message: "O prazo de confirmação precisa ser de pelo menos 1 hora." })
+    .max(720, { message: "O prazo de confirmação não pode passar de 720 horas (30 dias)." })
+    .optional(),
 };
 
 const criarSchema = z.object(camposDoTipo);
@@ -178,6 +206,8 @@ export async function GET(req: NextRequest): Promise<Response> {
       // leitura não conta é o mesmo controle decorativo, do outro lado.
       reminder_enabled: t.lembreteLigado,
       reminder_minutes_before: t.lembreteAntecedenciaMin,
+      additional_reminders: t.lembretesAdicionaisMin,
+      pending_expiration_hours: t.prazoDeConfirmacaoHoras,
     })),
     { requestId },
   );

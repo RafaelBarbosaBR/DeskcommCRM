@@ -232,6 +232,7 @@ export const AUDIT_ACTIONS = [
   "automation.rule_deleted",
   "automation.rule_executed",
   "automation.run_resent",
+  "automation.contact_birthday_emitted",
   "ai.skill_imported",
   "ai.skill_installed",
   "ai.skill_uninstalled",
@@ -308,6 +309,8 @@ export const AUDIT_ACTIONS = [
   // event_log (nenhum handler consumiria o tipo — ver register-handlers.ts).
   "platform_branding.updated",
   "platform_google_oauth.updated",
+  "platform_meta_app.secret_updated",
+  "platform_meta_app.verify_token_regenerated",
   // A conexão da ORGANIZAÇÃO com a conta de anúncios (migration 0213).
   // Auditável porque o token gravado aqui escreve conversões na conta de
   // mídia do cliente: "quem apontou minhas vendas para este destino?" só tem
@@ -433,6 +436,10 @@ export const AUDIT_ACTIONS = [
   "agenda.tipo_alterado",
   "agenda.tipo_desativado",
   "agenda.tipo_reativado",
+  // Fechar/abrir um dia (feriado, férias, sábado excepcional) muda o que a
+  // agenda oferece ao cliente — mesmo critério dos tipos de agendamento acima.
+  "agenda.excecao_criada",
+  "agenda.excecao_removida",
   // A rodada que AVISOU alguém do próprio compromisso. Mensagem que saiu para o
   // telefone de um cliente é efeito, e efeito audita — mas só a rodada que
   // enviou: a que varreu e não achou ninguém a avisar não é mutação.

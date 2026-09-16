@@ -365,6 +365,7 @@ async function indexarFonte(
 
   const admin = createAdminClient();
   let gravados = 0;
+  let falharam = 0;
 
   for (let i = 0; i < pedacos.length; i++) {
     const p = pedacos[i]!;
@@ -404,14 +405,25 @@ async function indexarFonte(
 
     if (upErr) {
       console.warn(`[rag-indexer] trecho ${i} não gravou:`, upErr.message);
+      falharam++;
     } else {
       gravados++;
     }
   }
 
-  if (gravados === 0) {
-    await markVersionFailed(versionId, fonte.organization_id, "nenhum trecho gravado");
-    return { tipo: "erro", detalhe: "nenhum_trecho_gravado" };
+  // Falha PARCIAL não podia mais ativar a versão do que uma falha total: antes
+  // só `gravados === 0` barrava a ativação, e uma versão com metade dos
+  // trechos faltando virava a fonte de verdade do agente — sem aviso nenhum
+  // além de um `console.warn` por trecho, que ninguém lê fora do log do
+  // contêiner. Qualquer `upErr` marca falha, com a contagem no detalhe.
+  if (falharam > 0) {
+    const detalhe =
+      gravados === 0 ? "nenhum trecho gravado" : `trechos_nao_gravados:${falharam} de ${pedacos.length}`;
+    await markVersionFailed(versionId, fonte.organization_id, detalhe);
+    return {
+      tipo: "erro",
+      detalhe: gravados === 0 ? "nenhum_trecho_gravado" : `trechos_nao_gravados:${falharam}`,
+    };
   }
 
   await markVersionReady(versionId, fonte.organization_id, gravados);
@@ -602,3 +614,6 @@ export async function processRagIndexer(row: EventRow): Promise<HandlerResult> {
     return { consumer_key: consumerKey, status: "error", detail: detalhe };
   }
 }
+
+/** @internal exposto p/ teste — não usar fora de testes. */
+export const __test_indexarFonte = indexarFonte;

@@ -17,6 +17,7 @@ import { deriveMediaText, type DeriveDeps } from "@/lib/messaging/media/derive";
 import { TIPOS_DERIVAVEIS } from "@/lib/messaging/media/derivable";
 import { deriveVideoText } from "@/lib/messaging/media/video-derive";
 import { apiTranscriptionProvider } from "@/lib/messaging/media/transcription";
+import { normalizarErro } from "@/lib/agent-engine/edge/llm/run-model-call";
 import { logger } from "@/lib/logger";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -84,7 +85,19 @@ export async function deriveMessageMedia(row: EventRow): Promise<HandlerResult> 
 
   try {
     const dl = await admin.storage.from("whatsapp-media").download(msg.media_storage_path);
-    if (dl.error || !dl.data) throw new Error(`storage_download_failed: ${dl.error?.message ?? "no_data"}`);
+    if (dl.error || !dl.data) {
+      // Falha de DOWNLOAD é anterior a qualquer chamada de modelo — sem este
+      // aviso, o storage indisponível (ou o objeto sumido) produzia as mesmas 5
+      // tentativas + `media_derived_status='failed'` mudo dos outros dois
+      // cenários pré-chamada que este arquivo já cobre (visão indisponível,
+      // sem chave de transcrição), só que sem NENHUM rastro na Central.
+      await avisarMidiaNaoLida(
+        row.organization_id,
+        TIPO_LEGIVEL[msg.type] ?? msg.type,
+        `não consegui baixar o arquivo (${dl.error?.message ?? "arquivo não encontrado no storage"})`,
+      );
+      throw new Error(`storage_download_failed: ${dl.error?.message ?? "no_data"}`);
+    }
     const buffer = Buffer.from(await dl.data.arrayBuffer());
 
     // Credencial BYOK da org p/ visão (imagem).
@@ -267,20 +280,31 @@ function buildDeriveDeps(
       await avisarMidiaNaoLida(orgId, "imagem", `o provedor ${llm.provider} não está disponível nesta instalação`);
       return MARCADOR_NAO_LIDA;
     }
-    const res = await generateText({
-      model: factory(llm.apiKey, llm.defaultModel ?? ""),
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Descreva objetivamente esta imagem em 1-2 frases, em português, para um atendente de vendas entender o que o cliente enviou." },
-            // AI SDK v7: file part com mediaType (o antigo image part é deprecated).
-            { type: "file", data: buffer, mediaType: mime.split(";")[0]! },
-          ],
-        },
-      ],
-    });
-    return res.text;
+    try {
+      const res = await generateText({
+        model: factory(llm.apiKey, llm.defaultModel ?? ""),
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Descreva objetivamente esta imagem em 1-2 frases, em português, para um atendente de vendas entender o que o cliente enviou." },
+              // AI SDK v7: file part com mediaType (o antigo image part é deprecated).
+              { type: "file", data: buffer, mediaType: mime.split(";")[0]! },
+            ],
+          },
+        ],
+      });
+      return res.text;
+    } catch (err) {
+      // Os dois casos ACIMA (sem visão, sem provedor) são pré-voo — decididos
+      // ANTES de discar. Este é a CHAMADA em si falhando de verdade (chave
+      // recusada, modelo não liberado para a conta, timeout do provedor): sem
+      // este catch, o erro subia cru até o try/catch de fora, virava só
+      // `logger.error` na 5ª tentativa, e a Central nunca abria — o operador via
+      // 5 tentativas mudas e um `media_derived_status='failed'`, sem saber por quê.
+      await avisarMidiaNaoLida(orgId, "imagem", motivoDaChamadaFalha(err));
+      throw err;
+    }
   };
   // Sem chave OpenAI não há como transcrever: devolver string vazia é honesto
   // (o derivado fica vazio e o marcador "[áudio]" continua valendo) e evita o
@@ -304,6 +328,37 @@ function buildDeriveDeps(
     // Onda 3.1: vídeo → ffmpeg (áudio+frames) reusando transcrição e visão da org.
     deriveVideo: (buffer) => deriveVideoText(buffer, { transcriber, describeImage }),
   };
+}
+
+/** Nome em português de cada tipo derivável, para o título/corpo do aviso. */
+const TIPO_LEGIVEL: Record<string, string> = {
+  audio: "áudio",
+  image: "imagem",
+  document: "documento",
+  video: "vídeo",
+};
+
+/**
+ * Traduz a falha REAL de uma chamada ao provedor (401/404/timeout/5xx) para a
+ * frase que o operador lê na Central — reusa `normalizarErro`
+ * (`run-model-call.ts`), a MESMA régua que a tela de Execuções usa, para que
+ * "chave errada" e "modelo não liberado" sejam ditos com as mesmas palavras em
+ * vez de cada seam inventar sua própria classificação do mesmo erro.
+ */
+function motivoDaChamadaFalha(err: unknown): string {
+  const { error_code, error_message } = normalizarErro(err);
+  switch (error_code) {
+    case "credencial_recusada":
+      return "a chave configurada foi recusada pelo provedor — verifique se ainda é válida";
+    case "modelo_inexistente":
+      return "o modelo configurado não existe ou não está liberado para esta chave";
+    case "limite_ou_saldo":
+      return "o provedor recusou por limite de uso ou saldo insuficiente";
+    case "provedor_indisponivel":
+      return "o provedor está indisponível ou demorou demais para responder — tente novamente mais tarde";
+    default:
+      return `falha ao chamar o provedor: ${error_message}`;
+  }
 }
 
 /**

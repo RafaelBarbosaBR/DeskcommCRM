@@ -16,11 +16,19 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { sendTemplate } from "./send-template";
-import { metaGraphVersion } from "./graph-version";
+import { resolveMetaCreds } from "./credentials";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export interface SendTemplateForSessionInput {
   beforeSend?: () => Promise<void>;
   organizationId: string;
+  /**
+   * O `sessionRef` deste canal (ver `resolveSessionRef`) — para meta_cloud É o
+   * `phone_number_id`. Sem ele, `resolveMetaCreds` não tem como achar a linha
+   * de `channel_sessions` e cai sempre no `.env` — a mesma instalação com duas
+   * organizações conectadas na Meta voltaria a mandar as DUAS pela mesma conta.
+   */
+  phoneNumberId: string;
   /** Destinatário em dígitos E.164, já resolvido pelo adapter. */
   to: string;
   name: string;
@@ -54,11 +62,24 @@ export async function sendTemplateForSession(
 
   if (error) throw new Error(`template_lookup_failed: ${error.message}`);
 
+  // Sessão primeiro, `.env` como fallback de instalação de número único — o
+  // MESMO caminho que o envio de texto comum já usa (`meta-cloud.ts`). Antes
+  // esta função lia só o `.env`: numa instalação com duas organizações
+  // conectadas na Meta, o modelo de QUALQUER organização saía pela conta que
+  // estivesse no ambiente, nunca pela da sessão dona da conversa.
+  const creds = await resolveMetaCreds(createAdminClient(), {
+    organizationId: input.organizationId,
+    phoneNumberId: input.phoneNumberId,
+  });
+  if (!creds) {
+    throw new Error("meta_not_configured: sem credencial (nem sessão, nem .env) para este número");
+  }
+
   await input.beforeSend?.();
   const resultado = await sendTemplate({
-    phoneNumberId: process.env.META_PHONE_NUMBER_ID ?? "",
-    token: process.env.META_SYSTEM_USER_TOKEN ?? "",
-    graphVersion: metaGraphVersion(),
+    phoneNumberId: creds.phoneNumberId,
+    token: creds.token,
+    graphVersion: creds.graphVersion,
     to: input.to,
     binding: {
       name: input.name,

@@ -1,6 +1,7 @@
 import { setExecutionAgentOperation } from '@/lib/atendimento/fronteira-server';
 import { DEFAULT_CHANNEL_PROVIDER } from '@/lib/channels/capabilities';
 import { applyPreviewPolicy, previewGateContext, type TurnPreview } from './preview';
+import { agendaAtiva } from './agenda-tools';
 import { claimOfJob } from '../queue/claim';
 import { currentExecutionBoundary, guardServiceEffect } from '@/lib/atendimento/fronteira-server';
 /**
@@ -39,10 +40,12 @@ import type { ChannelAdapter, ChannelSendResult } from '../channel-adapter';
 
 import { withFields, type Logger } from '../obs/logger';
 import {
+  deriveMessageBody,
   getLeadContext,
   type LeadContext,
   type LeadContextMessage,
   type LeadContextResult,
+  type MensagemComMidiaDerivada,
 } from '../edge/crm/get-lead-context';
 import { citationsFromHits, searchKnowledge } from './search-knowledge';
 import type { CrmEdgeConfig } from '../edge/crm/mcp-client';
@@ -444,8 +447,8 @@ export async function loadInboundBodyForJob(
   db: Queryable,
   input: { tenantId: string; conversationId: string; inboundMessageId: string },
 ): Promise<string | null> {
-  const result = await db.query<{ body: string | null }>(
-    `select body
+  const result = await db.query<MensagemComMidiaDerivada>(
+    `select type, body, media_url, media_storage_path, media_derived_text
        from messages
       where organization_id = $1
         and conversation_id = $2
@@ -455,7 +458,11 @@ export async function loadInboundBodyForJob(
     [input.tenantId, input.conversationId, input.inboundMessageId],
   );
   const row = result.rows[0];
-  return row === undefined ? null : (row.body ?? '');
+  // `select body` sozinho tinha `?? ''` que NUNCA caía no derivado: mídia sem
+  // legenda vem com `body=''` (nunca `null`), então áudio/foto com
+  // transcrição já gravada virava turno "vazio" — mesma fonte que
+  // `deriveMessageBody` usa em `get-lead-context.ts` (Onda 2, item 2.4).
+  return row === undefined ? null : deriveMessageBody(row);
 }
 
 /** Conteúdo do checkpoint — o modelo devolve, o Zod valida, o Postgres guarda. */
@@ -774,29 +781,71 @@ const TRANSPARENCIA_SYSTEM_BLOCK =
  * pra essas outras decisões (aprovar desconto, exceção de política etc.),
  * porque este parágrafo só fala de checar/marcar horário.
  */
-const AGENDA_SYSTEM_BLOCK =
-  '## Agenda — nunca confirme sem checar\n' +
-  'Você só pode dizer a um lead que um horário/consulta/visita está confirmado DEPOIS de chamar ' +
-  'crm_book_appointment (ou crm_reschedule_appointment, para remarcação) e ver o retorno confirmando o ' +
-  'sucesso. Isso vale mesmo quando o lead já aceitou um horário que você ofereceu — aceite verbal não é ' +
-  'reserva. NUNCA diga "confirmado", "está marcado" ou equivalente baseado só no histórico da conversa. ' +
-  'Se ainda não chamou a ferramenta neste turno, chame antes de responder; se a chamada falhar ou você não ' +
-  'tiver certeza do resultado, diga que vai verificar e NÃO afirme que está confirmado.\n' +
-  'Isso NÃO é desculpa para procrastinar: se o lead mencionou (agora ou em qualquer mensagem anterior da ' +
-  'conversa) um dia/horário específico que ainda não foi checado, chame crm_find_free_slots NESTE turno ' +
-  'antes de responder — não repita "vou verificar/confirmar e te aviso" sem ter chamado a ferramenta. Um ' +
-  '"vou verificar" só é aceitável na MESMA resposta em que você já chamou a ferramenta e ela falhou ou não ' +
-  'trouxe resultado; nunca como substituto de chamar.\n' +
-  'Se o lead escolheu um horário que VOCÊ já ofereceu nesta conversa com `crm_find_free_slots`, ele já ' +
-  'foi checado: preserve o `inicio` que a ferramenta devolveu e chame `crm_book_appointment` diretamente. ' +
-  'NÃO consulte de novo montando datas/horas em UTC; só consulte outra vez se a reserva recusar o horário.\n' +
-  'Checar e marcar horário usando crm_find_free_slots/crm_book_appointment está SEMPRE dentro da sua ' +
-  'autonomia quando essas ferramentas estão disponíveis para você — mesmo que as instruções da empresa ' +
-  'peçam para encaminhar decisões fora da sua autonomia a um gerente/responsável nomeado (ex.: "fale com o ' +
-  'Fernando"). Isso vale para OUTRAS decisões (desconto, exceção de política, algo que a ferramenta não ' +
-  'cobre) — nunca para simplesmente consultar ou marcar um horário que a ferramenta resolve sozinha. NÃO ' +
-  'diga "vou confirmar/verificar com [nome de pessoa/equipe]" para justificar não ter chamado a ferramenta: ' +
-  'chame primeiro, e só fale de encaminhar a alguém se a ferramenta genuinamente não resolver.';
+/**
+ * Monta o bloco pelas tools que o agente TEM, não por uma lista fixa — nomear
+ * `crm_book_appointment`/`crm_reschedule_appointment` para um agente que não
+ * publicou nenhuma das duas faz o modelo tentar chamá-las à toa (elas nem
+ * estão no `ToolSet` dele) e ensina um caminho que não existe.
+ *
+ * Tier A (tem `crm_book_appointment` e/ou `crm_reschedule_appointment`):
+ * o texto original, hardenizado pelos três incidentes documentados acima —
+ * intacto, exceto o UM trecho que nomeia `crm_reschedule_appointment`, que só
+ * entra quando o agente de fato tem essa tool.
+ *
+ * Tier B (só consulta: `crm_find_free_slots`/`crm_list_appointments`/
+ * `crm_cancel_appointment`, sem NENHUMA tool que cria ou muda reserva): o
+ * agente estruturalmente não tem como confirmar nada, então o bloco não fala
+ * de "chamar a ferramenta antes de confirmar" — fala de nunca inventar uma
+ * confirmação que ele não pode produzir.
+ */
+export function agendaSystemBlock(toolIds: readonly string[]): string {
+  const temBook = toolIds.includes('crm_book_appointment');
+  const temReschedule = toolIds.includes('crm_reschedule_appointment');
+  const temFind = toolIds.includes('crm_find_free_slots');
+  const temList = toolIds.includes('crm_list_appointments');
+
+  if (!temBook && !temReschedule) {
+    const consultas = [
+      temFind && 'crm_find_free_slots (ver horários livres)',
+      temList && 'crm_list_appointments (ver o que já está marcado)',
+    ].filter((s): s is string => Boolean(s));
+    return (
+      '## Agenda — você só CONSULTA, não marca\n' +
+      `Você tem ${consultas.join(' e ') || 'ferramentas de agenda só de consulta'} disponível, mas ` +
+      'NENHUMA ferramenta que cria ou muda uma reserva. NUNCA diga a um lead que um horário/consulta/visita ' +
+      'está "confirmado", "marcado", "reservado" ou equivalente — você não tem como fazer isso acontecer, ' +
+      'mesmo que o lead já tenha aceitado um horário que você ofereceu (aceite verbal não é reserva). Se o ' +
+      'lead pedir para marcar, remarcar ou cancelar, diga que vai encaminhar para quem resolve isso, sem ' +
+      'prometer prazo que você não controla.'
+    );
+  }
+
+  const remarcarMencao = temReschedule ? ' (ou crm_reschedule_appointment, para remarcação)' : '';
+  return (
+    '## Agenda — nunca confirme sem checar\n' +
+    'Você só pode dizer a um lead que um horário/consulta/visita está confirmado DEPOIS de chamar ' +
+    `crm_book_appointment${remarcarMencao} e ver o retorno confirmando o ` +
+    'sucesso. Isso vale mesmo quando o lead já aceitou um horário que você ofereceu — aceite verbal não é ' +
+    'reserva. NUNCA diga "confirmado", "está marcado" ou equivalente baseado só no histórico da conversa. ' +
+    'Se ainda não chamou a ferramenta neste turno, chame antes de responder; se a chamada falhar ou você não ' +
+    'tiver certeza do resultado, diga que vai verificar e NÃO afirme que está confirmado.\n' +
+    'Isso NÃO é desculpa para procrastinar: se o lead mencionou (agora ou em qualquer mensagem anterior da ' +
+    'conversa) um dia/horário específico que ainda não foi checado, chame crm_find_free_slots NESTE turno ' +
+    'antes de responder — não repita "vou verificar/confirmar e te aviso" sem ter chamado a ferramenta. Um ' +
+    '"vou verificar" só é aceitável na MESMA resposta em que você já chamou a ferramenta e ela falhou ou não ' +
+    'trouxe resultado; nunca como substituto de chamar.\n' +
+    'Se o lead escolheu um horário que VOCÊ já ofereceu nesta conversa com `crm_find_free_slots`, ele já ' +
+    'foi checado: preserve o `inicio` que a ferramenta devolveu e chame `crm_book_appointment` diretamente. ' +
+    'NÃO consulte de novo montando datas/horas em UTC; só consulte outra vez se a reserva recusar o horário.\n' +
+    'Checar e marcar horário usando crm_find_free_slots/crm_book_appointment está SEMPRE dentro da sua ' +
+    'autonomia quando essas ferramentas estão disponíveis para você — mesmo que as instruções da empresa ' +
+    'peçam para encaminhar decisões fora da sua autonomia a um gerente/responsável nomeado (ex.: "fale com o ' +
+    'Fernando"). Isso vale para OUTRAS decisões (desconto, exceção de política, algo que a ferramenta não ' +
+    'cobre) — nunca para simplesmente consultar ou marcar um horário que a ferramenta resolve sozinha. NÃO ' +
+    'diga "vou confirmar/verificar com [nome de pessoa/equipe]" para justificar não ter chamado a ferramenta: ' +
+    'chame primeiro, e só fale de encaminhar a alguém se a ferramenta genuinamente não resolver.'
+  );
+}
 
 /**
  * Tools de agenda cuja EXECUÇÃO neste turno arma o `agendaStallGate` (before-send.ts) —
@@ -1865,13 +1914,13 @@ async function executarTurnoDoAgente(
   });
   // Spec 15 §5.2: bloco das tools de caso SEMPRE residente (não invalida o prefixo
   // cacheável — mesmo espírito do índice de skills) quando a tela habilita. O bloco da
-  // Agenda segue o mesmo padrão, condicionado a `crm_book_appointment` estar entre as
-  // tools publicadas — ver comentário de `AGENDA_SYSTEM_BLOCK`. `TRANSPARENCIA_SYSTEM_BLOCK`
+  // Agenda segue o mesmo padrão, condicionado a QUALQUER tool de agenda publicada
+  // (`agendaAtiva`) — ver comentário de `agendaSystemBlock`. `TRANSPARENCIA_SYSTEM_BLOCK`
   // não depende de nenhuma feature — todo agente publicado o recebe.
   const blocosResidentes = [systemWithMemory, TRANSPARENCIA_SYSTEM_BLOCK];
   if (agentConfig !== null && agentConfig.casesEnabled) blocosResidentes.push(CASES_SYSTEM_BLOCK);
-  if (agentConfig !== null && agentConfig.toolIds.includes('crm_book_appointment')) {
-    blocosResidentes.push(AGENDA_SYSTEM_BLOCK);
+  if (agentConfig !== null && agendaAtiva(agentConfig.toolIds)) {
+    blocosResidentes.push(agendaSystemBlock(agentConfig.toolIds));
   }
   if (preview)
     blocosResidentes.push(
@@ -2614,10 +2663,11 @@ async function executarTurnoDoAgente(
             enforceInternalVocabulary: true,
             // Mesmo padrão do vocabulário interno: só o `send_message` arma — é o único
             // corpo escrito pelo modelo. `active` segue a MESMA condição de
-            // `AGENDA_SYSTEM_BLOCK` (crm_book_appointment publicado); sem ela o gate
-            // vetaria agente que nem tem a ferramenta de agenda.
+            // `agendaSystemBlock` (`agendaAtiva` — qualquer tool de agenda publicada,
+            // não só a de marcar); sem ela o gate vetaria agente que nem tem
+            // ferramenta de agenda NENHUMA, e deixava de vetar quem só consulta.
             agenda: {
-              active: agentConfig !== null && agentConfig.toolIds.includes('crm_book_appointment'),
+              active: agentConfig !== null && agendaAtiva(agentConfig.toolIds),
               toolCalledThisTurn: agendaToolCalledThisTurn,
             },
             ...(deps.knobs.disclosureMode !== undefined

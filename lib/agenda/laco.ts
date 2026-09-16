@@ -69,6 +69,43 @@ export function atividadeDaTransicao(
 }
 
 /**
+ * O `event_type` que o motor de automação (`lib/automation/engine.ts`) escuta
+ * — SEPARADO de `atividadeDaTransicao`, de propósito.
+ *
+ * ⚠️ Confirmar um pendente é `atividadeDaTransicao(...) === null` (nada novo
+ * pra TIMELINE — o compromisso já contou "foi marcado" quando nasceu), mas é
+ * EXATAMENTE a notícia que uma automação de "avisar o cliente que o horário
+ * foi confirmado" precisa escutar. As duas perguntas — "o humano precisa ver
+ * uma linha nova?" e "existe um FATO que uma regra pode querer reagir?" — têm
+ * respostas diferentes para a MESMA transição, e forçá-las a concordar
+ * deixaria uma das duas mentindo.
+ *
+ * `completed`/`no_show` não têm gatilho aqui: o produto ainda não pediu
+ * automação para desfecho de comparecimento, e um gatilho sem consumidor
+ * declarado é justamente a dívida que este arquivo existe para não acumular.
+ */
+export function eventoDeAutomacaoDaTransicao(
+  de: SituacaoAnterior,
+  para: Transicao,
+): string | null {
+  if (de === null) {
+    return para === "pending" || para === "confirmed" ? "agenda.appointment_scheduled" : null;
+  }
+  switch (para) {
+    case "confirmed":
+      // `confirmed → confirmed` (PATCH que não mudou o status) não é notícia —
+      // só a transição DE `pending` é a confirmação que alguém pediu.
+      return de === "pending" ? "agenda.appointment_confirmed" : null;
+    case "rescheduled":
+      return "agenda.appointment_rescheduled";
+    case "cancelled":
+      return "agenda.appointment_cancelled";
+    default:
+      return null;
+  }
+}
+
+/**
  * O compromisso precisa ser empurrado para o Google?
  *
  * ⚠️ `completed` e `no_show` NÃO empurram. O evento lá fora já aconteceu;

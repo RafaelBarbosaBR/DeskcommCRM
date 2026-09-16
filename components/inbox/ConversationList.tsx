@@ -26,8 +26,6 @@ interface Props {
   filters: ConversationsFilters;
   selectedId: string | null;
   onSelect: (id: string) => void;
-  /** Optional client-side filter (e.g. only-unread). */
-  clientFilter?: (c: ConversationWithContact) => boolean;
   /** Notifies parent when the visible list changes (used by keyboard nav). */
   onVisibleChange?: (ids: string[]) => void;
 }
@@ -37,7 +35,6 @@ export function ConversationList({
   filters,
   selectedId,
   onSelect,
-  clientFilter,
   onVisibleChange,
 }: Props) {
   const t = useT();
@@ -61,10 +58,12 @@ export function ConversationList({
   // com o cabeçalho, que faz a mesma pergunta).
   const automaticoDaOrg = useAutomaticoAtivo();
 
-  const items = useMemo(() => {
-    const all: ConversationWithContact[] = q.data?.pages.flatMap((p) => p.data) ?? [];
-    return clientFilter ? all.filter(clientFilter) : all;
-  }, [q.data, clientFilter]);
+  // "Não lidos" agora é filtro de SERVIDOR (`only_unread` na query) — ver
+  // `InboxLayout.tsx`. `q.data` já chega filtrado; nada a fazer aqui.
+  const items: ConversationWithContact[] = useMemo(
+    () => q.data?.pages.flatMap((p) => p.data) ?? [],
+    [q.data],
+  );
 
   // Notify parent of currently-visible IDs (for j/k nav). Must use effect
   // (not render-time call) — invoking onVisibleChange during render triggers

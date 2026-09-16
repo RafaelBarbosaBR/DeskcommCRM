@@ -10115,6 +10115,11 @@ alter table public.agent_inbox_items
     -- histórico de `voice_calls`, que ninguém olha proativamente. Kind novo
     -- entra no fim da lista, mesma razão das anteriores.
     'voice_call_missed',
+    -- (migration 0256) O job `inbound_turn` esgotou as tentativas — a IA
+    -- parou de responder UMA MENSAGEM DE CLIENTE. Kind separado de
+    -- `job_dead`: mesma falha técnica, urgência diferente para quem lê a
+    -- Central. Kind novo entra no fim da lista, mesma razão das anteriores.
+    'inbound_turn_dead',
     'other'
   ));
 
@@ -17411,11 +17416,16 @@ begin
 
   v_gate := case when p_modo = 'pre_go_live' then 'allowlist' else 'open' end;
 
+  -- migration 0249: `ai_gate_mode` gravava 'pre_go_live' incondicionalmente,
+  -- mesmo com `p_modo='open'` — hoje mascarado porque `lerModoDeAcessoDaIa`
+  -- (lib/ai/elegibilidade/pre-go-live.ts) checa `ai_gate` primeiro e só olha
+  -- `ai_gate_mode` quando `ai_gate='allowlist'`. Espelha `p_modo` de verdade
+  -- antes que uma leitura futura confie em `ai_gate_mode` isolado.
   update public.channel_sessions
      set metadata = jsonb_set(
        jsonb_set(
          jsonb_set(coalesce(metadata, '{}'::jsonb), '{ai_gate}', to_jsonb(v_gate), true),
-         '{ai_gate_mode}', to_jsonb('pre_go_live'::text), true
+         '{ai_gate_mode}', to_jsonb(p_modo), true
        ),
        '{ai_test_phone_numbers}', to_jsonb(p_numeros), true
      )
@@ -20641,9 +20651,16 @@ begin
  where organization_id=p_org and id=p_id and kind='followup_turn' and status='running' and locked_by=p_worker and locked_at=p_acquired_at returning * into j;
  if not found then return false; end if;
  if j.status='dead' then
+  -- Onda 4.6: mesmo guard de `failJob`/`reapExpiredJobs` (TypeScript) — no
+  -- máximo um `job_dead` aberto por organização, independente de qual dos
+  -- três caminhos o abriu.
   insert into public.agent_inbox_items(organization_id,kind,severity,title,body,ref_kind,ref_id)
-   values(p_org,'job_dead','critical','O acompanhamento não conseguiu enviar a mensagem',
-    'Abra o acompanhamento e confira o canal. Motivo: '||coalesce(j.last_error,'envio indisponível'),'job_queue',j.id);
+   select p_org,'job_dead','critical','O acompanhamento não conseguiu enviar a mensagem',
+    'Abra o acompanhamento e confira o canal. Motivo: '||coalesce(j.last_error,'envio indisponível'),'job_queue',j.id
+   where not exists (
+     select 1 from public.agent_inbox_items
+      where organization_id=p_org and kind='job_dead' and status='open'
+   );
  end if;
  return true;
 end; $$;
@@ -24753,6 +24770,189 @@ revoke all on function public.fn_lgpd_cascade_redact_contact(uuid,uuid,uuid) fro
 grant execute on function public.fn_lgpd_cascade_redact_contact(uuid,uuid,uuid) to service_role;
 
 notify pgrst, 'reload schema';
+
+-- ---- TRUNCATE fora das tabelas append-only (migration 0248) ----
+-- `api_audit_log`/`crm_lead_activities`/`event_log`/`webhook_events_log` são
+-- append-only por doutrina; TRUNCATE ignora RLS e nenhum consumidor
+-- legítimo precisa dele. Mesmo padrão já usado em `idempotency_keys` acima,
+-- agora incluindo `service_role` (a credencial que o app de fato usa).
+revoke truncate on public.api_audit_log from anon, authenticated, service_role;
+revoke truncate on public.crm_lead_activities from anon, authenticated, service_role;
+revoke truncate on public.event_log from anon, authenticated, service_role;
+revoke truncate on public.webhook_events_log from anon, authenticated, service_role;
+
+-- ---- Tags de conversa realmente em uso (migration 0250) ----
+-- `GET /api/v1/conversation-tags` só listava o vocabulário CADASTRADO
+-- (organizations.settings.canonical_conversation_tags). Uma etiqueta aplicada
+-- direto numa conversa sem nunca ter sido cadastrada não aparecia como opção
+-- de filtro. SECURITY INVOKER: a RLS de `conversations` já isola por
+-- organização do chamador — o `p_org` explícito é defesa em profundidade.
+create or replace function public.fn_tags_de_conversa_em_uso(p_org uuid)
+returns text[]
+language sql
+security invoker
+stable
+set search_path = ''
+as $$
+  select coalesce(array_agg(distinct t order by t), '{}'::text[])
+    from public.conversations, unnest(tags) as t
+   where organization_id = p_org;
+$$;
+
+revoke execute on function public.fn_tags_de_conversa_em_uso(uuid) from public, anon;
+grant execute on function public.fn_tags_de_conversa_em_uso(uuid) to authenticated, service_role;
+
+-- ---- Eventos contáveis nascem `done` (migration 0251) ----
+-- `crm.activity_write_failed`/`whatsapp.chat_id_not_recognized`/
+-- `whatsapp.conversation_mark_failed` são emitidos só para COUNT(*) — sem
+-- consumidor, ficavam presos em `status='pending'` para sempre (o drain só
+-- olha `pending`). O gatilho enxerga todo caminho de inserção, atual e
+-- futuro, sem depender de cada produtor lembrar de marcar `done`.
+create or replace function public.fn_event_log_contaveis_nascem_done()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.event_type in (
+    'crm.activity_write_failed',
+    'whatsapp.chat_id_not_recognized',
+    'whatsapp.conversation_mark_failed'
+  ) then
+    new.status := 'done';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_event_log_contaveis_nascem_done on public.event_log;
+create trigger trg_event_log_contaveis_nascem_done
+  before insert on public.event_log
+  for each row
+  execute function public.fn_event_log_contaveis_nascem_done();
+
+update public.event_log
+   set status = 'done'
+ where event_type in (
+   'crm.activity_write_failed',
+   'whatsapp.chat_id_not_recognized',
+   'whatsapp.conversation_mark_failed'
+ )
+   and status in ('pending', 'processing');
+
+-- ---- Lembrete múltiplo (migration 0252) ----
+-- `calendar_event_types.reminder_minutes_before` era escalar — só UM
+-- lembrete por compromisso. `additional_reminders` guarda até 3 extras
+-- (validação numérica na API, não aqui — mesmo padrão do escalar irmão).
+-- `calendar_appointments.reminders_sent` rastreia QUAIS já saíram para ESTE
+-- compromisso, porque com N lembretes possíveis "já enviei" deixa de ser
+-- binário.
+alter table public.calendar_event_types
+  add column if not exists additional_reminders jsonb not null default '[]'::jsonb;
+alter table public.calendar_event_types
+  drop constraint if exists calendar_event_types_additional_reminders_shape;
+alter table public.calendar_event_types
+  add constraint calendar_event_types_additional_reminders_shape check (
+    jsonb_typeof(additional_reminders) = 'array'
+    and jsonb_array_length(additional_reminders) <= 3
+  );
+comment on column public.calendar_event_types.additional_reminders is
+  'Lembretes ALÉM do escalar reminder_minutes_before — minutos antes do compromisso, até 3 entradas. [] = só o lembrete único (comportamento de sempre). Validação numérica de cada entrada é da API (app/api/v1/agenda/tipos/route.ts), não do banco.';
+
+alter table public.calendar_appointments
+  add column if not exists reminders_sent jsonb not null default '[]'::jsonb;
+alter table public.calendar_appointments
+  drop constraint if exists calendar_appointments_reminders_sent_shape;
+alter table public.calendar_appointments
+  add constraint calendar_appointments_reminders_sent_shape check (
+    jsonb_typeof(reminders_sent) = 'array'
+  );
+comment on column public.calendar_appointments.reminders_sent is
+  'Minutos-de-antecedência de cada lembrete já enviado para ESTE compromisso (ver calendar_event_types.additional_reminders). O cron nunca reenvia um valor já presente aqui.';
+
+update public.calendar_appointments a
+   set reminders_sent = jsonb_build_array(t.reminder_minutes_before)
+  from public.calendar_event_types t
+ where a.event_type_id = t.id
+   and a.reminder_sent_at is not null
+   and a.reminders_sent = '[]'::jsonb;
+
+-- ---- App da Meta cadastrado pela tela de admin (migration 0253) ----
+-- Config de PLATAFORMA, mesmo molde de platform_branding: linha única
+-- (id=1), RLS ligada, ZERO policies, só service_role. `app_secret_encrypted`
+-- cifra pelas MESMAS RPCs que channel_sessions.meta_token_encrypted já usa
+-- (fn_encrypt_oauth/fn_decrypt_oauth). `webhook_verify_token` fica em texto
+-- puro (só valida o handshake GET, não assina mensagem) — ver
+-- lib/channels/meta/platform-app.ts para o fallback campo a campo pro .env.
+create table if not exists public.platform_meta_app (
+  id                    smallint primary key default 1,
+  app_secret_encrypted  bytea,
+  webhook_verify_token  text,
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now(),
+  updated_by            uuid,
+  constraint platform_meta_app_singleton check (id = 1)
+);
+
+comment on table public.platform_meta_app is
+  'App da Meta (WhatsApp Cloud API) cadastrado pela tela de admin — linha única id=1, config de PLATAFORMA (um App Secret vale para todas as WABAs de todas as organizações). Fallback pro .env (META_APP_SECRET/META_WEBHOOK_VERIFY_TOKEN) campo a campo quando vazia. Lida/escrita só server-side (service_role). Ver lib/channels/meta/platform-app.ts.';
+
+comment on column public.platform_meta_app.app_secret_encrypted is
+  'Cifrado por fn_encrypt_oauth — mesmo mecanismo de channel_sessions.meta_token_encrypted. NUNCA sai em log, resposta de API ou erro.';
+
+comment on column public.platform_meta_app.webhook_verify_token is
+  'Texto puro (só valida o handshake GET, não assina mensagem). A tela de admin só devolve o valor cru na resposta de criação/regeneração — nunca numa leitura.';
+
+alter table public.platform_meta_app enable row level security;
+
+-- ZERO POLICIES, DE PROPÓSITO — mesmo molde de platform_branding.
+
+revoke all on public.platform_meta_app from anon, authenticated;
+grant select, insert, update on public.platform_meta_app to service_role;
+
+drop trigger if exists trg_platform_meta_app_touch on public.platform_meta_app;
+create trigger trg_platform_meta_app_touch
+  before update on public.platform_meta_app
+  for each row execute function public.fn_touch_updated_at();
+
+-- ---- Aniversário do contato dispara automação (migration 0254) ----
+-- `fn_aniversariantes_do_dia(p_org, p_mes, p_dia)` — o PostgREST não fala
+-- `extract(month from birthdate) = X` direto num `.eq()` de coluna. Bloqueado,
+-- anonimizado ou mesclado NUNCA entra.
+create or replace function public.fn_aniversariantes_do_dia(p_org uuid, p_mes int, p_dia int)
+returns table(contact_id uuid)
+language sql
+security invoker
+stable
+as $$
+  select id
+    from public.contacts
+   where organization_id = p_org
+     and birthdate is not null
+     and extract(month from birthdate) = p_mes
+     and extract(day from birthdate) = p_dia
+     and is_blocked = false
+     and is_anonymized = false
+     and is_merged_into is null;
+$$;
+
+revoke all on function public.fn_aniversariantes_do_dia(uuid, int, int) from public, anon;
+grant execute on function public.fn_aniversariantes_do_dia(uuid, int, int) to authenticated, service_role;
+
+-- ---- Pedido pendente expira e devolve o horário (migration 0255) ----
+-- `pending_expiration_hours` POR TIPO, default 24h. O cron
+-- `agenda-pending-expirer` cancela quem passou do prazo — "quem expira é a
+-- RESERVA, não o pedido na fila".
+alter table public.calendar_event_types
+  add column if not exists pending_expiration_hours integer not null default 24;
+alter table public.calendar_event_types
+  drop constraint if exists calendar_event_types_pending_expiration_hours_check;
+alter table public.calendar_event_types
+  add constraint calendar_event_types_pending_expiration_hours_check check (
+    pending_expiration_hours > 0 and pending_expiration_hours <= 720
+  );
+comment on column public.calendar_event_types.pending_expiration_hours is
+  'Horas até um compromisso PENDING (requires_confirmation) expirar e ser cancelado automaticamente pelo cron agenda-pending-expirer. Default 24h. Teto de 720h (30 dias).';
 
 -- ---- VARREDURA anon: função nova nasce exposta em quem ATUALIZA (migration 0116) ----
 --

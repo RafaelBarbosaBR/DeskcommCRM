@@ -314,12 +314,37 @@ export const listConversationsQuerySchema = z.object({
   assigned_to: z.union([z.string().uuid(), z.literal("me"), z.literal("unassigned")]).optional(),
   channel_session_id: z.string().uuid().optional(),
   tag: conversationTagSchema.optional(),
+  /**
+   * "Não lidos" — antes só filtrava a PÁGINA JÁ CARREGADA no cliente
+   * (`unread_count_for_assignee > 0` aplicado depois do fetch), então rolar a
+   * lista com o filtro ligado podia mostrar "nada aqui" numa página inteira
+   * enquanto conversas não lidas existiam mais adiante, fora do que já tinha
+   * chegado. Server-side: o cursor de paginação passa a valer também sobre o
+   * recorte filtrado, e não sobre a lista inteira por trás dele.
+   */
+  only_unread: z.boolean().optional(),
   search: z.string().optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
 export type ListConversationsQuery = z.infer<typeof listConversationsQuerySchema>;
+
+/**
+ * Os mesmos três filtros que a listagem aceita (`tag`, `channel_session_id`,
+ * `only_unread`) — só eles, porque `status`/`comando`/`assigned_to` já são
+ * decididos pela ABA em si (`tabToFilter`), não por um parâmetro solto do
+ * badge. Sem propagar estes três, o número contava a organização inteira
+ * enquanto a lista embaixo mostrava só o recorte filtrado — badge e lista
+ * discordando entre si.
+ */
+export const conversationCountsQuerySchema = listConversationsQuerySchema.pick({
+  channel_session_id: true,
+  tag: true,
+  only_unread: true,
+});
+
+export type ConversationCountsQuery = z.infer<typeof conversationCountsQuerySchema>;
 
 export const listMessagesQuerySchema = z.object({
   cursor: z.string().optional(),

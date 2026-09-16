@@ -175,6 +175,12 @@ export function InboxLayout({ initialSelectedId = null }: InboxLayoutProps = {})
       search: filterValue.search || undefined,
       channel_session_id: filterValue.channel_session_id,
       tag: filterValue.tag,
+      // Antes era filtro SÓ DO CLIENTE, aplicado por cima da página já
+      // carregada — rolar a lista com o filtro ligado podia mostrar "nada
+      // aqui" com não-lidas existindo mais adiante, fora do que tinha
+      // chegado. Agora vai na query: o cursor de paginação passa a valer
+      // sobre o recorte filtrado.
+      onlyUnread: filterValue.onlyUnread || undefined,
     }),
     [
       filterValue.tab,
@@ -182,15 +188,8 @@ export function InboxLayout({ initialSelectedId = null }: InboxLayoutProps = {})
       filterValue.search,
       filterValue.channel_session_id,
       filterValue.tag,
+      filterValue.onlyUnread,
     ],
-  );
-
-  const clientFilter = useMemo(
-    () =>
-      filterValue.onlyUnread
-        ? (c: ConversationWithContact) => (c.unread_count_for_assignee ?? 0) > 0
-        : undefined,
-    [filterValue.onlyUnread],
   );
 
   // We need the selected conversation object for header / composer / side panel.
@@ -407,7 +406,6 @@ export function InboxLayout({ initialSelectedId = null }: InboxLayoutProps = {})
             filters={filters}
             selectedId={selectedId}
             onSelect={handleSelect}
-            clientFilter={clientFilter}
             onVisibleChange={handleVisibleChange}
           />
         </div>

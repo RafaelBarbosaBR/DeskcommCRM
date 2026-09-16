@@ -134,6 +134,34 @@ export function AgendaClient({
   const [tipoId, setTipoId] = React.useState<string | null>(() => tiposIniciais[0]?.id ?? null);
   const tipo = tiposIniciais.find((t) => t.id === tipoId) ?? tiposIniciais[0] ?? null;
   const [visao, setVisao] = React.useState<VisaoDaAgenda>("semana");
+  // NO CELULAR, UM DIA POR VEZ — a "semana" espreme 7 colunas flex numa tela de
+  // ~375px, cada uma com ~45px de largura: nem o horário cabe legível.
+  //
+  // ⚠️ Muda o ESTADO depois de montar (não a partir de `window` dentro do
+  // `useState`), de propósito — mesmo raciocínio já registrado em
+  // `components/inbox/InboxLayout.tsx`: ler `window` na inicialização faria o
+  // client hidratar com um valor DIFERENTE do que o servidor renderizou
+  // (`window` não existe lá), que é erro de hidratação, não só "pisca". Aqui o
+  // ajuste é uma troca de ESTADO agendada ao vivo (não puro CSS, como o Inbox
+  // fez) porque a visão decide QUANTAS colunas o React desenha — não dá para
+  // resolver só escondendo com classe. Roda uma vez, só no mount: depois disso
+  // é o alternador que manda, e este efeito nunca mais reescreve por cima.
+  // Leitura ÚNICA de uma API externa (viewport) pra decidir o estado inicial;
+  // a saída "certa" para este defeito (`useSyncExternalStore`, já em uso em
+  // `lib/theme.tsx` e `components/branding/CampoDeLogo.tsx`) serve estado que
+  // deve ficar em SINCRONIA contínua com a fonte externa — aqui é o oposto:
+  // depois deste mount, é o alternador que manda, e um resize não pode
+  // clobberar a escolha manual de quem está olhando a tela.
+  React.useEffect(() => {
+    // `typeof window.matchMedia === "function"`: outros testes desta tela
+    // montam `AgendaClient` sem dublar `matchMedia` (jsdom não o implementa
+    // por padrão) — sem a guarda, este efeito quebraria QUALQUER teste que
+    // não seja sobre viewport, derrubando toda a suíte da agenda por um
+    // ajuste que é, no produto real, só um detalhe de layout.
+    if (typeof window.matchMedia === "function" && window.matchMedia("(max-width: 767px)").matches) {
+      setVisao("dia"); // eslint-disable-line react-hooks/set-state-in-effect
+    }
+  }, []);
   const [isolada, setIsolada] = React.useState<string | null>(null);
   const [ancora, setAncora] = React.useState(() => new Date());
 
@@ -598,9 +626,13 @@ export function AgendaClient({
                 fontesDefasadas={horarios?.fontes_defasadas}
                 googleCoberturaParcial={horarios?.google_cobertura_parcial}
                 horarioInicial={horarioEscolhido ?? undefined}
+                // Onda 4.2 — tela interna, atrás de `requireRole("agent")": a
+                // equipe pode encaixar fora da grade. A vitrine pública
+                // (`app/vitrine-agenda/_client.tsx`) NÃO passa esta prop.
+                permiteForaDaGrade
                 // ESTE é o fio que faltava. Sem ele o "Marcado ✓" era estado
                 // local do React e nenhuma linha nascia no banco.
-                onConfirmar={(instante) => {
+                onConfirmar={(instante, opts) => {
                   // ⚠️ SEM `owner_user_id`, e é isto que conserta o 422.
                   //
                   // Isto mandava `pessoas[0]?.id` — a PRIMEIRA pessoa da lista.
@@ -627,7 +659,7 @@ export function AgendaClient({
                   const convidado = emailConvidadoLimpo || undefined;
                   if (remarcandoId) {
                     return remarcar
-                      .mutateAsync({ id: remarcandoId,revision:agendamentos.find(a=>a.id===remarcandoId)?.revision, starts_at: instante, guest_email: convidado })
+                      .mutateAsync({ id: remarcandoId,revision:agendamentos.find(a=>a.id===remarcandoId)?.revision, starts_at: instante, guest_email: convidado, fora_da_grade: opts?.foraDaGrade })
                       .then((r) => {
                         setRemarcandoId(null);
                         setMarcando(false);
@@ -642,6 +674,7 @@ export function AgendaClient({
                       conversation_id:conversationId||undefined,
                       starts_at: instante,
                       guest_email: convidado,
+                      fora_da_grade: opts?.foraDaGrade,
                     })
                     .then((r) => {
                       setEmailConvidado("");

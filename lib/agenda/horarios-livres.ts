@@ -280,8 +280,39 @@ function slotInflado(inicio: number, fim: number, tipo: TipoDeAgendamento): Faix
  * comportamento que o dono da agenda espera, e quem quiser folga entre um e
  * outro configura o buffer, que é o campo feito para isso.
  */
-function colide(inicio: number, fim: number, faixa: FaixaEmInstantes): boolean {
+export function colide(inicio: number, fim: number, faixa: FaixaEmInstantes): boolean {
   return inicio < faixa.fim && fim > faixa.inicio;
+}
+
+/**
+ * Este instante ESPECÍFICO conflita com algo que já ocupa a agenda?
+ *
+ * MESMO mecanismo que a grade usa para descartar um candidato (`colide` +
+ * buffer) — só que aplicado a UM horário pedido, em vez de varrer a jornada
+ * gerando candidatos. É o que sustenta o encaixe fora da grade (Onda 4.2):
+ * a exigência de bater com um múltiplo da grade sai, mas o conflito com outro
+ * compromisso ou evento do Google continua valendo — essa parte NÃO relaxa.
+ *
+ * ⚠️ Só `ocupados` (compromissos + Google) entra aqui, nunca bloqueio de
+ * exceção (`calendar_availability_exceptions`): aquele é o dono da agenda
+ * dizendo "não publico este horário", e o encaixe existe justamente para a
+ * EQUIPE poder decidir diferente do que foi publicado. Conflito de verdade —
+ * duas pessoas no mesmo instante — não é decisão de ninguém, e por isso não
+ * relaxa.
+ */
+export function conflitaComOcupado(
+  inicio: Date,
+  fim: Date,
+  ocupados: Ocupado[],
+  buffer: { antesMin: number; depoisMin: number },
+): boolean {
+  const comFolga: FaixaEmInstantes = {
+    inicio: inicio.getTime() - buffer.antesMin * MINUTO,
+    fim: fim.getTime() + buffer.depoisMin * MINUTO,
+  };
+  return ocupados.some((o) =>
+    colide(comFolga.inicio, comFolga.fim, { inicio: o.inicio.getTime(), fim: o.fim.getTime() }),
+  );
 }
 
 export function horariosLivres(entrada: EntradaDeHorariosLivres): Slot[] {

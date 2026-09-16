@@ -65,15 +65,26 @@ const STAGE_FIELD: CuratedField = {
   op: "eq",
   kind: "stage",
 };
+const CONTACT_TAGS_FIELD: CuratedField = { value: "contact.tags", label: "Tags do contato", op: "contains" };
 const MESSAGE_FIELDS: CuratedField[] = [
   { value: "event.body_preview", label: "Texto da mensagem", op: "contains" },
-  { value: "contact.tags", label: "Tags do contato", op: "contains" },
+  CONTACT_TAGS_FIELD,
 ];
 const TAG_ADDED_FIELD: CuratedField = {
   value: "event.added_tags",
   label: "Tag adicionada",
   op: "contains",
 };
+// O payload que `eventoDeAutomacaoDaTransicao` (lib/agenda/laco.ts) emite —
+// os quatro gatilhos de agenda são ancorados no NEGÓCIO do contato
+// (entity_kind: "crm_lead"), então herdam LEAD_FIELDS, mais o nome do tipo de
+// agendamento que só o payload da agenda carrega.
+const APPOINTMENT_FIELD: CuratedField = {
+  value: "event.event_type_name",
+  label: "Tipo de agendamento",
+  op: "eq",
+};
+const AGENDA_FIELDS: CuratedField[] = [...LEAD_FIELDS, APPOINTMENT_FIELD];
 
 // ponytail: etapa de destino usa o funil default (cobre o caso comum de 1
 // funil); se o produto ganhar múltiplos funis relevantes aqui, trocar por um
@@ -84,6 +95,11 @@ const CURATED_FIELDS: Record<TriggerEvent, CuratedField[]> = {
   "message.received": MESSAGE_FIELDS,
   "lead.tag_added": [...LEAD_FIELDS, TAG_ADDED_FIELD],
   "contact.tag_added": [TAG_ADDED_FIELD],
+  "agenda.appointment_scheduled": AGENDA_FIELDS,
+  "agenda.appointment_confirmed": AGENDA_FIELDS,
+  "agenda.appointment_rescheduled": AGENDA_FIELDS,
+  "agenda.appointment_cancelled": AGENDA_FIELDS,
+  "contact.birthday": [CONTACT_TAGS_FIELD],
 };
 
 const OP_LABELS: Record<Op, string> = { eq: "é", neq: "não é", contains: "contém" };

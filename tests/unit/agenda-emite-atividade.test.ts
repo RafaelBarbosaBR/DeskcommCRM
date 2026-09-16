@@ -232,6 +232,13 @@ function avisosDeRastroPerdido(): Array<{ fn: string; args: Linha }> {
   );
 }
 
+/** Os gatilhos de automação (Onda 4.1) que chegaram ao `event_log`. */
+function eventosDeAutomacao(): Array<{ fn: string; args: Linha }> {
+  return banco.rpc.filter(
+    (c) => c.fn === "emit_event" && String(c.args.p_event_type).startsWith("agenda."),
+  );
+}
+
 beforeEach(() => {
   // O mock de `audit` acumula chamadas entre casos; limpar ANTES de configurar.
   vi.clearAllMocks();
@@ -368,6 +375,89 @@ describe("a agenda grava na timeline", () => {
       atividades().map((l) => l.type),
       "remarcar contou outra história: a timeline diz que o cliente desistiu e voltou, quando ele só mudou de horário",
     ).toEqual(["appointment_rescheduled"]);
+  });
+});
+
+/**
+ * O GATILHO DE AUTOMAÇÃO (Onda 4.1), NA GRAVAÇÃO — não na decisão pura, que
+ * `agenda-laco-de-retorno.test.ts` já cobre. `eventoDeAutomacaoDaTransicao`
+ * devolver a string certa não põe linha nenhuma em `event_log`: quem chama
+ * `rpc("emit_event")` é `fecharOLaco`, e é isso que este bloco mede — no MESMO
+ * dublê e pela MESMA sonda (`banco.rpc`) que `avisosDeRastroPerdido()` já usa
+ * para o rastro de atividade perdida.
+ */
+describe("a agenda dispara o gatilho de automação", () => {
+  it("⭐ marcar dispara `agenda.appointment_scheduled` ancorado no NEGÓCIO do contato", async () => {
+    await marcarAgendamentoHandler(cliente(), ctx, {
+      event_type_id: TIPO,
+      starts_at: HORARIO,
+      contact_id: CONTATO,
+    });
+
+    expect(
+      eventosDeAutomacao(),
+      "marcar não emitiu gatilho nenhum: uma regra de 'avisar o cliente que marcou' não tem o que escutar",
+    ).toHaveLength(1);
+    const evento = eventosDeAutomacao()[0]!;
+    expect(evento.args.p_event_type).toBe("agenda.appointment_scheduled");
+    expect(
+      evento.args.p_entity_kind,
+      "entity_kind errado: o motor (buildContext) não sabe hidratar lead/contato para outro valor",
+    ).toBe("crm_lead");
+    expect(
+      evento.args.p_entity_id,
+      "ancorado no contato ou no compromisso em vez do negócio: as condições da regra (lead.*) nunca casam",
+    ).toBe(NEGOCIO);
+    expect(evento.args.p_organization_id).toBe(ORG);
+    expect((evento.args.p_payload as Linha).appointment_id).toBe(AGENDAMENTO);
+  });
+
+  it("⭐ confirmar um PENDENTE dispara `agenda.appointment_confirmed` — mesmo sem atividade nova na timeline", async () => {
+    banco.agendamento = { ...banco.agendamento, status: "pending" };
+
+    await alterarAgendamentoHandler(cliente(), ctx, { id: AGENDAMENTO, status: "confirmed" });
+
+    expect(
+      eventosDeAutomacao().map((e) => e.args.p_event_type),
+      "confirmar um pendente não disparou o gatilho: a automação de 'avisar que confirmou' nunca dispara nesta instalação",
+    ).toEqual(["agenda.appointment_confirmed"]);
+    // Controle: a timeline não ganhou linha nova (mesmo comportamento de
+    // sempre) — o gatilho de automação é um sinal A MAIS, não substituto.
+    expect(atividades()).toHaveLength(0);
+  });
+
+  it("remarcar dispara `agenda.appointment_rescheduled`", async () => {
+    horarioOfertado = OUTRO_HORARIO;
+    await alterarAgendamentoHandler(cliente(), ctx, { id: AGENDAMENTO, starts_at: OUTRO_HORARIO });
+
+    expect(eventosDeAutomacao().map((e) => e.args.p_event_type)).toEqual([
+      "agenda.appointment_rescheduled",
+    ]);
+  });
+
+  it("cancelar dispara `agenda.appointment_cancelled`", async () => {
+    await cancelarAgendamentoHandler(cliente(), ctx, { id: AGENDAMENTO, reason: "cliente pediu" });
+
+    expect(eventosDeAutomacao().map((e) => e.args.p_event_type)).toEqual([
+      "agenda.appointment_cancelled",
+    ]);
+  });
+
+  it("sem negócio aberto para ancorar, NÃO dispara — mesma régua do `emitLeadActivity`", async () => {
+    // Controle de vacuidade: sem isto, um dublê que emitisse incondicionalmente
+    // passaria em todos os casos acima sem provar o `if (leadId)` de verdade.
+    banco.negocios = [];
+
+    await marcarAgendamentoHandler(cliente(), ctx, {
+      event_type_id: TIPO,
+      starts_at: HORARIO,
+      contact_id: CONTATO,
+    });
+
+    expect(
+      eventosDeAutomacao(),
+      "emitiu o gatilho sem negócio pra ancorar — o payload chegaria ao motor com entity_id vazio ou inventado",
+    ).toHaveLength(0);
   });
 });
 

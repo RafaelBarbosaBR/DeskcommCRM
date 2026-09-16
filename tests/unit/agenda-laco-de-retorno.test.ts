@@ -21,6 +21,7 @@ import { describe, expect, it } from "vitest";
 import {
   atividadeDaTransicao,
   autorParaTimeline,
+  eventoDeAutomacaoDaTransicao,
   precisaEmpurrarAoGoogle,
 } from "@/lib/agenda/laco";
 
@@ -58,6 +59,62 @@ describe("qual atividade cada transição emite", () => {
   it("confirmar um pendente não é remarcar nem marcar de novo", () => {
     // É operação interna: o compromisso já estava na timeline desde o pedido.
     expect(atividadeDaTransicao("pending", "confirmed")).toBeNull();
+  });
+});
+
+/**
+ * O GATILHO DE AUTOMAÇÃO (Onda 4.1) — SEPARADO de `atividadeDaTransicao`.
+ *
+ * A pergunta muda: não é "o humano precisa ver uma linha nova na timeline?",
+ * é "existe um FATO que uma regra pode querer escutar?". As duas divergem
+ * numa transição real: confirmar um pendente não é notícia de timeline (a
+ * linha já entrou como "marcado"), mas É a notícia que uma automação de
+ * "avisar o cliente que confirmou" precisa.
+ */
+describe("qual evento de automação cada transição emite", () => {
+  it("⭐ nascer confirmado é 'marcado' — mesma notícia de `atividadeDaTransicao`", () => {
+    expect(eventoDeAutomacaoDaTransicao(null, "confirmed")).toBe("agenda.appointment_scheduled");
+  });
+
+  it("nascer pendente TAMBÉM é 'marcado'", () => {
+    expect(eventoDeAutomacaoDaTransicao(null, "pending")).toBe("agenda.appointment_scheduled");
+  });
+
+  it("⭐ confirmar um PENDENTE dispara 'confirmado' — a divergência com a timeline", () => {
+    // `atividadeDaTransicao("pending", "confirmed")` é `null` (não é notícia de
+    // TIMELINE). Aqui é EXATAMENTE o gatilho que existe para cobrir: sem ele,
+    // "avisar o cliente que o horário foi confirmado" não tem o que escutar.
+    expect(eventoDeAutomacaoDaTransicao("pending", "confirmed")).toBe(
+      "agenda.appointment_confirmed",
+    );
+    expect(
+      atividadeDaTransicao("pending", "confirmed"),
+      "controle: a timeline continua sem notícia nova — só o gatilho de automação mudou",
+    ).toBeNull();
+  });
+
+  it("confirmar um que já ESTAVA confirmado não dispara nada — não é notícia", () => {
+    // Uma PATCH que não mudou o status (ou uma segunda chamada idempotente) não
+    // pode reabrir o gatilho: uma regra de "avisar que confirmou" disparando
+    // duas vezes manda duas mensagens iguais ao mesmo cliente.
+    expect(eventoDeAutomacaoDaTransicao("confirmed", "confirmed")).toBeNull();
+  });
+
+  it("remarcar dispara 'remarcado'", () => {
+    expect(eventoDeAutomacaoDaTransicao("confirmed", "rescheduled")).toBe(
+      "agenda.appointment_rescheduled",
+    );
+  });
+
+  it("cancelar dispara 'cancelado'", () => {
+    expect(eventoDeAutomacaoDaTransicao("confirmed", "cancelled")).toBe(
+      "agenda.appointment_cancelled",
+    );
+  });
+
+  it("comparecer e faltar NÃO têm gatilho — o produto ainda não pediu automação para desfecho", () => {
+    expect(eventoDeAutomacaoDaTransicao("confirmed", "completed")).toBeNull();
+    expect(eventoDeAutomacaoDaTransicao("confirmed", "no_show")).toBeNull();
   });
 });
 

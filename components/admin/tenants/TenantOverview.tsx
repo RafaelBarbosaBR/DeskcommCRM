@@ -7,6 +7,7 @@ import type {
   TenantOrganization,
   TenantCounts,
   TenantIntegrations,
+  TenantAgentSummary,
 } from "@/hooks/useTenantDetail";
 import { useT } from "@/hooks/i18n/useT";
 
@@ -87,13 +88,31 @@ interface TenantOverviewProps {
   organization: TenantOrganization;
   counts: TenantCounts;
   integrations: TenantIntegrations;
+  agents: TenantAgentSummary[];
 }
+
+// Mesmo vocabulário de `AgentStatusBadge` (tela do tenant, `app/app/ai/agents`)
+// — "no_ar"/"no_ar_legado" viram o MESMO rótulo "Publicado" que o dono da conta
+// vê no agente dele. Não importado de lá: aquele componente pede `AgentRow`
+// inteiro (organization_id, system_prompt, config…), que este resumo enxuto de
+// plataforma não tem e não devia buscar só para satisfazer um tipo.
+const AGENT_STATUS_LABEL: Record<TenantAgentSummary["status"], string> = {
+  no_ar: "Publicado",
+  no_ar_legado: "Publicado",
+  parado: "Rascunho",
+};
+
+const AGENT_STATUS_VARIANT: Record<TenantAgentSummary["status"], "success" | "neutral"> = {
+  no_ar: "success",
+  no_ar_legado: "success",
+  parado: "neutral",
+};
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function TenantOverview({ organization, counts, integrations }: TenantOverviewProps) {
+export function TenantOverview({ organization, counts, integrations, agents }: TenantOverviewProps) {
   const tagDoIdioma = useTagDeIdioma();
   const t = useT();
   const plan = (organization.settings as { plan?: string } | null)?.plan ?? "—";
@@ -186,6 +205,44 @@ export function TenantOverview({ organization, counts, integrations }: TenantOve
             <InfoRow label={t("Invocações IA (30d)")} value={counts.ai_invocations_30d.toLocaleString("pt-BR")} />
           </div>
         </div>
+      </div>
+
+      {/* Agentes de IA — qual está publicado, com qual modelo */}
+      <div className="rounded-lg border bg-card p-5">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+          {t("Agentes de IA")}
+        </h2>
+        {agents.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("Nenhum agente cadastrado.")}</p>
+        ) : (
+          <div className="space-y-2">
+            {agents.map((agent) => (
+              <div
+                key={agent.id}
+                className="flex flex-wrap items-center justify-between gap-2 py-2 border-b last:border-0"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm font-medium truncate">{agent.name}</span>
+                  <span className="text-xs font-mono text-muted-foreground">{agent.kind}</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Badge variant={AGENT_STATUS_VARIANT[agent.status]}>
+                    {t(AGENT_STATUS_LABEL[agent.status])}
+                  </Badge>
+                  {agent.status !== "parado" && (
+                    <>
+                      <span className="font-mono">{agent.model}</span>
+                      {agent.version_number != null && <span>{`v${agent.version_number}`}</span>}
+                      {agent.published_at && (
+                        <span>{formatDate(agent.published_at, tagDoIdioma)}</span>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

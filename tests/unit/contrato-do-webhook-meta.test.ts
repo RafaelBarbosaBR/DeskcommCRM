@@ -32,7 +32,15 @@ vi.mock("@/lib/channels/meta/ingest", () => ({
 
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
-    from: () => ({ update: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ eq: async () => ({}) }) }) }) }) }),
+    from: () => ({
+      update: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ eq: async () => ({}) }) }) }) }),
+      // `platformMetaAppCreds` (Onda 4.3) consulta `platform_meta_app` ANTES
+      // da assinatura ser conferida — sem esta cadeia, `.select(...).eq(...)
+      // .maybeSingle()` quebrava com "not a function". Linha vazia = cai no
+      // `.env`, que é exatamente o que `vi.stubEnv("META_APP_SECRET", ...)`
+      // abaixo já simula.
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+    }),
   }),
 }));
 

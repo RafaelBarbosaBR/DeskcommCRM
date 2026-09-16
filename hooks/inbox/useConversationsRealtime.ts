@@ -88,6 +88,8 @@ export interface ConversationsFilters {
   search?: string;
   channel_session_id?: string;
   tag?: string;
+  /** Antes filtrava só a página já carregada no cliente — agora é a query. */
+  onlyUnread?: boolean;
 }
 
 interface ListResponse {
@@ -124,6 +126,7 @@ export function useConversationsRealtime(
       if (filters.search) qs.set("search", filters.search);
       if (filters.channel_session_id) qs.set("channel_session_id", filters.channel_session_id);
       if (filters.tag) qs.set("tag", filters.tag);
+      if (filters.onlyUnread) qs.set("only_unread", "true");
       if (pageParam) qs.set("cursor", pageParam);
       qs.set("limit", "50");
       try {

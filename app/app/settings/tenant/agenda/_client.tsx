@@ -1,6 +1,7 @@
 "use client";
 import { AgendasConectadas } from "@/components/agenda/AgendasConectadas";
 import { PrazosDePresenca } from "@/components/agenda/PrazosDePresenca";
+import { FechamentosDaAgenda } from "@/components/agenda/FechamentosDaAgenda";
 
 import { useT } from "@/hooks/i18n/useT";
 
@@ -27,6 +28,9 @@ export interface TipoRow {
   is_active: boolean;
   reminder_enabled: boolean;
   reminder_minutes_before: number;
+  additional_reminders: number[];
+  /** Prazo (horas) até um pedido `pending` expirar sozinho — Onda 4.5. */
+  pending_expiration_hours: number;
 }
 
 /**
@@ -96,10 +100,24 @@ const VAZIO: Rascunho = {
  * aviso desligado o `PATCH` manda `reminder_enabled: false` e OMITE os minutos:
  * a antecedência guardada fica intacta para quando alguém religar, em vez de
  * ser sobrescrita por um valor que a tela não deixou ninguém escolher.
+ *
+ * ─── Lembretes EXTRA (migration 0252) ───────────────────────────────────────
+ *
+ * Até 3 avisos além do escalar acima — "24h antes E 1h antes" era impossível
+ * de configurar. `name="additional_reminders"` REPETIDO em cada input, de
+ * propósito: `FormData.getAll("additional_reminders")` (no submit do
+ * formulário pai) devolve a lista inteira na ordem das linhas, sem precisar
+ * de um segundo canal de estado ao lado do `FormData` não-controlado que o
+ * resto do formulário já usa. O array só controla QUANTAS linhas aparecem —
+ * o VALOR de cada uma continua não-controlado, mesmo desenho do campo irmão.
  */
 function LembreteDoCompromisso({ tipo }: { tipo: TipoRow }) {
   const t = useT();
   const [ligado, setLigado] = React.useState(tipo.reminder_enabled);
+  const [extras, setExtras] = React.useState<{ chave: number; valorInicial: number }[]>(() =>
+    tipo.additional_reminders.map((valor, i) => ({ chave: i, valorInicial: valor })),
+  );
+  const proximaChave = React.useRef(extras.length);
 
   return (
     <>
@@ -130,6 +148,46 @@ function LembreteDoCompromisso({ tipo }: { tipo: TipoRow }) {
           className="rounded-md border border-border bg-surface-elevated p-2 text-sm text-text disabled:opacity-50"
         />
       </label>
+      <div className="flex flex-col gap-1 text-xs text-text-muted sm:col-span-2">
+        {t("Lembretes extra (opcional, até 3)")}
+        {extras.map((extra) => (
+          <div key={extra.chave} className="flex items-center gap-2">
+            <input
+              name="additional_reminders"
+              type="number"
+              min={15}
+              max={10080}
+              disabled={!ligado}
+              defaultValue={extra.valorInicial}
+              data-testid={`editar-lembrete-extra-${tipo.id}-${extra.chave}`}
+              className="rounded-md border border-border bg-surface-elevated p-2 text-sm text-text disabled:opacity-50"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={!ligado}
+              onClick={() => setExtras((atual) => atual.filter((e) => e.chave !== extra.chave))}
+            >
+              {t("Remover")}
+            </Button>
+          </div>
+        ))}
+        {extras.length < 3 ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!ligado}
+            className="self-start"
+            onClick={() =>
+              setExtras((atual) => [...atual, { chave: proximaChave.current++, valorInicial: 60 }])
+            }
+          >
+            {t("Adicionar outro lembrete")}
+          </Button>
+        ) : null}
+      </div>
     </>
   );
 }
@@ -194,6 +252,7 @@ export function TiposDeAgendamentoClient({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4" data-testid="tipos-de-agendamento-config">
       {podeConfigurarGoogle && <AgendasConectadas />}
+      <FechamentosDaAgenda />
       <PrazosDePresenca podeEditar={podeEditar}/>
       {podeEditar ? (
         <div>
@@ -466,6 +525,33 @@ export function TiposDeAgendamentoClient({
                               ),
                             }
                           : {}),
+                        // Mesmo raciocínio do campo acima, mas com uma volta: aqui
+                        // "vazio" é um valor LEGÍTIMO (o usuário apagou os extras
+                        // que existiam), então o gate certo não é "tem valor?" — é
+                        // "o aviso estava ligado?" (`reminder_enabled === "on"`,
+                        // já lido no FormData do mesmo submit). Desligado, omite;
+                        // ligado, manda a lista inteira, mesmo vazia.
+                        ...(dados.get("reminder_enabled") === "on"
+                          ? {
+                              additional_reminders: dados
+                                .getAll("additional_reminders")
+                                .map((v) => Number(v)),
+                            }
+                          : {}),
+                        // Onda 4.5 — o campo só existe no FormData quando
+                        // `tipo.requires_confirmation` era `true` no render
+                        // (ver o `{tipo.requires_confirmation && (...)}`
+                        // acima). Omitir, e não mandar `undefined`: um tipo
+                        // que não pede confirmação não tem por que ver o
+                        // prazo dele reescrito por um formulário que nem
+                        // mostrou o campo.
+                        ...(dados.get("pending_expiration_hours")
+                          ? {
+                              pending_expiration_hours: Number(
+                                dados.get("pending_expiration_hours"),
+                              ),
+                            }
+                          : {}),
                       }),
                     "Tipo alterado.",
                   );
@@ -509,6 +595,28 @@ export function TiposDeAgendamentoClient({
                     ))}
                   </select>
                 </label>
+                {tipo.requires_confirmation && (
+                  // Onda 4.5 — só faz sentido para o tipo que NASCE `pending`
+                  // (`requires_confirmation`). Mostrar o campo para um tipo
+                  // que confirma na hora seria oferecer um controle sem
+                  // efeito nenhum — o mesmo anti-pattern do controle
+                  // decorativo, do outro lado.
+                  <label className="flex flex-col gap-1 text-xs text-text-muted">
+                    {t("Prazo para confirmar (horas)")}
+                    <input
+                      name="pending_expiration_hours"
+                      type="number"
+                      min={1}
+                      max={720}
+                      defaultValue={tipo.pending_expiration_hours}
+                      data-testid={`editar-prazo-${tipo.id}`}
+                      className="rounded-md border border-border bg-surface-elevated p-2 text-sm text-text"
+                    />
+                    <span>
+                      {t("Passado esse prazo sem confirmação, o pedido é cancelado sozinho e o horário volta a ficar livre.")}
+                    </span>
+                  </label>
+                )}
                 <LembreteDoCompromisso tipo={tipo} />
                 <div className="flex justify-end sm:col-span-3">
                   <Button type="submit" size="sm" data-testid={`salvar-${tipo.id}`} disabled={salvando}>

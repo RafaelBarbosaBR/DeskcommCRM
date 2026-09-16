@@ -74,6 +74,11 @@ export type InboxKind =
   // (migration 0247) Uma chamada de voz recebida tocou e ninguém
   // atendeu — não existe atendimento automático de voz.
   | 'voice_call_missed'
+  // (migration 0256) O job `inbound_turn` esgotou as tentativas — a IA parou
+  // de responder UMA MENSAGEM DE CLIENTE. Kind separado de `job_dead` de
+  // propósito: "uma tarefa falhou" não é a mesma urgência que "um cliente
+  // está esperando resposta e não vai receber nenhuma".
+  | 'inbound_turn_dead'
   | 'other';
 
 export interface InboxItemRow {

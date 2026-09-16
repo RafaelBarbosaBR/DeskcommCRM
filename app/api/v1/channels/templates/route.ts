@@ -19,7 +19,7 @@ import { metaSessionForOrg } from "@/lib/channels/meta/session";
 import { normalizeRejectedReason } from "@/lib/channels/meta/webhook";
 import { deriveTemplateContract, describeAddress } from "@/lib/channels/meta/template-contract";
 import { syncTemplates } from "@/lib/channels/meta/template-sync";
-import { metaGraphVersion } from "@/lib/channels/meta/graph-version";
+import { resolveMetaCreds } from "@/lib/channels/meta/credentials";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -160,15 +160,23 @@ export async function POST(_req: NextRequest): Promise<NextResponse> {
     return fail("invalid_request", "no_meta_channel", 400, { requestId });
   }
 
-  const token = process.env.META_SYSTEM_USER_TOKEN ?? "";
-  if (!token) return fail("invalid_request", "missing_meta_token", 400, { requestId });
+  // Sessão primeiro, `.env` como fallback — o mesmo caminho que o envio de
+  // mensagem já usa (`resolveMetaCreds`). Antes esta rota lia só o `.env`:
+  // numa instalação com duas organizações conectadas na Meta, sincronizar os
+  // templates de QUALQUER uma delas puxava pela conta que estivesse no
+  // ambiente, nunca pela da sessão que a tela estava mostrando.
+  const creds = await resolveMetaCreds(createAdminClient(), {
+    organizationId: r.orgId,
+    phoneNumberId: sessao.phoneNumberId ?? "",
+  });
+  if (!creds) return fail("invalid_request", "missing_meta_token", 400, { requestId });
 
   try {
     const counts = await syncTemplates({
       organizationId: r.orgId,
       wabaId: sessao.wabaId,
-      token,
-      graphVersion: metaGraphVersion(),
+      token: creds.token,
+      graphVersion: creds.graphVersion,
     });
     return ok(counts);
   } catch (err) {

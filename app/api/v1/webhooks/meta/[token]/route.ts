@@ -23,6 +23,7 @@ import { fail } from "@/lib/api/wrappers";
 import { lerEnvelopeMeta } from "@/lib/channels/meta/envelope";
 import { parseMetaWebhook, verificationChallenge, verifyMetaSignature } from "@/lib/channels/meta/webhook";
 import { ingestMetaInbound } from "@/lib/channels/meta/ingest";
+import { platformMetaAppSecret, platformMetaAppVerifyToken } from "@/lib/channels/meta/platform-app";
 import { metaSessionByWebhookToken } from "@/lib/channels/meta/session";
 import { logger } from "@/lib/logger";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -39,10 +40,9 @@ export async function GET(req: NextRequest, ctx: RouteCtx): Promise<NextResponse
   const session = await metaSessionByWebhookToken(token);
   if (!session) return new NextResponse("not found", { status: 404 });
 
-  const challenge = verificationChallenge(
-    req.nextUrl.searchParams,
-    process.env.META_WEBHOOK_VERIFY_TOKEN ?? "",
-  );
+  const admin = createAdminClient();
+  const verifyToken = await platformMetaAppVerifyToken(admin);
+  const challenge = verificationChallenge(req.nextUrl.searchParams, verifyToken ?? "");
   if (challenge === null) return new NextResponse("forbidden", { status: 403 });
 
   // Texto puro, sem wrapper — ver o cabeçalho.
@@ -59,9 +59,10 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
   const session = await metaSessionByWebhookToken(token);
   if (!session) return fail("not_found", "unknown webhook token", 404, { requestId });
 
+  const admin = createAdminClient();
+  const appSecret = await platformMetaAppSecret(admin);
   const rawBody = await req.text();
-  const appSecret = process.env.META_APP_SECRET ?? "";
-  if (!verifyMetaSignature(rawBody, req.headers.get("x-hub-signature-256"), appSecret)) {
+  if (!verifyMetaSignature(rawBody, req.headers.get("x-hub-signature-256"), appSecret ?? "")) {
     return fail("unauthorized", "invalid_signature", 401, { requestId });
   }
 
@@ -94,7 +95,6 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
   }
 
   const eventos = parseMetaWebhook(leitura.envelope);
-  const admin = createAdminClient();
   const now = new Date().toISOString();
   /**
    * Desfecho de cada ingestão. Existe porque a versão anterior fazia

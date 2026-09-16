@@ -37,11 +37,24 @@ export interface TenantIntegrations {
   nuvemshop_connected_at: string | null;
 }
 
+/** "arquivado" nunca chega aqui — a rota já filtra `archived_at is null`. */
+export interface TenantAgentSummary {
+  id: string;
+  name: string;
+  kind: string;
+  status: "no_ar" | "no_ar_legado" | "parado";
+  /** Modelo da versão PUBLICADA quando há uma; senão, o rascunho em `ai_agents`. */
+  model: string;
+  version_number: number | null;
+  published_at: string | null;
+}
+
 export interface TenantDetailResponse {
   data: {
     organization: TenantOrganization;
     counts: TenantCounts;
     integrations: TenantIntegrations;
+    agents: TenantAgentSummary[];
   };
 }
 

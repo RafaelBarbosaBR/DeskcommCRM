@@ -39,14 +39,16 @@ interface Filter {
 }
 
 class FakeQuery implements PromiseLike<{ data: unknown; error: { message: string } | null }> {
-  private mode: "select" | "update" | null = null;
+  private mode: "select" | "update" | "insert" | null = null;
   private selectCols = "*";
   private selectAfterUpdate = false;
   private updateData: Record<string, unknown> | null = null;
+  private insertData: Record<string, unknown> | null = null;
   private filters: Filter[] = [];
   private orderCol?: string;
   private orderAsc = true;
   private limitN?: number;
+  private single = false;
 
   constructor(private table: string) {}
 
@@ -64,6 +66,19 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: { message: string
   update(data: Record<string, unknown>): this {
     this.mode = "update";
     this.updateData = data;
+    return this;
+  }
+
+  /** `avisarEventoMorto` (Onda 4.6) faz `.insert({...})` puro, sem `.select()`. */
+  insert(data: Record<string, unknown>): this {
+    this.mode = "insert";
+    this.insertData = data;
+    return this;
+  }
+
+  /** Termina um `.select()...limit(1).maybeSingle()`: devolve a linha ou `null`, nunca array. */
+  maybeSingle(): this {
+    this.single = true;
     return this;
   }
 
@@ -147,7 +162,12 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: { message: string
       if (this.selectAfterUpdate) q += ` returning ${this.selectCols}`;
       return q;
     }
-    throw new Error("fakeAdminClient: no mode set (.select()/.update() not called)");
+    if (this.mode === "insert") {
+      const cols = Object.keys(this.insertData!);
+      const vals = cols.map((c) => sqlLiteral(this.insertData![c]));
+      return `insert into public.${this.table} (${cols.join(", ")}) values (${vals.join(", ")})`;
+    }
+    throw new Error("fakeAdminClient: no mode set (.select()/.update()/.insert() not called)");
   }
 
   private async execute(): Promise<{ data: unknown; error: { message: string } | null }> {
@@ -165,7 +185,8 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: { message: string
             ? `with w as (${inner}) select coalesce(json_agg(w), '[]') from w;`
             : `select coalesce(json_agg(t), '[]') from (${inner}) t;`;
         const out = sql(wrapped);
-        return { data: JSON.parse(out), error: null };
+        const rows = JSON.parse(out) as unknown[];
+        return { data: this.single ? (rows[0] ?? null) : rows, error: null };
       }
       sql(`${this.toSql()};`);
       return { data: null, error: null };
@@ -412,5 +433,55 @@ describe("drainEventLog — cron driver genérico do event_log (migration 0037)"
     await drainEventLog(fakeAdminClient(), { limit: 50 });
 
     expect(rowState(emCurso).status, "reclamou um evento que estava em curso").toBe("processing");
+  });
+
+  /**
+   * O event_dead ÓRFÃO (Onda 4.6). Antes deste ponto, `status='dead'` não
+   * abria aviso nenhum — o `event_type` sumia do produto sem rastro visível.
+   * Um teste só, sequencial (e não dois), porque a segunda afirmação —
+   * "não duplica" — só significa algo lida DEPOIS da primeira ter provado
+   * que o aviso realmente abre.
+   */
+  it("caso 11 — event_dead abre aviso crítico, e um segundo evento morto da MESMA org não duplica", async () => {
+    sql(`delete from public.agent_inbox_items where organization_id = '${GOV_ORG}' and kind = 'event_dead';`);
+
+    const primeiro = emitDrainCase("error");
+    sql(`update public.event_log set attempts = 4 where id = '${primeiro}';`);
+    await drainEventLog(fakeAdminClient(), { limit: 50 });
+    expect(rowState(primeiro).status).toBe("dead");
+
+    const avisosApósOPrimeiro = JSON.parse(
+      sql(
+        `select coalesce(json_agg(t), '[]') from (
+           select severity, body from public.agent_inbox_items
+            where organization_id = '${GOV_ORG}' and kind = 'event_dead'
+         ) t;`,
+      ),
+    ) as Array<{ severity: string; body: string }>;
+    expect(avisosApósOPrimeiro).toHaveLength(1);
+    expect(avisosApósOPrimeiro[0]!.severity).toBe("critical");
+    expect(avisosApósOPrimeiro[0]!.body).toContain("test.drain_case");
+    expect(avisosApósOPrimeiro[0]!.body).toContain("boom");
+
+    // Segundo evento da MESMA organização também esgota tentativas — não
+    // pode abrir um SEGUNDO aviso enquanto o primeiro segue 'open'. Sem o
+    // dedup, um provedor fora do ar por horas abriria um crítico POR EVENTO.
+    const segundo = emitDrainCase("error");
+    sql(`update public.event_log set attempts = 4 where id = '${segundo}';`);
+    await drainEventLog(fakeAdminClient(), { limit: 50 });
+    expect(rowState(segundo).status).toBe("dead");
+
+    const avisosApósOSegundo = JSON.parse(
+      sql(
+        `select coalesce(json_agg(t), '[]') from (
+           select id from public.agent_inbox_items
+            where organization_id = '${GOV_ORG}' and kind = 'event_dead'
+         ) t;`,
+      ),
+    ) as unknown[];
+    expect(
+      avisosApósOSegundo,
+      "o segundo evento morto não podia abrir um segundo aviso enquanto o primeiro está aberto",
+    ).toHaveLength(1);
   });
 });

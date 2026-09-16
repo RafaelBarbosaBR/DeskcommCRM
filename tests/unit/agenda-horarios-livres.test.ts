@@ -27,6 +27,7 @@ import { describe, expect, it } from "vitest";
 
 import { partesNoFuso } from "@/lib/agenda/fuso";
 import {
+  conflitaComOcupado,
   horariosLivres,
   unirFaixas,
   type FaixaEmMinutos,
@@ -859,5 +860,76 @@ describe("unirFaixas — a correção na origem, medida sem passar pelo motor", 
 
   it("três faixas em cadeia viram uma", () => {
     expect(unirFaixas([f(540, 660), f(600, 780), f(760, 900)])).toEqual([f(540, 900)]);
+  });
+});
+
+/**
+ * `conflitaComOcupado` (Onda 4.2) — o mecanismo que sustenta o encaixe fora
+ * da grade: sem estar amarrado a um múltiplo publicado, ele ainda tem que
+ * enxergar o MESMO conflito que a grade enxergaria, buffer incluído.
+ */
+describe("conflitaComOcupado — o conflito que o encaixe fora da grade não pode ignorar", () => {
+  const SEM_BUFFER = { antesMin: 0, depoisMin: 0 };
+  const OCUPADO_10_11: Ocupado = {
+    inicio: new Date("2026-09-02T13:00:00.000Z"),
+    fim: new Date("2026-09-02T14:00:00.000Z"),
+  };
+
+  it("⭐ instante que cai DENTRO de um ocupado conflita", () => {
+    expect(
+      conflitaComOcupado(
+        new Date("2026-09-02T13:15:00.000Z"),
+        new Date("2026-09-02T13:45:00.000Z"),
+        [OCUPADO_10_11],
+        SEM_BUFFER,
+      ),
+    ).toBe(true);
+  });
+
+  it("instante fora de qualquer ocupado não conflita", () => {
+    expect(
+      conflitaComOcupado(
+        new Date("2026-09-02T15:00:00.000Z"),
+        new Date("2026-09-02T15:30:00.000Z"),
+        [OCUPADO_10_11],
+        SEM_BUFFER,
+      ),
+    ).toBe(false);
+  });
+
+  it("encostar não é conflitar — mesma régua de `colide`", () => {
+    expect(
+      conflitaComOcupado(
+        new Date("2026-09-02T14:00:00.000Z"),
+        new Date("2026-09-02T14:30:00.000Z"),
+        [OCUPADO_10_11],
+        SEM_BUFFER,
+      ),
+    ).toBe(false);
+  });
+
+  it("o buffer INFLA o conflito — um horário que encostaria passa a conflitar", () => {
+    // Mesmo caso do "encostar" acima, agora com 15 min de buffer ANTES: o
+    // novo instante (14:00) cai dentro dos 15 min de folga que o ocupado
+    // anterior (até 14:00) exige.
+    expect(
+      conflitaComOcupado(
+        new Date("2026-09-02T14:00:00.000Z"),
+        new Date("2026-09-02T14:30:00.000Z"),
+        [OCUPADO_10_11],
+        { antesMin: 15, depoisMin: 0 },
+      ),
+    ).toBe(true);
+  });
+
+  it("sem nenhum ocupado, nunca conflita", () => {
+    expect(
+      conflitaComOcupado(
+        new Date("2026-09-02T13:15:00.000Z"),
+        new Date("2026-09-02T13:45:00.000Z"),
+        [],
+        SEM_BUFFER,
+      ),
+    ).toBe(false);
   });
 });

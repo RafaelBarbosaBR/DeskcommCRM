@@ -23,16 +23,28 @@ export async function GET(_req: NextRequest): Promise<Response> {
   const { org: activeOrg } = authz;
 
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("organizations")
-    .select("settings")
-    .eq("id", activeOrg.orgId)
-    .maybeSingle();
+  const [{ data, error }, emUso] = await Promise.all([
+    supabase.from("organizations").select("settings").eq("id", activeOrg.orgId).maybeSingle(),
+    // Etiqueta aplicada direto numa conversa (edição avulsa, import, automação)
+    // sem nunca ter sido cadastrada no vocabulário canônico abaixo não aparecia
+    // como opção de filtro — mesmo já estando em uso. `fn_tags_de_conversa_em_uso`
+    // faz a agregação `unnest`+`distinct` que o PostgREST não fala direto.
+    supabase.rpc("fn_tags_de_conversa_em_uso", { p_org: activeOrg.orgId }),
+  ]);
   if (error) return fail("internal_error", error.message, 500, { requestId });
+  if (emUso.error) return fail("internal_error", emUso.error.message, 500, { requestId });
 
   const raw = (data?.settings as Record<string, unknown> | null)?.[
     "canonical_conversation_tags"
   ];
-  const tags = canonicalConversationTagsSchema.parse(raw ?? []);
+  const cadastradas = canonicalConversationTagsSchema.parse(raw ?? []);
+  // Dedupe ANTES de validar de novo: `canonicalConversationTagsSchema` aplica
+  // `.max(50)` sobre o array cru, antes do `.transform` que remove duplicata —
+  // juntar as duas listas sem desduplicar primeiro podia estourar o teto só
+  // de contar a mesma tag duas vezes, e `.catch([])` apagaria as cadastradas
+  // em silêncio.
+  const tags = canonicalConversationTagsSchema.parse([
+    ...new Set([...cadastradas, ...(emUso.data ?? [])]),
+  ]);
   return ok(tags, { requestId });
 }

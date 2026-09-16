@@ -63,6 +63,7 @@ export const POLITICAS_DE_AVISO = {
   // (`ref_kind="contact"`); sem identificação, cai no fallback `geral`
   // — a lista de chamadas continua alcançável.
   voice_call_missed: { refs: ["contact"], orientacao: "O telefone tocou e ninguém atendeu. Confira se vale retornar a chamada.", geral: VOZ },
+  inbound_turn_dead: { refs: ["contact"], orientacao: "Abra o contato e veja a conversa afetada. A IA não conseguiu responder — confira o motivo com quem administra." },
   other: { refs: ["lead", "channel_session", "appointment", "ai_agent"], orientacao: "Confira a situação descrita neste aviso com a pessoa responsável." },
 } satisfies Record<InboxKind, Politica>;
 

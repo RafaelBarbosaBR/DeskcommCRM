@@ -21,7 +21,7 @@ import { render, within } from "@testing-library/react";
 import { badgeVariants } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { valoresDoCheckNoBaseline } from "@/tests/helpers/baseline-check";
-import type { TenantCounts, TenantOrganization } from "@/hooks/useTenantDetail";
+import type { TenantAgentSummary, TenantCounts, TenantOrganization } from "@/hooks/useTenantDetail";
 
 import {
   NUVEMSHOP_LABEL,
@@ -76,6 +76,7 @@ function badgeNuvemshop(status: string | null): HTMLElement {
       organization={ORG}
       counts={COUNTS}
       integrations={{ nuvemshop_status: status, nuvemshop_connected_at: null }}
+      agents={[]}
     />,
   );
   const badge = within(container).getByText("Nuvemshop").nextElementSibling
@@ -144,5 +145,89 @@ describe("TenantOverview — status da Nuvemshop", () => {
     expect(badge).toHaveTextContent("quota_exceeded");
     expect(STATUS_NO_BANCO).not.toContain("quota_exceeded");
     expect(badge.className).not.toBe(classeDaVariante("success"));
+  });
+});
+
+/**
+ * TenantOverview — "qual agente está publicado" (item novo do painel de
+ * plataforma). Antes não existia NENHUMA tela de admin mostrando isso: o único
+ * jeito de saber qual modelo um tenant tinha em produção era consultar o banco
+ * direto.
+ */
+describe("TenantOverview — agentes de IA", () => {
+  function renderComAgentes(agents: TenantAgentSummary[]) {
+    return render(
+      <TenantOverview
+        organization={ORG}
+        counts={COUNTS}
+        integrations={{ nuvemshop_status: null, nuvemshop_connected_at: null }}
+        agents={agents}
+      />,
+    );
+  }
+
+  it("⭐ agente publicado mostra 'Publicado' e o modelo da VERSÃO, não o rascunho", () => {
+    const { getByText } = renderComAgentes([
+      {
+        id: "a1",
+        name: "SDR",
+        kind: "mcp_agent",
+        status: "no_ar",
+        model: "openai/gpt-5.6-terra",
+        version_number: 3,
+        published_at: "2026-09-10T12:00:00.000Z",
+      },
+    ]);
+    expect(getByText("Publicado")).toBeInTheDocument();
+    expect(getByText("openai/gpt-5.6-terra")).toBeInTheDocument();
+    expect(getByText("v3")).toBeInTheDocument();
+  });
+
+  it("agente sem publicação mostra 'Rascunho' e NÃO mostra modelo/versão", () => {
+    const { getByText, queryByText } = renderComAgentes([
+      {
+        id: "a2",
+        name: "Atendimento",
+        kind: "rag_bot",
+        status: "parado",
+        model: "openai/gpt-5.6-terra",
+        version_number: null,
+        published_at: null,
+      },
+    ]);
+    expect(getByText("Rascunho")).toBeInTheDocument();
+    // O modelo do RASCUNHO não é o que responde ao cliente — mostrá-lo junto de
+    // "Rascunho" faria o admin achar que aquele modelo está em produção.
+    expect(queryByText("openai/gpt-5.6-terra")).not.toBeInTheDocument();
+  });
+
+  it("sem nenhum agente, mostra o estado vazio explícito", () => {
+    const { getByText } = renderComAgentes([]);
+    expect(getByText("Nenhum agente cadastrado.")).toBeInTheDocument();
+  });
+
+  it("vários agentes: cada um com seu próprio nome e status", () => {
+    const { getByText } = renderComAgentes([
+      {
+        id: "a1",
+        name: "SDR",
+        kind: "mcp_agent",
+        status: "no_ar",
+        model: "openai/gpt-5.6-terra",
+        version_number: 1,
+        published_at: "2026-09-01T00:00:00.000Z",
+      },
+      {
+        id: "a2",
+        name: "Suporte",
+        kind: "mcp_agent",
+        status: "parado",
+        model: "openai/gpt-5.6-terra",
+        version_number: null,
+        published_at: null,
+      },
+    ]);
+    expect(getByText("SDR")).toBeInTheDocument();
+    expect(getByText("Suporte")).toBeInTheDocument();
   });
 });

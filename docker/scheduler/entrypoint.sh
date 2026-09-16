@@ -87,7 +87,18 @@ CRONS="
 # antes em avisar entre 30 e 45 minutos antes. Barato: só olha compromisso
 # confirmado, futuro e ainda não avisado.
 */5 * * * *|45|api/v1/cron/agenda-reminder
+# O PEDIDO QUE NINGUÉM CONFIRMOU. A cada 15 minutos: o prazo é em HORAS (mínimo
+# 1h), então uma varredura de 5 em 5 seria caro sem ganhar precisão nenhuma —
+# um pedido vencido às 14:03 e examinado às 14:15 não fez o cliente esperar
+# mais do que a antecedência do próprio prazo já previa.
+*/15 * * * *|60|api/v1/cron/agenda-pending-expirer
 */15 * * * *|60|api/v1/cron/risk-watcher
+# O ANIVERSÁRIO. De hora em hora porque "9h" só quer dizer alguma coisa NO
+# FUSO de quem recebe — uma varredura diária em UTC fixo acertaria 9h para
+# UMA organização só e mandaria de madrugada (ou no dia errado) para o resto.
+# Barato: só examina organização cujo relógio marca 9h agora, e só emite o
+# gatilho — quem decide o que fazer é a automation_rule da organização.
+0 * * * *|60|api/v1/cron/contact-birthdays
 */30 * * * *|60|api/v1/cron/contact-phones
 17 * * * *|60|api/v1/cron/contact-proposals-watcher
 0 12 * * *|60|api/v1/cron/lgpd-sla-watcher

@@ -83,6 +83,14 @@ const marcarSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   notes: z.string().max(2000).optional(),
   guest_email: emailDoConvidado.optional(),
+  /**
+   * Onda 4.2 — "Outro horário". A `despachar` abaixo já resolve `ctx.actor`
+   * como `{ type: "user", id }` sempre (esta rota nunca é a IA nem um token —
+   * é `lib/mcp/tools/agendamento.ts` quem atende esse caminho, com o SEU
+   * próprio schema, que não tem este campo). O gate de verdade mora no
+   * handler (`exigeHorarioLivre`); este campo só CARREGA o pedido.
+   */
+  fora_da_grade: z.boolean().optional(),
 });
 
 const alterarSchema = z
@@ -100,6 +108,8 @@ const alterarSchema = z
     status: z.enum(["confirmed", "completed", "no_show"]).optional(),
     notes: z.string().max(2000).optional(),
     guest_email: emailDoConvidado.optional(),
+    /** Onda 4.2 — igual ao de `marcarSchema`: só se aplica quando `starts_at` remarca. */
+    fora_da_grade: z.boolean().optional(),
   })
   .refine(
     (c) =>

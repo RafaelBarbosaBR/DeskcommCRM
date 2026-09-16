@@ -1,6 +1,6 @@
 /**
  * Zod schemas for webhook-sources e automation-rules (feature Webhooks, Task 12).
- * TRIGGER_EVENTS deve espelhar exatamente os 5 eventos que o motor
+ * TRIGGER_EVENTS deve espelhar exatamente os eventos que o motor
  * (`lib/automation/engine.ts` → EXPECTED_ENTITY_KIND) reconhece.
  */
 import { z } from "zod";
@@ -11,6 +11,13 @@ export const TRIGGER_EVENTS = [
   "message.received",
   "lead.tag_added",
   "contact.tag_added",
+  // Onda 4.1 — ver `eventoDeAutomacaoDaTransicao` em lib/agenda/laco.ts.
+  "agenda.appointment_scheduled",
+  "agenda.appointment_confirmed",
+  "agenda.appointment_rescheduled",
+  "agenda.appointment_cancelled",
+  // Onda 4.4 — ver app/api/v1/cron/contact-birthdays/route.ts.
+  "contact.birthday",
 ] as const;
 
 export const conditionSchema = z.object({

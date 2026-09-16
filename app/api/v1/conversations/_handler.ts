@@ -33,6 +33,41 @@ export function termoSeguroParaOr(bruto: string): string {
     .replace(/[,()]/g, "*");
 }
 
+/**
+ * "Paulo Jr" não achava "Paulo Lima Jr" — o termo inteiro precisava aparecer
+ * CONTÍGUO no campo (`ilike.*Paulo Jr*`), e "Lima" no meio quebra isso. Um
+ * atendente que digita nome e sobrenome parcial (ou "Sobrenome; Nome",
+ * separador duplicado, etc.) esperava "tem as duas partes em algum lugar",
+ * não "tem a frase exata".
+ *
+ * Tokeniza por espaço/vírgula/ponto-e-vírgula (um ou mais seguidos contam
+ * como UM separador — "Paulo,,  Jr" não vira token vazio no meio) e cada
+ * token passa pelo MESMO escape de `termoSeguroParaOr`, individualmente: o
+ * split já resolveu a vírgula/parênteses de dentro de um token, mas um token
+ * ainda pode conter `%`/`_` que precisam do escape do `ilike`.
+ *
+ * Exportada pelo mesmo motivo de `termoSeguroParaOr`: o defeito é de forma
+ * dos tokens, verificável sem banco.
+ */
+export function tokenizarTermoDeBusca(bruto: string): string[] {
+  return bruto
+    .trim()
+    .split(/[\s,;]+/)
+    .map((tok) => termoSeguroParaOr(tok))
+    .filter((tok) => tok.length > 0);
+}
+
+/**
+ * `and(campo.ilike.*tok1*,campo.ilike.*tok2*,…)` — TODOS os tokens precisam
+ * aparecer no MESMO campo, em qualquer ordem, em qualquer posição. Usado
+ * dentro de um `or=` maior (ver o cabeçalho de `termoSeguroParaOr` sobre a
+ * gramática do PostgREST) — por isso devolve o grupo `and(...)` pronto para
+ * entrar numa lista separada por vírgula, nunca a string final sozinha.
+ */
+function grupoComTodosOsTokens(campo: string, tokens: readonly string[]): string {
+  return `and(${tokens.map((tok) => `${campo}.ilike.*${tok}*`).join(",")})`;
+}
+
 type SB = SupabaseClient;
 
 /**
@@ -188,6 +223,10 @@ export async function listConversationsHandler(
   }
   if (q.channel_session_id) query = query.eq("channel_session_id", q.channel_session_id);
   if (q.tag) query = query.contains("tags", [q.tag]); // tags @> array[tag] (GIN)
+  // Antes só filtrava a PÁGINA JÁ CARREGADA no cliente — ver o comentário do
+  // schema (`lib/schemas/messaging.ts`). Filtrado aqui, o cursor de paginação
+  // passa a valer sobre o recorte "só não lidas", não sobre a lista inteira.
+  if (q.only_unread) query = query.gt("unread_count_for_assignee", 0);
 
   if (q.assigned_to === "me") {
     if (ctx.actor.type !== "user") {
@@ -206,7 +245,13 @@ export async function listConversationsHandler(
     query = query.eq("assigned_to_user_id", q.assigned_to);
   }
 
-  if (q.search) {
+  // Tokeniza ANTES do gate: um termo só de separadores (",,,", espaços) é
+  // truthy em `q.search` mas vira lista VAZIA de tokens — `and()` sem
+  // argumento nenhum é sintaxe inválida no PostgREST. Sem esta checagem, um
+  // atendente que colasse só pontuação derrubava a busca com 400 em vez de
+  // ver a lista completa (o mesmo comportamento de "sem termo nenhum").
+  const tokensDaBusca = q.search ? tokenizarTermoDeBusca(q.search) : [];
+  if (q.search && tokensDaBusca.length > 0) {
     // ─── O TERMO NÃO PODE QUEBRAR A SINTAXE DO `.or()` ────────────────────
     //
     // Dois escapes diferentes, para dois parsers diferentes, e eles NÃO se
@@ -245,6 +290,9 @@ export async function listConversationsHandler(
     // O controle que impede o degenerado está no teste: termo inexistente
     // continua devolvendo ZERO. Sem ele, "troque tudo por `*`" passaria.
     const s = termoSeguroParaOr(q.search);
+    // "Paulo Jr" ~ "Paulo Lima Jr": cada palavra digitada precisa aparecer no
+    // campo, mas não mais CONTÍGUA — ver o cabeçalho de `tokenizarTermoDeBusca`.
+    const tokens = tokensDaBusca;
 
     // ─── A BUSCA ALCANÇA O CONTATO, NÃO SÓ A ÚLTIMA MENSAGEM ──────────────
     //
@@ -263,8 +311,8 @@ export async function listConversationsHandler(
     const pareceTelefone = somenteDigitos.length >= 4;
 
     const camposDoContato = [
-      `display_name.ilike.*${s}*`,
-      `name.ilike.*${s}*`,
+      grupoComTodosOsTokens("display_name", tokens),
+      grupoComTodosOsTokens("name", tokens),
       ...(pareceTelefone ? [`phone_number.ilike.*${somenteDigitos}*`] : []),
     ].join(",");
 
@@ -303,12 +351,18 @@ export async function listConversationsHandler(
     );
     if (ids.length > 0) {
       query = query.or(
-        `last_message_preview.ilike.*${s}*,contact_id.in.(${ids.join(",")})`,
+        `${grupoComTodosOsTokens("last_message_preview", tokens)},contact_id.in.(${ids.join(",")})`,
       );
     } else {
       // Sem ids casados, um `contact_id.in.()` vazio é SQL inválido no
       // PostgREST — a busca por conteúdo segue sozinha, como antes.
-      query = query.ilike("last_message_preview", `%${s}%`);
+      //
+      // `.ilike()` ENCADEADO, não `.or()`: cada chamada é um filtro próprio, e
+      // filtros do fluent builder do PostgREST se combinam com AND por
+      // padrão — o mesmo resultado do `and(...)` acima, sem montar string.
+      for (const tok of tokens) {
+        query = query.ilike("last_message_preview", `%${tok}%`);
+      }
     }
   }
 

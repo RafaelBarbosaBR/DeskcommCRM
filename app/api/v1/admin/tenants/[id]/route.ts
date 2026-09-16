@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { ok, fail } from "@/lib/api/wrappers";
 import { audit } from "@/lib/audit";
 import { randomUUID } from "node:crypto";
+import { estadoDoAgente } from "@/lib/ai/agents/no-ar";
 
 // ---------------------------------------------------------------------------
 // GET /api/v1/admin/tenants/[id]
@@ -60,6 +61,7 @@ export async function GET(
     aiRes,
     wahaRes,
     integrationRes,
+    agentsRes,
   ] = await Promise.all([
     admin
       .from("user_organizations")
@@ -118,6 +120,15 @@ export async function GET(
       .eq("organization_id", id)
       .eq("provider", "nuvemshop")
       .limit(1),
+    // Arquivado sai da lista de propósito: quem quer ver o que já foi
+    // desligado usa a tela de agentes do próprio tenant, não o painel de
+    // plataforma — aqui a pergunta é "o que está rodando/configurado agora".
+    admin
+      .from("ai_agents")
+      .select("id, name, kind, is_active, paused_at, archived_at, published_version_id, model")
+      .eq("organization_id", id)
+      .is("archived_at", null)
+      .order("created_at", { ascending: true }),
   ]);
 
   const counts = {
@@ -143,6 +154,38 @@ export async function GET(
     nuvemshop_connected_at: nuvemshopIntegration?.created_at ?? null,
   };
 
+  // A versão PUBLICADA é a segunda leitura: `ai_agents.model` é o rascunho, que
+  // pode ter sido editado depois da última publicação — o modelo REALMENTE em
+  // produção mora em `ai_agent_versions`. Sem esta segunda consulta, um agente
+  // editado-mas-não-republicado mostraria um modelo que o cliente nunca recebeu.
+  const agentRows = agentsRes.data ?? [];
+  const publishedVersionIds = agentRows
+    .map((a) => a.published_version_id)
+    .filter((v): v is string => v != null);
+  const { data: versionRows } =
+    publishedVersionIds.length > 0
+      ? await admin
+          .from("ai_agent_versions")
+          .select("id, model, version_number, published_at")
+          .in("id", publishedVersionIds)
+      : { data: [] as Array<{ id: string; model: string; version_number: number; published_at: string | null }> };
+  const versaoPorId = new Map((versionRows ?? []).map((v) => [v.id, v]));
+
+  const agents = agentRows.map((a) => {
+    const versao = a.published_version_id ? versaoPorId.get(a.published_version_id) : undefined;
+    return {
+      id: a.id,
+      name: a.name,
+      kind: a.kind,
+      // Reusa a MESMA régua de "está no ar" do resto do produto
+      // (`lib/ai/agents/no-ar.ts`) — não uma quarta cópia da condição.
+      status: estadoDoAgente(a),
+      model: versao?.model ?? a.model,
+      version_number: versao?.version_number ?? null,
+      published_at: versao?.published_at ?? null,
+    };
+  });
+
   // Audit lightweight — fire-and-forget
   void audit({
     action: "platform_admin.tenant_viewed",
@@ -156,5 +199,5 @@ export async function GET(
     metadata: { tenant_slug: org.slug },
   });
 
-  return ok({ organization: org, counts, integrations }, { requestId });
+  return ok({ organization: org, counts, integrations, agents }, { requestId });
 }

@@ -27,6 +27,7 @@ import { horariosLivresDaOrg } from "@/lib/agenda/consulta";
 import {
   atividadeDaTransicao,
   autorParaTimeline,
+  eventoDeAutomacaoDaTransicao,
   type SituacaoAnterior,
   type Transicao,
 } from "@/lib/agenda/laco";
@@ -68,6 +69,12 @@ export interface MarcarInput {
    * pessoa. Quem transforma isto em convite do Google é o worker de push.
    */
   guest_email?: string;
+  /**
+   * Onda 4.2 — "Outro horário": pede o encaixe fora da grade. Só tem efeito
+   * quando `ctx.actor.type === "user"` (ver `exigeHorarioLivre`) — a IA e
+   * qualquer token continuam presos à grade, mesmo mandando este campo.
+   */
+  fora_da_grade?: boolean;
 }
 
 export interface AlterarInput {
@@ -80,6 +87,8 @@ export interface AlterarInput {
   notes?: string;
   /** Igual ao de `MarcarInput`: `""` desconvida, ausente não mexe. */
   guest_email?: string;
+  /** Igual ao de `MarcarInput` — remarcar (`starts_at`) fora da grade. */
+  fora_da_grade?: boolean;
 }
 
 export interface CancelarInput {
@@ -161,6 +170,7 @@ export async function marcarAgendamentoHandler(
     donoId,
     inicio,
     fim,
+    foraDaGrade: input.fora_da_grade,
   });
 
   const booking = tipo.location_kind === "google_meet" ? ctx.meetingBooking : undefined;
@@ -207,6 +217,7 @@ export async function marcarAgendamentoHandler(
     appointmentId: criado.id,
     contactId: input.contact_id ?? null,
     atividade: atividadeDaTransicao(null, transicao),
+    eventoDeAutomacao: eventoDeAutomacaoDaTransicao(null, transicao),
     transicao,
     fusoDoCompromisso: criado.time_zone,
     nomeDoTipo: tipo.name,
@@ -305,6 +316,7 @@ export async function alterarAgendamentoHandler(
         donoId: atual.owner_user_id as string,
         inicio: novoInicio,
         fim: novoFim,
+        foraDaGrade: input.fora_da_grade,
       });
       mudanca.starts_at = novoInicio.toISOString();
       mudanca.ends_at = novoFim.toISOString();
@@ -361,6 +373,7 @@ export async function alterarAgendamentoHandler(
       appointmentId: atual.id as string,
       contactId: (atual.contact_id as string | null) ?? null,
       atividade: atividadeDaTransicao(atual.status as SituacaoAnterior, transicao),
+      eventoDeAutomacao: eventoDeAutomacaoDaTransicao(atual.status as SituacaoAnterior, transicao),
       transicao,
       fusoDoCompromisso: String(salvo.time_zone),
       nomeDoTipo: "Agendamento",
@@ -417,6 +430,7 @@ export async function cancelarAgendamentoHandler(
     appointmentId: atual.id as string,
     contactId: (atual.contact_id as string | null) ?? null,
     atividade: atividadeDaTransicao(atual.status as SituacaoAnterior, "cancelled"),
+    eventoDeAutomacao: eventoDeAutomacaoDaTransicao(atual.status as SituacaoAnterior, "cancelled"),
     transicao: "cancelled",
     fusoDoCompromisso: atual.time_zone as string,
     nomeDoTipo: "Agendamento",
@@ -463,11 +477,23 @@ async function exigeAgendamento(
  * primeiro ajuste: se a regra do que OCUPA mudar, uma muda e a outra não — e aí
  * a tela oferece horário que a escrita recusa, ou a escrita aceita um que a tela
  * não ofereceu e alguém chega numa hora que já tinha dono.
+ *
+ * ─── Onda 4.2 — o encaixe fora da grade ────────────────────────────────────
+ *
+ * `args.foraDaGrade` só tem efeito quando `ctx.actor.type === "user"` — a
+ * checagem mora AQUI, no handler compartilhado, e não só no schema da rota:
+ * a ferramenta MCP chama esta mesma função, e um futuro dev copiando o padrão
+ * do schema HTTP para a tool não teria como reabrir a porta para a IA sem
+ * também mudar este `if`. Fora disso, o comportamento de sempre — bater na
+ * grade — continua intacto; só o instante bate ou não bate exatamente num
+ * múltiplo publicado. O CONFLITO com outro compromisso ou evento do Google
+ * NÃO relaxa: `consulta.conflitaComOcupado` é o MESMO mecanismo que a grade já
+ * usa para descartar um slot, só que aplicado ao instante pedido.
  */
 async function exigeHorarioLivre(
   supabase: SB,
   ctx: HandlerCtx,
-  args: { eventTypeId: string; donoId: string; inicio: Date; fim: Date },
+  args: { eventTypeId: string; donoId: string; inicio: Date; fim: Date; foraDaGrade?: boolean },
 ): Promise<{ fusoDaRegra: string }> {
   const consulta = await horariosLivresDaOrg(supabase, ctx.organization_id, {
     eventTypeId: args.eventTypeId,
@@ -490,7 +516,21 @@ async function exigeHorarioLivre(
       "Este responsável ainda não publicou horários de atendimento.",
     );
   }
-  if (!consulta.slots.some((s) => s.inicio.getTime() === args.inicio.getTime())) {
+  const bateNaGrade = consulta.slots.some((s) => s.inicio.getTime() === args.inicio.getTime());
+  const podeForaDaGrade = ctx.actor.type === "user" && args.foraDaGrade === true;
+  if (!bateNaGrade && podeForaDaGrade) {
+    if (consulta.conflitaComOcupado(args.inicio, args.fim)) {
+      throw new ApiError(
+        409,
+        "agenda_horario_conflita",
+        undefined,
+        ctx.requestId,
+        "Este responsável já tem outro compromisso (ou evento do Google) nesse horário.",
+      );
+    }
+    return { fusoDaRegra: consulta.fusoDaRegra };
+  }
+  if (!bateNaGrade) {
     throw new ApiError(
       422,
       "agenda_horario_indisponivel",
@@ -526,6 +566,7 @@ async function fecharOLaco(
     appointmentId: string;
     contactId: string | null;
     atividade: string | null;
+    eventoDeAutomacao: string | null;
     transicao: Transicao;
     fusoDoCompromisso: string;
     nomeDoTipo: string;
@@ -554,6 +595,35 @@ async function fecharOLaco(
         error: err instanceof Error ? err.message : String(err),
       });
     });
+
+    // O GATILHO DE AUTOMAÇÃO — MESMO local do mirror de estágio, pela MESMA
+    // razão: `eventoDeAutomacao` pode existir quando `atividade` é `null`
+    // (confirmar um pendente), e um early-return antes disto perderia
+    // exatamente a transição que uma regra de "avisar cliente que confirmou"
+    // mais quer escutar. `entity_kind: "crm_lead"` reusa a hidratação de
+    // lead/contato que `buildContext` (lib/automation/engine.ts) já sabe fazer
+    // — nenhum consumidor novo para o motor entender.
+    if (args.eventoDeAutomacao) {
+      const { error } = await supabase.rpc("emit_event", {
+        p_event_type: args.eventoDeAutomacao,
+        p_entity_kind: "crm_lead",
+        p_entity_id: leadId,
+        p_payload: {
+          appointment_id: args.appointmentId,
+          contact_id: args.contactId,
+          event_type_name: args.nomeDoTipo,
+        },
+        p_organization_id: ctx.organization_id,
+      });
+      if (error) {
+        logger.warn("[agenda] não consegui emitir o evento de automação", {
+          appointment_id: args.appointmentId,
+          organization_id: ctx.organization_id,
+          evento: args.eventoDeAutomacao,
+          error: error.message,
+        });
+      }
+    }
   }
 
   if (!args.atividade) return;

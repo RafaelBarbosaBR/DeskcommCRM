@@ -5,6 +5,7 @@ import type { ToolSet } from '../edge/llm/run-model-call';
 import type { LeadContext, LeadContextResult } from '../edge/crm/get-lead-context';
 import type { PublishedAgentConfig } from './agent-config';
 import type { LeadCheckpointRow } from './inbound-turn';
+import { agendaAtiva } from './agenda-tools';
 import {
   evaluateBeforeSend,
   type GateContext,
@@ -117,7 +118,7 @@ export async function previewGateContext(
         : false,
     openedCaseThisTurn: false,
     humanPromiseExtraTargets: p.agent.handoffKeywords,
-    agenda: { active: p.agent.toolIds.includes('crm_book_appointment'), toolCalledThisTurn: false },
+    agenda: { active: agendaAtiva(p.agent.toolIds), toolCalledThisTurn: false },
     internalVocabularyEnforced: true,
   };
 }

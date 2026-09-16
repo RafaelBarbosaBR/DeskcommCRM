@@ -23,7 +23,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { estaNaHora, montarLembrete } from "./route";
+import { comoListaDeMinutos, estaNaHora, montarLembrete, proximoOffsetDevido } from "./route";
 
 const MIN = 60_000;
 
@@ -60,6 +60,52 @@ describe("estaNaHora", () => {
     // 30 dias de antecedência (o teto da coluna) com compromisso em 31 dias.
     const comeca = new Date(agora.getTime() + 31 * 24 * 60 * MIN);
     expect(estaNaHora(agora, comeca, 43_200)).toBe(false);
+  });
+});
+
+describe("comoListaDeMinutos", () => {
+  it("mantém só números finitos, descarta lixo do jsonb", () => {
+    expect(comoListaDeMinutos([1440, 60, "60", null, NaN, {}, 15])).toEqual([1440, 60, 15]);
+  });
+  it("qualquer coisa que não seja array vira lista vazia", () => {
+    expect(comoListaDeMinutos(null)).toEqual([]);
+    expect(comoListaDeMinutos(undefined)).toEqual([]);
+    expect(comoListaDeMinutos("60")).toEqual([]);
+  });
+});
+
+describe("proximoOffsetDevido — lembrete múltiplo (migration 0252)", () => {
+  const agora = new Date("2026-08-31T12:00:00Z");
+
+  it("com um único offset configurado, comporta-se como antes (um lembrete só)", () => {
+    const comeca = new Date(agora.getTime() + 59 * MIN);
+    expect(proximoOffsetDevido(agora, comeca, [60], new Set())).toBe(60);
+  });
+
+  it("compromisso em 25h: nem o offset de 24h nem o de 1h estão na hora ainda", () => {
+    const comeca = new Date(agora.getTime() + 25 * 60 * MIN);
+    expect(proximoOffsetDevido(agora, comeca, [1440, 60], new Set())).toBeUndefined();
+  });
+
+  it("compromisso em 30min: manda o de 60min (o único devido), não repete o de 1440 que nunca esteve due", () => {
+    const comeca = new Date(agora.getTime() + 30 * MIN);
+    expect(proximoOffsetDevido(agora, comeca, [1440, 60], new Set([1440]))).toBe(60);
+  });
+
+  it("os dois offsets due na mesma rodada: manda o MAIS ANTECIPADO primeiro (1440, não 60)", () => {
+    // Simula o cron tendo ficado parado: compromisso já dentro da janela dos dois.
+    const comeca = new Date(agora.getTime() + 50 * MIN);
+    expect(proximoOffsetDevido(agora, comeca, [1440, 60], new Set())).toBe(1440);
+  });
+
+  it("já enviados os dois: não manda mais nada (undefined, não repete)", () => {
+    const comeca = new Date(agora.getTime() + 30 * MIN);
+    expect(proximoOffsetDevido(agora, comeca, [1440, 60], new Set([1440, 60]))).toBeUndefined();
+  });
+
+  it("offsets duplicados na configuração não geram duas tentativas", () => {
+    const comeca = new Date(agora.getTime() + 30 * MIN);
+    expect(proximoOffsetDevido(agora, comeca, [60, 60], new Set())).toBe(60);
   });
 });
 

@@ -241,9 +241,20 @@ export const DICIONARIO: Traducoes = {
   "Quando esse prazo acabar, a pendência continua visível. Outro compromisso vivo ainda protege o contato.": { es: "Al vencer este plazo, el pendiente sigue visible. Otra cita vigente sigue protegiendo al contacto." },
   "Salvar prazos": { es: "Guardar plazos" },
   "Prazos salvos.": { es: "Plazos guardados." },
+  "Fechar um dia (feriado, férias)": { es: "Cerrar un día (feriado, vacaciones)" },
+  "Nos dias abaixo, sua agenda não oferece horário nenhum — mesmo que a jornada semanal diga que sim.": {
+    es: "En los días de abajo, tu agenda no ofrece ningún horario — aunque la jornada semanal diga que sí.",
+  },
+  "Data": { es: "Fecha" },
+  "Feriado, férias…": { es: "Feriado, vacaciones…" },
+  "Fechar este dia": { es: "Cerrar este día" },
+  "Nenhum dia fechado.": { es: "Ningún día cerrado." },
   "Buscar cliente": { es: "Buscar cliente" },
   "Quem será atendido": { es: "Quién será atendido" },
   "Compromisso pessoal, sem cliente": { es: "Cita personal, sin cliente" },
+  "Nenhum cliente encontrado com esse nome.": { es: "No se encontró ningún cliente con ese nombre." },
+  "Nome do novo contato": { es: "Nombre del nuevo contacto" },
+  "Telefone do novo contato": { es: "Teléfono del nuevo contacto" },
   "Conversa vinculada (opcional)": { es: "Conversación vinculada (opcional)" },
   "Sem conversa vinculada": { es: "Sin conversación vinculada" },
   "Não foi possível carregar os vínculos. Tente novamente.": { es: "No se pudieron cargar los vínculos. Inténtelo de nuevo." },
@@ -2650,6 +2661,8 @@ export const DICIONARIO: Traducoes = {
   "Solicitações LGPD pendentes": { es: "Solicitudes LGPD pendientes" },
   "Pendências LGPD": { es: "Pendencias LGPD" },
   "Invocações IA (30d)": { es: "Invocaciones IA (30d)" },
+  "Agentes de IA": { es: "Agentes de IA" },
+  "Nenhum agente cadastrado.": { es: "Ningún agente registrado." },
   "Tenant redigido — ação não disponível": { es: "Tenant redactado — acción no disponible" },
   "Suspender tenant": { es: "Suspender tenant" },
   "Reativar tenant": { es: "Reactivar tenant" },
@@ -3332,6 +3345,11 @@ export const DICIONARIO: Traducoes = {
   "Quando chegar mensagem no WhatsApp": { es: "Cuando llegue un mensaje por WhatsApp" },
   "Quando um lead ganhar uma tag": { es: "Cuando un lead reciba una etiqueta" },
   "Quando um contato ganhar uma tag": { es: "Cuando un contacto reciba una etiqueta" },
+  "Quando um horário for marcado": { es: "Cuando se agende un horario" },
+  "Quando um horário pendente for confirmado": { es: "Cuando se confirme un horario pendiente" },
+  "Quando um horário for remarcado": { es: "Cuando se reprograme un horario" },
+  "Quando um horário for cancelado": { es: "Cuando se cancele un horario" },
+  "Quando for o aniversário do contato": { es: "Cuando sea el cumpleaños del contacto" },
   "alterado pelo assistente": { es: "cambiado por el asistente" },
   "alterado automaticamente pelo sistema": { es: "cambiado automáticamente por el sistema" },
   é: { es: "es" },
@@ -6104,6 +6122,12 @@ export const DICIONARIO: Traducoes = {
   "O que se pode marcar, quanto dura e quem atende. É isto que a tela de marcar e o agente de IA oferecem ao cliente.": { es: "Qué se puede agendar, cuánto dura y quién atiende. Esto es lo que la pantalla de agendar y el agente de IA le ofrecen al cliente." },
   "Avisar o cliente antes do compromisso, pelo WhatsApp": { es: "Avisar al cliente antes de la cita, por WhatsApp" },
   "Quantos minutos antes": { es: "Cuántos minutos antes" },
+  "Lembretes extra (opcional, até 3)": { es: "Recordatorios extra (opcional, hasta 3)" },
+  "Prazo para confirmar (horas)": { es: "Plazo para confirmar (horas)" },
+  "Passado esse prazo sem confirmação, o pedido é cancelado sozinho e o horário volta a ficar livre.": {
+    es: "Pasado ese plazo sin confirmación, el pedido se cancela solo y el horario vuelve a quedar libre.",
+  },
+  "Adicionar outro lembrete": { es: "Agregar otro recordatorio" },
   "avisa o cliente": { es: "avisa al cliente" },
   "antes": { es: "antes" },
   "O lembrete precisa sair pelo menos 15 minutos antes do compromisso.": { es: "El recordatorio debe salir al menos 15 minutos antes de la cita." },
@@ -6911,6 +6935,46 @@ export const DICIONARIO: Traducoes = {
   // produto do Google, que muda de idioma — "Google Agenda" em pt-BR é
   // "Google Calendar" em espanhol.
   "Google Agenda": { es: "Google Calendar" },
+  // A porta do App da Meta (Onda 4.3) — mesmo padrão das duas de cima.
+  "App da Meta": { es: "App de Meta" },
+
+  // ─── App da Meta desta instalação (Onda 4.3, app/admin/(protected)/meta-app) ───
+  "App da Meta desta instalação": { es: "App de Meta de esta instalación" },
+  "Com estas duas informações, o canal oficial do WhatsApp (WhatsApp Cloud API) consegue receber mensagem de qualquer organização desta instalação. Elas valem para a instalação inteira — o app é o da PLATAFORMA, não o de um cliente.": {
+    es: "Con estos dos datos, el canal oficial de WhatsApp (WhatsApp Cloud API) consigue recibir mensajes de cualquier organización de esta instalación. Valen para toda la instalación — el app es de la PLATAFORMA, no de un cliente.",
+  },
+  "App Secret": { es: "App Secret" },
+  "Já existe um App Secret em vigor — ": { es: "Ya existe un App Secret vigente — " },
+  ". Deixe em branco para mantê-lo, ou digite um novo para substituir.": {
+    es: ". Déjalo en blanco para mantenerlo, o escribe uno nuevo para reemplazarlo.",
+  },
+  "Ele é guardado cifrado e nunca volta a aparecer nesta tela.": {
+    es: "Se guarda cifrado y nunca vuelve a aparecer en esta pantalla.",
+  },
+  "App Secret salvo.": { es: "App Secret guardado." },
+  "Verify token": { es: "Verify token" },
+  "É o valor que a Meta pede ao configurar o endereço do webhook — cole-o no dashboard dela como \"Verify Token\". Diferente do App Secret, ele só valida esse cadastro inicial; não é usado para assinar mensagens.": {
+    es: "Es el valor que Meta pide al configurar la dirección del webhook — pégalo en su dashboard como \"Verify Token\". A diferencia del App Secret, solo valida ese registro inicial; no se usa para firmar mensajes.",
+  },
+  "Copie agora — ele não vai aparecer de novo nesta tela:": {
+    es: "Cópialo ahora — no volverá a aparecer en esta pantalla:",
+  },
+  "Já existe um verify token em vigor — ": { es: "Ya existe un verify token vigente — " },
+  "Nenhum verify token configurado ainda — o webhook oficial não aceita ser cadastrado na Meta sem ele.": {
+    es: "Todavía no hay ningún verify token configurado — el webhook oficial no puede registrarse en Meta sin él.",
+  },
+  "Verify token gerado.": { es: "Verify token generado." },
+  "Regerar verify token": { es: "Regenerar verify token" },
+  "Gerar verify token": { es: "Generar verify token" },
+  "Regerar invalida o cadastro atual na Meta — depois de gerar um novo, atualize o \"Verify Token\" no dashboard dela também, senão o handshake do webhook passa a falhar.": {
+    es: "Regenerar invalida el registro actual en Meta — después de generar uno nuevo, actualiza el \"Verify Token\" en su dashboard también, o el handshake del webhook empezará a fallar.",
+  },
+  "cadastrado por aqui": { es: "registrado por aquí" },
+  "vindo do arquivo de configuração do servidor (.env)": {
+    es: "proveniente del archivo de configuración del servidor (.env)",
+  },
+  "não configurado": { es: "no configurado" },
+  "Última alteração em": { es: "Último cambio el" },
 
   // ─── Acervo de conhecimento da 1.8.0 (PR #354) — telas novas do merge ───
   //
@@ -7093,6 +7157,11 @@ export const DICIONARIO: Traducoes = {
   "nenhum horário livre neste dia": { es: "ningún horario libre en este día" },
   "Marcar outro": { es: "Agendar otro" },
   "Ver na agenda": { es: "Ver en la agenda" },
+  "Fora da grade publicada — encaixe manual.": {
+    es: "Fuera de la grilla publicada — encaje manual.",
+  },
+  "Outro horário…": { es: "Otro horario…" },
+  "Usar este horário": { es: "Usar este horario" },
   "horários": { es: "horarios" },
   "Carregando a agenda": { es: "Cargando la agenda" },
 
@@ -8200,6 +8269,14 @@ export const DICIONARIO: Traducoes = {
   },
   "Uma chamada de voz tocou e ninguém atendeu": { es: "Sonó una llamada de voz y nadie atendió" },
   "Ver chamadas de voz": { es: "Ver llamadas de voz" },
+
+  // ─── migration 0256 — job inbound_turn morto ganha kind próprio (lib/ai/agent-inbox-copy.ts, lib/ai/inbox-destino.ts) ───
+  "A IA deixou de responder uma mensagem de cliente": {
+    es: "La IA dejó de responder un mensaje de cliente",
+  },
+  "Abra o contato e veja a conversa afetada. A IA não conseguiu responder — confira o motivo com quem administra.": {
+    es: "Abre el contacto y revisa la conversación afectada. La IA no pudo responder — confirma el motivo con quien administra.",
+  },
   "Chamada de voz pelo WhatsApp": { es: "Llamada de voz por WhatsApp" },
   "Liga a chamada de voz pelo número conectado (pareamento próprio, separado do WhatsApp de mensagens). É uma integração com um serviço de terceiro, ligada aqui de forma explícita.": {
     es: "Activa la llamada de voz por el número conectado (emparejamiento propio, separado del WhatsApp de mensajes). Es una integración con un servicio de terceros, activada aquí de forma explícita.",

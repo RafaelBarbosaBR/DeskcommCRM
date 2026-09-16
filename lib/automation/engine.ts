@@ -30,6 +30,18 @@ const EXPECTED_ENTITY_KIND: Record<string, string> = {
   "lead.tag_added": "crm_lead",
   "contact.tag_added": "contact",
   "message.received": "message",
+  // Emitidos por `fecharOLaco` (app/api/v1/agenda/agendamentos/_handler.ts) —
+  // ver `eventoDeAutomacaoDaTransicao` em lib/agenda/laco.ts. Sempre ancorados
+  // no NEGÓCIO do contato, nunca no compromisso: é o que reusa a hidratação de
+  // `context.lead`/`context.contact` já existente, sem consumidor novo aqui.
+  "agenda.appointment_scheduled": "crm_lead",
+  "agenda.appointment_confirmed": "crm_lead",
+  "agenda.appointment_rescheduled": "crm_lead",
+  "agenda.appointment_cancelled": "crm_lead",
+  // Emitido por app/api/v1/cron/contact-birthdays/route.ts — ancorado no
+  // CONTATO (não há negócio envolvido necessariamente), reusando a mesma
+  // hidratação de `context.contact` que "contact.tag_added" já usa.
+  "contact.birthday": "contact",
 };
 
 interface RuleRow {

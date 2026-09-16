@@ -63,7 +63,11 @@ export function InboxFilters({ value, onChange }: Props) {
   const { data: channels } = useChannelSessions({ refetchInterval: 30_000 });
   const { activeOrg } = useAuth();
   const { data: tagVocabulary } = useConversationTagVocabulary(activeOrg?.orgId ?? null);
-  const { data: counts } = useConversationCounts(activeOrg?.orgId ?? null);
+  const { data: counts } = useConversationCounts(activeOrg?.orgId ?? null, {
+    channel_session_id: value.channel_session_id,
+    tag: value.tag,
+    onlyUnread: value.onlyUnread,
+  });
 
   const tabs = activeOrg
     ? visibleInboxTabs(activeOrg.role, activeOrg.visibility_mode)
@@ -80,6 +84,7 @@ export function InboxFilters({ value, onChange }: Props) {
     ai: counts?.automatico,
     mine: counts?.mine,
     all: counts?.all,
+    closed: counts?.closed,
   };
   // Filtrar por um número que saiu da lista (o operador acabou de excluir o
   // canal) deixa o inbox mostrando um subconjunto — às vezes vazio — sem nada na

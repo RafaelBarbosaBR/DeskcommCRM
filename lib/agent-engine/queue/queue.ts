@@ -313,20 +313,37 @@ export async function failJob(
        where id = $1 and status = 'running' and locked_by = $2 and ($4::timestamptz is null or locked_at=$4)
        returning *
      ),
+     -- Onda 4.6: inbound_turn morto ganha kind e título PRÓPRIOS — "uma
+     -- tarefa falhou" não diz ao dono do negócio que a IA parou de responder
+     -- um CLIENTE, que é urgência de outra ordem. not exists: no máximo um
+     -- aviso aberto por (organização, kind) — sem isso, um provedor fora do
+     -- ar por uma hora abriria um crítico POR MENSAGEM perdida.
      alert as (
        insert into agent_inbox_items (organization_id, kind, severity, title, body, ref_kind, ref_id)
-       select organization_id, 'job_dead', 'critical',
-              'Job descartado após esgotar tentativas',
-              -- O erro que matou o job vai JUNTO. Antes o corpo era só
-              -- 'kind=...; attempts=5' e jogava fora a única informação que
-              -- resolveria: o aviso existia, e não dizia nada. Caso real desta
-              -- VPS: 16 alertas críticos idênticos enquanto o erro guardado em
-              -- last_error dizia exatamente o que configurar.
-              'kind=' || kind || '; attempts=' || attempts
-                || coalesce(chr(10) || 'Motivo: ' || left(last_error, 400), ''),
-              'job_queue', id
+       select
+         updated.organization_id,
+         case when updated.kind = 'inbound_turn' then 'inbound_turn_dead' else 'job_dead' end,
+         'critical',
+         case when updated.kind = 'inbound_turn'
+              then 'A IA deixou de responder uma mensagem de cliente'
+              else 'Job descartado após esgotar tentativas' end,
+         -- O erro que matou o job vai JUNTO. Antes o corpo era só
+         -- 'kind=...; attempts=5' e jogava fora a única informação que
+         -- resolveria: o aviso existia, e não dizia nada. Caso real desta
+         -- VPS: 16 alertas críticos idênticos enquanto o erro guardado em
+         -- last_error dizia exatamente o que configurar.
+         'kind=' || updated.kind || '; attempts=' || updated.attempts
+           || coalesce(chr(10) || 'Motivo: ' || left(updated.last_error, 400), ''),
+         case when updated.kind = 'inbound_turn' and updated.contact_id is not null then 'contact' else 'job_queue' end,
+         case when updated.kind = 'inbound_turn' and updated.contact_id is not null then updated.contact_id else updated.id end
        from updated
-       where status = 'dead'
+       where updated.status = 'dead'
+         and not exists (
+           select 1 from agent_inbox_items existente
+            where existente.organization_id is not distinct from updated.organization_id
+              and existente.kind = case when updated.kind = 'inbound_turn' then 'inbound_turn_dead' else 'job_dead' end
+              and existente.status = 'open'
+         )
      )
      select * from updated`,
     [jobId, workerId, normalizeError(error), acquiredAt ?? null],
@@ -409,23 +426,39 @@ export async function reapExpiredJobs(
        -- last_error PRECISA sair no returning: a CTE do alerta abaixo só
        -- enxerga as colunas devolvidas aqui, não as da tabela. Faltando ela, a
        -- query inteira morre com "column last_error does not exist" — e como
-       -- este reap roda no BOOT do worker, o worker não subia.
-       returning id, organization_id, kind, attempts, status, last_error
+       -- este reap roda no BOOT do worker, o worker não subia. contact_id
+       -- entrou pela mesma razão, na Onda 4.6: é o que permite o alerta de
+       -- inbound_turn morto apontar para o contato, em vez de para o job.
+       returning id, organization_id, contact_id, kind, attempts, status, last_error
      ),
+     -- Onda 4.6: mesmo desenho de failJob — inbound_turn ganha kind e
+     -- título próprios, e o not exists capa em um aberto por (org, kind).
      alert as (
        insert into agent_inbox_items (organization_id, kind, severity, title, body, ref_kind, ref_id)
-       select organization_id, 'job_dead', 'critical',
-              'Job descartado após esgotar tentativas',
-              -- O erro que matou o job vai JUNTO. Antes o corpo era só
-              -- 'kind=...; attempts=5' e jogava fora a única informação que
-              -- resolveria: o aviso existia, e não dizia nada. Caso real desta
-              -- VPS: 16 alertas críticos idênticos enquanto o erro guardado em
-              -- last_error dizia exatamente o que configurar.
-              'kind=' || kind || '; attempts=' || attempts
-                || coalesce(chr(10) || 'Motivo: ' || left(last_error, 400), ''),
-              'job_queue', id
+       select
+         expired.organization_id,
+         case when expired.kind = 'inbound_turn' then 'inbound_turn_dead' else 'job_dead' end,
+         'critical',
+         case when expired.kind = 'inbound_turn'
+              then 'A IA deixou de responder uma mensagem de cliente'
+              else 'Job descartado após esgotar tentativas' end,
+         -- O erro que matou o job vai JUNTO. Antes o corpo era só
+         -- 'kind=...; attempts=5' e jogava fora a única informação que
+         -- resolveria: o aviso existia, e não dizia nada. Caso real desta
+         -- VPS: 16 alertas críticos idênticos enquanto o erro guardado em
+         -- last_error dizia exatamente o que configurar.
+         'kind=' || expired.kind || '; attempts=' || expired.attempts
+           || coalesce(chr(10) || 'Motivo: ' || left(expired.last_error, 400), ''),
+         case when expired.kind = 'inbound_turn' and expired.contact_id is not null then 'contact' else 'job_queue' end,
+         case when expired.kind = 'inbound_turn' and expired.contact_id is not null then expired.contact_id else expired.id end
        from expired
-       where status = 'dead'
+       where expired.status = 'dead'
+         and not exists (
+           select 1 from agent_inbox_items existente
+            where existente.organization_id is not distinct from expired.organization_id
+              and existente.kind = case when expired.kind = 'inbound_turn' then 'inbound_turn_dead' else 'job_dead' end
+              and existente.status = 'open'
+         )
      )
      select id, status from expired`,
     [opts.visibilityTimeoutMs],

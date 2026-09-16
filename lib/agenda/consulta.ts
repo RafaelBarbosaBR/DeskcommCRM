@@ -36,7 +36,7 @@ import { googleRpc } from "./google/sync-store";
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { horariosLivres, type ExcecaoDeData, type Slot } from "./horarios-livres";
+import { conflitaComOcupado, horariosLivres, type ExcecaoDeData, type Slot } from "./horarios-livres";
 import { lerJornadaDoBanco } from "./jornada";
 import {
   agendaExternaNuncaLida,
@@ -99,6 +99,13 @@ export type ResultadoDaConsulta =
        */
       agendaExternaNuncaLida: boolean;
       googleCoberturaParcial: boolean;
+      /**
+       * Onda 4.2 — o encaixe fora da grade. `ocupados` (compromissos + Google) e
+       * o buffer do tipo JÁ estão fechados sobre esta closure: quem chama não
+       * recebe os números crus, só a resposta — o mesmo mecanismo que a grade
+       * usa para descartar um slot, aplicado a um instante arbitrário.
+       */
+      conflitaComOcupado: (inicio: Date, fim: Date) => boolean;
     }
   | {
       ok: false;
@@ -315,6 +322,11 @@ export async function horariosLivresDaOrg(
     fusoSuposto: leitura.fusoSuposto,
     fontesDefasadas,
     agendaExternaNuncaLida: agendaExternaNuncaLida(conexoesRaw ?? []),
+    conflitaComOcupado: (inicio, fim) =>
+      conflitaComOcupado(inicio, fim, ocupados, {
+        antesMin: tipo.buffer_before_minutes,
+        depoisMin: tipo.buffer_after_minutes,
+      }),
   };
 }
 
@@ -637,6 +649,16 @@ export interface TipoDeAtendimento {
    */
   lembreteLigado: boolean;
   lembreteAntecedenciaMin: number;
+  /** Lembretes ALÉM do escalar acima — minutos antes, até 3 entradas. Ver migration 0252. */
+  lembretesAdicionaisMin: number[];
+  /**
+   * Prazo (horas) até um compromisso `pending` deste tipo expirar e ser
+   * cancelado pelo cron `agenda-pending-expirer` — Onda 4.5, migration 0255.
+   * Só importa quando `precisaConfirmacao` é `true`; a coluna existe mesmo
+   * assim porque o tipo pode alternar `requires_confirmation` e o prazo
+   * configurado não deveria se perder na troca.
+   */
+  prazoDeConfirmacaoHoras: number;
 }
 
 export type ResultadoDosTipos =
@@ -666,7 +688,7 @@ export async function listaTiposDeAtendimento(
   let q = supabase
     .from("calendar_event_types")
     .select(
-      "id, name, slug, description, category, duration_minutes, location_kind, location_details, requires_confirmation, is_active, default_owner_user_id, buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, booking_window_days, reminder_enabled, reminder_minutes_before",
+      "id, name, slug, description, category, duration_minutes, location_kind, location_details, requires_confirmation, is_active, default_owner_user_id, buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, booking_window_days, reminder_enabled, reminder_minutes_before, additional_reminders, pending_expiration_hours",
     )
     // Service role bypassa a RLS: este filtro é a única proteção no caminho da
     // ferramenta MCP (ver o cabeçalho do arquivo).
@@ -704,6 +726,14 @@ export async function listaTiposDeAtendimento(
       janelaDeAgendamentoDias: Number(t.booking_window_days),
       lembreteLigado: Boolean(t.reminder_enabled),
       lembreteAntecedenciaMin: Number(t.reminder_minutes_before),
+      // O CHECK do banco só garante "array de até 3" — não o CONTEÚDO de cada
+      // entrada (a validação numérica é da API). Filtra o que não for número
+      // finito: dado escrito por SQL direto não pode virar NaN silencioso na
+      // tela nem no cron.
+      lembretesAdicionaisMin: Array.isArray(t.additional_reminders)
+        ? t.additional_reminders.filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+        : [],
+      prazoDeConfirmacaoHoras: Number(t.pending_expiration_hours),
     })),
   };
 }

@@ -263,8 +263,10 @@ describe("failJob: backoff exponencial no retry", () => {
     expect(depois, "run_after de um job dead não pode ser reescrito").toBeGreaterThan(antes - 1);
     expect(depois, "e muito menos empurrado para o futuro").toBeLessThan(0);
 
+    // `inbound_turn_dead`, não `job_dead` (Onda 4.6): este job é
+    // `kind: "inbound_turn"`, e failJob agora dá a ele um kind próprio.
     const { rows: alertas } = await pool.query<{ severity: string; body: string }>(
-      "select severity, body from agent_inbox_items where organization_id = $1 and kind = 'job_dead'",
+      "select severity, body from agent_inbox_items where organization_id = $1 and kind = 'inbound_turn_dead'",
       [ORG],
     );
     expect(alertas).toHaveLength(1);
@@ -290,5 +292,47 @@ describe("failJob: backoff exponencial no retry", () => {
     const espera = await esperaEmSegundos(job.id);
     expect(espera).toBeGreaterThan(2.5);
     expect(espera).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("failJob: inbound_turn_dead tem kind próprio e respeita o guard de 1 aberto por (org, kind) — Onda 4.6", () => {
+  /** Mata um job em 1 tentativa (attempts pré-setado em max_attempts-1) e devolve o dead. */
+  async function matarJob(kind: "inbound_turn" | "operator_turn", worker: string) {
+    const { job } = await enqueueJob(pool, ORG, { kind, leadId: CONTATO });
+    await pool.query("update job_queue set attempts = 4 where id = $1", [job.id]);
+    await claimJobs(pool, { workerId: worker, maxConcurrency: 8 });
+    const morto = await failJob(pool, job.id, worker, ERRO_TRANSITORIO);
+    expect(morto?.status, `job ${kind} devia morrer nesta chamada`).toBe("dead");
+    return job;
+  }
+
+  it("⭐ um segundo inbound_turn morto da MESMA org não abre um segundo inbound_turn_dead", async () => {
+    await matarJob("inbound_turn", "dedupe-1");
+    await matarJob("inbound_turn", "dedupe-2");
+
+    const { rows } = await pool.query<{ n: string }>(
+      "select count(*)::text as n from agent_inbox_items where organization_id = $1 and kind = 'inbound_turn_dead'",
+      [ORG],
+    );
+    expect(rows[0]!.n, "o segundo job morto não podia abrir um segundo aviso").toBe("1");
+  });
+
+  it("⭐ job_dead e inbound_turn_dead são kinds SEPARADOS — um aberto não esconde o outro", async () => {
+    await matarJob("inbound_turn", "kinds-1");
+    await matarJob("operator_turn", "kinds-2");
+
+    const { rows } = await pool.query<{ kind: string; n: string }>(
+      `select kind, count(*)::text as n from agent_inbox_items
+        where organization_id = $1 and kind in ('inbound_turn_dead', 'job_dead')
+        group by kind order by kind`,
+      [ORG],
+    );
+    expect(
+      rows,
+      "inbound_turn_dead aberto não podia impedir job_dead de abrir, nem vice-versa",
+    ).toEqual([
+      { kind: "inbound_turn_dead", n: "1" },
+      { kind: "job_dead", n: "1" },
+    ]);
   });
 });

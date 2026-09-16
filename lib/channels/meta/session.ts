@@ -19,6 +19,8 @@ export interface MetaWebhookSession {
   id: string;
   organizationId: string;
   wabaId: string | null;
+  /** O `sessionRef` deste canal — chave de busca de `resolveMetaCreds`. */
+  phoneNumberId: string | null;
 }
 
 /**
@@ -46,7 +48,7 @@ export async function metaSessionByWebhookToken(
   const base = () =>
     admin
       .from("channel_sessions")
-      .select("id, organization_id, meta_waba_id")
+      .select("id, organization_id, meta_waba_id, meta_phone_number_id")
       .eq("webhook_path_token", token)
       .eq("provider", CHANNEL_PROVIDER_META);
   const { data } = await queryTolerantToMissingArchived(
@@ -59,6 +61,7 @@ export async function metaSessionByWebhookToken(
     id: data.id,
     organizationId: data.organization_id,
     wabaId: data.meta_waba_id ?? null,
+    phoneNumberId: data.meta_phone_number_id ?? null,
   };
 }
 
@@ -79,7 +82,7 @@ export async function metaSessionForOrg(
   const base = () =>
     admin
       .from("channel_sessions")
-      .select("id, organization_id, meta_waba_id")
+      .select("id, organization_id, meta_waba_id, meta_phone_number_id")
       .eq("organization_id", organizationId)
       .eq("provider", CHANNEL_PROVIDER_META)
       .order("created_at", { ascending: true })
@@ -94,5 +97,6 @@ export async function metaSessionForOrg(
     id: data.id,
     organizationId: data.organization_id,
     wabaId: data.meta_waba_id ?? null,
+    phoneNumberId: data.meta_phone_number_id ?? null,
   };
 }

@@ -20,6 +20,8 @@ export interface NovoAgendamento {
    * `attendees` e sem convite nenhum saindo do Google.
    */
   guest_email?: string;
+  /** Onda 4.2 — "Outro horário", o encaixe fora da grade. Ver `_handler.ts`. */
+  fora_da_grade?: boolean;
 }
 
 /**

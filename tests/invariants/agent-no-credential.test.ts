@@ -10,7 +10,9 @@ import pg from "pg";
  *   1. o turno falha com erro CLARO e instrutivo (LlmNotConfiguredError);
  *   2. a falha é ISOLADA: job → dead (max_attempts=1) SEM propagar — o loop
  *      sobrevive e a fila segue operável;
- *   3. trilha humana: agent_inbox_items kind='job_dead' severity='critical';
+ *   3. trilha humana: agent_inbox_items kind='inbound_turn_dead' severity='critical'
+ *      (Onda 4.6 — job inbound_turn morto ganhou kind próprio, distinto do
+ *      genérico 'job_dead');
  *   4. NENHUMA mensagem é enviada (nem vazia) — zero linhas outbound.
  */
 
@@ -179,13 +181,20 @@ describe("4B — turno sem credencial NENHUMA (nem env, nem BYOK)", () => {
     expect(jobs[0]!.status).toBe("dead");
     expect(jobs[0]!.last_error).toMatch(/credencial LLM/);
 
-    // 3. trilha humana: inbox item crítico
+    // 3. trilha humana: inbox item crítico. `inbound_turn_dead`, não
+    // `job_dead` (Onda 4.6) — o job morto aqui É uma mensagem de cliente sem
+    // resposta, kind próprio desde que failJob passou a distinguir os dois.
     const { rows: inbox } = await pool.query(
-      `select kind, severity from agent_inbox_items
+      `select kind, severity, ref_kind, ref_id from agent_inbox_items
        where organization_id = $1 order by created_at desc limit 1`,
       [ORG],
     );
-    expect(inbox[0]).toMatchObject({ kind: "job_dead", severity: "critical" });
+    expect(inbox[0]).toMatchObject({
+      kind: "inbound_turn_dead",
+      severity: "critical",
+      ref_kind: "contact",
+      ref_id: CONTACT,
+    });
 
     // 4. NENHUMA mensagem enviada (nem vazia)
     const { rows: outbound } = await pool.query(

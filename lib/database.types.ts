@@ -2219,6 +2219,7 @@ export type Database = {
           outcome_user_id: string | null
           owner_user_id: string | null
           reminder_sent_at: string | null
+          reminders_sent: Json
           rescheduled_from_id: string | null
           revision: number
           revision_started_at: string
@@ -2283,6 +2284,7 @@ export type Database = {
           outcome_user_id?: string | null
           owner_user_id?: string | null
           reminder_sent_at?: string | null
+          reminders_sent?: Json
           rescheduled_from_id?: string | null
           revision?: number
           revision_started_at?: string
@@ -2347,6 +2349,7 @@ export type Database = {
           outcome_user_id?: string | null
           owner_user_id?: string | null
           reminder_sent_at?: string | null
+          reminders_sent?: Json
           rescheduled_from_id?: string | null
           revision?: number
           revision_started_at?: string
@@ -2640,6 +2643,7 @@ export type Database = {
       }
       calendar_event_types: {
         Row: {
+          additional_reminders: Json
           booking_window_days: number
           buffer_after_minutes: number
           buffer_before_minutes: number
@@ -2655,6 +2659,7 @@ export type Database = {
           minimum_notice_minutes: number
           name: string
           organization_id: string
+          pending_expiration_hours: number
           position: number
           reminder_enabled: boolean
           reminder_minutes_before: number
@@ -2665,6 +2670,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          additional_reminders?: Json
           booking_window_days?: number
           buffer_after_minutes?: number
           buffer_before_minutes?: number
@@ -2680,6 +2686,7 @@ export type Database = {
           minimum_notice_minutes?: number
           name: string
           organization_id: string
+          pending_expiration_hours?: number
           position?: number
           reminder_enabled?: boolean
           reminder_minutes_before?: number
@@ -2690,6 +2697,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          additional_reminders?: Json
           booking_window_days?: number
           buffer_after_minutes?: number
           buffer_before_minutes?: number
@@ -2705,6 +2713,7 @@ export type Database = {
           minimum_notice_minutes?: number
           name?: string
           organization_id?: string
+          pending_expiration_hours?: number
           position?: number
           reminder_enabled?: boolean
           reminder_minutes_before?: number
@@ -7355,6 +7364,33 @@ export type Database = {
         }
         Relationships: []
       }
+      platform_meta_app: {
+        Row: {
+          app_secret_encrypted: string | null
+          created_at: string
+          id: number
+          updated_at: string
+          updated_by: string | null
+          webhook_verify_token: string | null
+        }
+        Insert: {
+          app_secret_encrypted?: string | null
+          created_at?: string
+          id?: number
+          updated_at?: string
+          updated_by?: string | null
+          webhook_verify_token?: string | null
+        }
+        Update: {
+          app_secret_encrypted?: string | null
+          created_at?: string
+          id?: number
+          updated_at?: string
+          updated_by?: string | null
+          webhook_verify_token?: string | null
+        }
+        Relationships: []
+      }
       platform_support_sessions: {
         Row: {
           access_mode: string
@@ -9349,6 +9385,12 @@ export type Database = {
         }[]
       }
       fn_agora: { Args: never; Returns: string }
+      fn_aniversariantes_do_dia: {
+        Args: { p_dia: number; p_mes: number; p_org: string }
+        Returns: {
+          contact_id: string
+        }[]
+      }
       fn_aplicar_quadro_do_onboarding: {
         Args: {
           p_etapas: Json
@@ -10157,6 +10199,7 @@ export type Database = {
         Returns: boolean
       }
       fn_support_write_allowed: { Args: { p_org: string }; Returns: boolean }
+      fn_tags_de_conversa_em_uso: { Args: { p_org: string }; Returns: string[] }
       fn_upsert_wa_contact: {
         Args: {
           p_chat_id: string

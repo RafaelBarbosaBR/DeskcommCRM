@@ -70,6 +70,10 @@ export const KIND_LABEL = {
   // decidir o próximo passo do negócio, não diagnosticar o motor de follow-up.
   appointment_recovery_exhausted: "Cliente faltou e não respondeu à recuperação",
   voice_call_missed: "Uma chamada de voz tocou e ninguém atendeu",
+  // Diz o que o CLIENTE viveu (ficou sem resposta), não o jargão de fila
+  // ("job esgotou tentativas") — contraste deliberado com `job_dead`, que é
+  // o mesmo evento técnico só quando o job NÃO é uma mensagem de cliente.
+  inbound_turn_dead: "A IA deixou de responder uma mensagem de cliente",
   other: "Aviso do assistente",
 } as const satisfies Record<InboxKind, string>;
 

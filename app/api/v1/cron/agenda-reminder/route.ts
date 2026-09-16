@@ -86,6 +86,8 @@ interface TipoDoCompromisso {
   name: string;
   reminder_enabled: boolean;
   reminder_minutes_before: number;
+  /** Lembretes ALÉM do escalar acima — migration 0252. Shape cru do jsonb. */
+  additional_reminders: unknown;
   reminder_template_name: string | null;
   location_details: string | null;
 }
@@ -97,6 +99,8 @@ interface CompromissoAVencer {
   title: string;
   starts_at: string;
   location_details: string | null;
+  /** Offsets (minutos) já enviados para ESTE compromisso — migration 0252. */
+  reminders_sent: unknown;
   calendar_event_types: TipoDoCompromisso | TipoDoCompromisso[] | null;
 }
 
@@ -180,6 +184,34 @@ export function estaNaHora(agora: Date, comeca: Date, antecedenciaMin: number): 
   return comeca.getTime() - antecedenciaMin * 60_000 <= agora.getTime();
 }
 
+/**
+ * Qual offset (minutos antes) manda AGORA — ou `undefined` se nenhum está
+ * devido ainda. Pura e exportada pelo mesmo motivo de `estaNaHora`: é a regra
+ * que decide se o compromisso ganha um segundo (ou terceiro) lembrete.
+ *
+ * Entre os que ainda não foram enviados E já estão na hora, escolhe o MAIS
+ * ANTECIPADO (o de mais minutos) — se dois estiverem devidos na mesma
+ * rodada (cron que ficou parado, ou o backfill do dia do deploy), o aviso de
+ * "amanhã" não pode chegar depois do de "daqui a 1h". O que sobrar, a
+ * próxima rodada decide de novo.
+ */
+export function proximoOffsetDevido(
+  agora: Date,
+  comeca: Date,
+  offsetsConfigurados: readonly number[],
+  jaEnviados: ReadonlySet<number>,
+): number | undefined {
+  return Array.from(new Set(offsetsConfigurados))
+    .filter((min) => !jaEnviados.has(min))
+    .filter((min) => estaNaHora(agora, comeca, min))
+    .sort((a, b) => b - a)[0];
+}
+
+/** `jsonb` cru → `number[]`, descartando qualquer entrada que não seja número finito. */
+export function comoListaDeMinutos(valor: unknown): number[] {
+  return Array.isArray(valor) ? valor.filter((v): v is number => typeof v === "number" && Number.isFinite(v)) : [];
+}
+
 async function handle(req: NextRequest): Promise<Response> {
   const requestId = randomUUID();
 
@@ -195,17 +227,24 @@ async function handle(req: NextRequest): Promise<Response> {
 
   // `!inner` no tipo: só interessa compromisso cujo TIPO pede lembrete. O corte
   // por `starts_at` usa a maior antecedência possível — o corte fino, que depende
-  // do `reminder_minutes_before` de cada linha, é `estaNaHora` logo abaixo.
+  // dos offsets de cada linha (escalar + `additional_reminders`), é `estaNaHora`
+  // logo abaixo.
+  //
+  // ⚠️ SEM `.is("reminder_sent_at", null)`. Com lembrete múltiplo (migration
+  // 0252), "já mandei UM lembrete" não significa "não preciso mais olhar este
+  // compromisso" — pode faltar o segundo. O corte de quem já recebeu TODOS os
+  // lembretes configurados acontece em memória (`reminders_sent` vs. o
+  // conjunto de offsets do tipo), não na query: o compromisso permanece no
+  // recorte até `starts_at` passar, e cada rodada decide de novo se falta algo.
   const { data, error } = await admin
     .from("calendar_appointments")
     .select(
-      "id, organization_id, contact_id, title, starts_at, location_details, " +
-        "calendar_event_types!inner(name, reminder_enabled, reminder_minutes_before, reminder_template_name, location_details)",
+      "id, organization_id, contact_id, title, starts_at, location_details, reminders_sent, " +
+        "calendar_event_types!inner(name, reminder_enabled, reminder_minutes_before, additional_reminders, reminder_template_name, location_details)",
     )
     .eq("status", "confirmed")
     .eq("calendar_event_types.reminder_enabled", true)
     .not("contact_id", "is", null)
-    .is("reminder_sent_at", null)
     .gt("starts_at", agora.toISOString())
     .lte("starts_at", new Date(agora.getTime() + MAIOR_ANTECEDENCIA_MS).toISOString())
     .order("starts_at", { ascending: true })
@@ -231,7 +270,12 @@ async function handle(req: NextRequest): Promise<Response> {
       pular("sem_tipo");
       continue;
     }
-    if (!estaNaHora(agora, new Date(linha.starts_at), tipo.reminder_minutes_before)) {
+
+    const jaEnviados = new Set(comoListaDeMinutos(linha.reminders_sent));
+    const offsetsConfigurados = [tipo.reminder_minutes_before, ...comoListaDeMinutos(tipo.additional_reminders)];
+    const offsetDevido = proximoOffsetDevido(agora, new Date(linha.starts_at), offsetsConfigurados, jaEnviados);
+
+    if (offsetDevido === undefined) {
       pular("ainda_nao");
       continue;
     }
@@ -324,9 +368,15 @@ async function handle(req: NextRequest): Promise<Response> {
         >[2],
       );
       // Carimba a TENTATIVA — o desfecho da entrega vive na mensagem.
+      // `reminder_sent_at` passa a guardar o instante do lembrete MAIS
+      // RECENTE (útil pra quem olha a linha direto no banco);
+      // `reminders_sent` é quem decide, na próxima rodada, se falta algum.
       await admin
         .from("calendar_appointments")
-        .update({ reminder_sent_at: new Date().toISOString() })
+        .update({
+          reminder_sent_at: new Date().toISOString(),
+          reminders_sent: [...jaEnviados, offsetDevido],
+        })
         .eq("id", linha.id)
         .eq("organization_id", org);
       enviados += 1;

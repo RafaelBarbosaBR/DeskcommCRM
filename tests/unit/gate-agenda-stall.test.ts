@@ -188,7 +188,10 @@ describe("fiação do gate — a EXECUÇÃO da ferramenta de agenda arma o sinal
     expect(i).toBeGreaterThan(-1);
     expect(j).toBeGreaterThan(i);
     const corpo = FONTE_INBOUND.slice(i, j);
-    expect(corpo).toMatch(/agentConfig\.toolIds\.includes\('crm_book_appointment'\)/);
+    // `active` não é mais só `crm_book_appointment`: um agente que só CONSULTA
+    // (crm_find_free_slots/crm_list_appointments, sem nenhuma tool que cria ou
+    // muda reserva) também precisa armar a trava — `agendaAtiva` é quem decide.
+    expect(corpo).toMatch(/agendaAtiva\(agentConfig\.toolIds\)/);
     expect(corpo).toMatch(/toolCalledThisTurn:\s*agendaToolCalledThisTurn/);
   });
 
