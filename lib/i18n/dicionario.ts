@@ -13543,11 +13543,19 @@ export const DICIONARIO: Traducoes = {
   "Links salvos.": { es: "Enlaces guardados." },
   "Endereço inválido.": { es: "Dirección inválida." },
   "Salvar links": { es: "Guardar enlaces" },
-  // Rótulos dos tipos de link (`lib/leads/links-de-contato.ts`) — lidos por
-  // lookup dinâmico, que o teste de cobertura não enxerga. As marcas
-  // (Instagram, Facebook…) não mudam de idioma e ficam de fora.
+  "+ Links e redes sociais": { es: "+ Enlaces y redes sociales" },
+  "Ocultar links e redes sociais": { es: "Ocultar enlaces y redes sociales" },
+  // Rótulos dos tipos de link (`lib/leads/links-de-contato.ts`). As marcas
+  // (Instagram, Facebook, LinkedIn, TikTok, YouTube) não mudam de idioma — a
+  // entrada existe só para `NewContactDialog.tsx` passar na cobertura, que ali
+  // chama t() com literal (a lista de parâmetro dinâmico é ratchet e não cresce).
   Site: { es: "Sitio web" },
   "Google Meu Negócio": { es: "Google Mi Negocio" },
+  Instagram: { es: "Instagram" },
+  Facebook: { es: "Facebook" },
+  LinkedIn: { es: "LinkedIn" },
+  TikTok: { es: "TikTok" },
+  YouTube: { es: "YouTube" },
   // ─── Agenda dos colegas (components/agenda/AgendaDosColegas.tsx) ───────────
   // A opção por organização da migration 0343 (issue #978). As frases de recusa
   // são as que `ClientePelaAgenda` já usa ("Sua sessão expirou…", "Nenhuma
