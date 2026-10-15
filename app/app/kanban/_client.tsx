@@ -238,14 +238,14 @@ export function FunisClient({
           if (e.key === "Enter") criarFunil();
           if (e.key === "Escape") setNovo(null);
         }}
-        placeholder={t("Nome do funil — ex.: Consultas, Obras, Matrículas")}
-        aria-label={t("Nome do novo funil")}
+        placeholder={t("Nome do pipeline — ex.: Consultas, Obras, Matrículas")}
+        aria-label={t("Nome do novo pipeline")}
         data-testid="nome-do-novo-funil"
         disabled={ocupado}
       />
       <div className="flex gap-2">
         <Button onClick={criarFunil} disabled={ocupado || !novo.trim()} data-testid="confirmar-novo-funil">
-          {t("Criar funil")}
+          {t("Criar pipeline")}
         </Button>
         <Button variant="ghost" onClick={() => setNovo(null)} disabled={ocupado}>
           {t("Cancelar")}
@@ -279,7 +279,7 @@ export function FunisClient({
         data-testid="arquivados-abrir"
       >
         <Archive size={16} className="mr-2" aria-hidden />
-        {t("Funis arquivados")} ({arquivados.length})
+        {t("Pipelines arquivados")} ({arquivados.length})
         {arquivoAberto ? (
           <CaretUp size={16} className="ml-2" aria-hidden />
         ) : (
@@ -291,7 +291,7 @@ export function FunisClient({
         <>
           <p className="text-xs text-muted-foreground" data-testid="arquivados-explicacao">
             {t(
-              "Funil arquivado não aparece na lista nem recebe negócio novo. Traga de volta para usar outra vez, ou exclua de vez para liberar o nome.",
+              "Pipeline arquivado não aparece na lista nem recebe negócio novo. Traga de volta para usar outra vez, ou exclua de vez para liberar o nome.",
             )}
           </p>
           <ul
@@ -372,7 +372,7 @@ export function FunisClient({
                         </AlertDialogTitle>
                         <AlertDialogDescription>
                           {t(
-                            "Isso não tem volta: o funil e as etapas dele somem. Se ele já recebeu negócio, a exclusão é recusada e ele continua arquivado.",
+                            "Isso não tem volta: o pipeline e as etapas dele somem. Se ele já recebeu negócio, a exclusão é recusada e ele continua arquivado.",
                           )}
                         </AlertDialogDescription>
                       </AlertDialogHeader>
@@ -439,7 +439,7 @@ export function FunisClient({
           <EmptyPipeline
             primary={
               podeGerenciar
-                ? { label: t("Criar meu primeiro funil"), onClick: () => setNovo("") }
+                ? { label: t("Criar meu primeiro pipeline"), onClick: () => setNovo("") }
                 : undefined
             }
           />
@@ -468,7 +468,7 @@ export function FunisClient({
           {podeImportar ? <ImportarLeads funis={funis} /> : null}
           {podeGerenciar && novo === null ? (
             <Button onClick={() => setNovo("")} disabled={ocupado} data-testid="novo-funil" className="w-full sm:w-auto">
-              <Plus size={16} className="mr-2" aria-hidden /> {t("Novo funil")}
+              <Plus size={16} className="mr-2" aria-hidden /> {t("Novo pipeline")}
             </Button>
           ) : null}
         </div>
@@ -611,8 +611,8 @@ export function FunisClient({
                       >
                         <Check size={16} className="mr-1" aria-hidden />{" "}
                         {funil.is_client_pipeline
-                          ? t("Deixar de ser funil de clientes")
-                          : t("Funil de clientes")}
+                          ? t("Deixar de ser pipeline de clientes")
+                          : t("Pipeline de clientes")}
                       </Button>
                     )}
                     <Button
@@ -701,13 +701,13 @@ export function FunisClient({
       {clientesLigado ? (
         <p className="mt-4 text-xs text-muted-foreground" data-testid="funis-rodape-clientes">
           {t(
-            "Quem já tem atendimento marcado entra pelo funil de clientes. Sem um funil marcado, entra pelo padrão.",
+            "Quem já tem atendimento marcado entra pelo pipeline de clientes. Sem um pipeline marcado, entra pelo padrão.",
           )}
         </p>
       ) : (
         <p className="mt-4 text-xs text-muted-foreground" data-testid="funis-rodape-clientes">
           {t(
-            "Para separar quem já é cliente, ligue “Clientes pela agenda” em Configurações › Tipos de agendamento. Enquanto estiver desligado, todo contato novo entra pelo funil padrão.",
+            "Para separar quem já é cliente, ligue “Clientes pela agenda” em Configurações › Tipos de agendamento. Enquanto estiver desligado, todo contato novo entra pelo pipeline padrão.",
           )}{" "}
           <Link href="/app/settings/tenant/agenda" className="underline" data-testid="funis-rodape-ligar">
             {t("Abrir Tipos de agendamento")}

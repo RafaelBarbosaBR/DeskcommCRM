@@ -103,12 +103,12 @@ export function ImportarLeads({ funis }: { funis: FunilDaLista[] }) {
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
               {t(
-                "Um arquivo CSV com uma linha por lead. Os leads entram na primeira etapa aberta do funil escolhido.",
+                "Um arquivo CSV com uma linha por lead. Os leads entram na primeira etapa aberta do pipeline escolhido.",
               )}
             </p>
 
             <div className="space-y-1.5">
-              <Label htmlFor="funil-de-destino">{t("Funil de destino")}</Label>
+              <Label htmlFor="funil-de-destino">{t("Pipeline de destino")}</Label>
               <Select value={funilId} onValueChange={setFunilId}>
                 <SelectTrigger id="funil-de-destino">
                   <SelectValue />

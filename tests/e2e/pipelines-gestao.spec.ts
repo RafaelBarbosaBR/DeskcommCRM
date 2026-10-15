@@ -82,7 +82,7 @@ test.describe("gestão de funis", () => {
   test.beforeEach(async ({ page }) => {
     await login(page, creds.users.manager!.email);
     await page.goto("/app/kanban");
-    await expect(page.getByRole("heading", { name: "Funis" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
   });
 
   test("a lista mostra só a organização ativa, mesmo com funil homônimo em outra", async ({
@@ -172,7 +172,7 @@ test("quem não pode gerenciar vê a lista sem os controles de escrita", async (
   // cobra manager nas rotas, então agent não vê "Novo funil" nem "Arquivar".
   await login(page, creds.users.agent!.email);
   await page.goto("/app/kanban");
-  await expect(page.getByRole("heading", { name: "Funis" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
   await expect(page.getByText("Pedidos", { exact: true })).toHaveCount(1);
   await expect(page.getByTestId("novo-funil")).toHaveCount(0);
   await expect(page.locator('[data-testid^="arquivar-"]')).toHaveCount(0);

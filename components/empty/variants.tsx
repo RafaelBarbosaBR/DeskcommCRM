@@ -84,9 +84,9 @@ export function EmptyPipeline({ primary, secondary }: VariantProps = {}) {
   return (
     <EmptyState
       icon={GitBranch}
-      headline={t("Nenhum funil ainda")}
+      headline={t("Nenhum pipeline ainda")}
       subcopy={t(
-        "Um funil é o caminho que o cliente percorre até fechar. Crie o primeiro para ter um quadro.",
+        "Um pipeline é o caminho que o cliente percorre até fechar. Crie o primeiro para ter um quadro.",
       )}
       primary={primary}
       secondary={secondary}

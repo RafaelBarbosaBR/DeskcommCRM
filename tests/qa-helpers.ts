@@ -94,8 +94,8 @@ export async function loginAs(
 
 /** Navega até o board de demonstração — só por clique, como um usuário. */
 export async function gotoBoard(page: Page): Promise<void> {
-  // "Kanban" saiu da interface — o item virou "Funis" (a mesma URL).
-  await page.getByRole("link", { name: "Funis", exact: true }).click();
+  // "Kanban" saiu da interface — o item virou "Pipeline" (a mesma URL, renomeado de novo em 15/10).
+  await page.getByRole("link", { name: "Pipeline", exact: true }).click();
   await page.waitForURL(/\/app\/kanban/, { timeout: 20_000 });
   await page.getByText(/CRM Vivo — Clínica/i).first().click();
   await page.waitForURL(/\/app\/pipelines\//, { timeout: 20_000 });

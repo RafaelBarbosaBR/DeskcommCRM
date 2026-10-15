@@ -9,7 +9,7 @@ import { traduzir } from "@/lib/i18n/dicionario";
 import { FunisClient, type FunilDaLista } from "./_client";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Funis" };
+export const metadata: Metadata = { title: "Pipeline" };
 
 /**
  * A lista de funis — e o lugar onde eles se gerenciam.
@@ -68,14 +68,11 @@ export default async function KanbanPickerPage() {
     <div className="flex h-full flex-col gap-4 p-6">
       <header className="flex items-center gap-3">
         <Kanban size={28} className="text-muted-foreground" weight="duotone" />
-        {/* Era "Pipelines" — nome de quem construiu o sistema, não de quem
-            vende. O comentário anterior aqui listava o preço de trocá-lo
-            (`rbac-roles.spec.ts` e `invite-lifecycle.spec.ts`) e dizia que
-            uniformizar era decisão do dono do produto. Ela foi tomada, e o preço
-            era maior do que o comentário contava: são QUATRO assertions em TRÊS
-            specs, e `pipelines-gestao.spec.ts` — a spec da própria feature que
-            gerou o comentário — é uma delas. Todas atualizadas junto. */}
-        <h1 className="text-2xl font-semibold tracking-tight">{t("Funis")}</h1>
+        {/* Decisão de 15/10: volta a "Pipeline" (histórico da reversão em
+            lib/navigation/catalogo.ts). As specs e2e que afirmavam "Funis"
+            (rbac-roles, invite-lifecycle, pipelines-gestao e outras) foram
+            atualizadas junto. */}
+        <h1 className="text-2xl font-semibold tracking-tight">{t("Pipeline")}</h1>
       </header>
 
       <FunisClient

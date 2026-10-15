@@ -1,22 +1,37 @@
 /**
- * "PIPELINE" E "KANBAN" NÃO VOLTAM PARA A INTERFACE.
+ * "KANBAN" NÃO VOLTA PARA A INTERFACE. "PIPELINE" VOLTOU (decisão de 15/10).
  *
- * ═══ O QUE ISTO GUARDA ═══
+ * ═══ O QUE ISTO GUARDOU ATÉ 15/10 ═══
  *
  * O produto tinha CINCO vocabulários para a mesma coisa, e três deles chegavam
  * ao usuário no MESMO viewport: o `<h1>` de /app/kanban dizia "Pipelines", o
  * estado vazio logo abaixo dizia "Sem pipelines configurados", e o botão abaixo
  * dele dizia "Criar meu primeiro funil". No menu, "Kanban" e "Funis" eram dois
- * itens vizinhos que listavam as MESMAS linhas de `crm_pipelines`.
+ * itens vizinhos que listavam as MESMAS linhas de `crm_pipelines`. A regra
+ * daquela época: "funil" é a única palavra, "pipeline" é de quem construiu o
+ * sistema e não do público que vende.
  *
- * "Pipeline" é palavra de quem construiu o sistema. "Funil de vendas" é palavra
- * de quem vende — e é o público deste produto.
+ * ═══ A REVERSÃO DE 15/10 ═══
  *
- * ⚠️ O QUE ESTE TESTE NÃO PROÍBE: `pipeline` como identificador. A rota é
- * `/app/pipelines/[id]`, a tabela é `crm_pipelines`, o campo é `pipeline_ids` e
- * o ícone importado se chama `Kanban`. Nada disso é lido por quem usa o produto;
- * renomeá-los seria custo sem ganho, e um teste que os proibisse viraria ruído
- * que se aprende a silenciar.
+ * O dono do produto pediu de volta "Pipeline" — rótulo do menu (agora também o
+ * primeiro grupo), título da tela de /app/kanban, estado vazio e os botões de
+ * criar/importar nessa MESMA tela (ver `lib/navigation/catalogo.ts` e
+ * `app/app/kanban/_client.tsx`). Esta reversão é PARCIAL, de propósito: o
+ * quadro de um pipeline aberto (`/app/pipelines/[id]`), o dossiê do negócio, a
+ * tela "Etapas do funil" (Configurações) e as automações continuam dizendo
+ * "funil" — não foram tocados, e por isso o teste abaixo não proíbe mais
+ * "pipeline" em lugar nenhum (proibiria o que acabou de ser pedido).
+ *
+ * O que FICA proibido é "kanban": nunca foi a palavra escolhida em nenhuma das
+ * duas rodadas, é nome de padrão de engenharia (o ícone importado se chama
+ * `Kanban`), e deixá-lo vazar seria o MESMO defeito que motivou o teste
+ * original, só que por um vetor diferente.
+ *
+ * ⚠️ O QUE ESTE TESTE NÃO PROÍBE: `pipeline`/`kanban` como identificador. A
+ * rota é `/app/pipelines/[id]`, a tabela é `crm_pipelines`, o campo é
+ * `pipeline_ids` e o ícone importado se chama `Kanban`. Nada disso é lido por
+ * quem usa o produto; renomeá-los seria custo sem ganho, e um teste que os
+ * proibisse viraria ruído que se aprende a silenciar.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -51,8 +66,10 @@ function telas(raiz: string): string[] {
 
 const ARQUIVOS = [...telas("app"), ...telas("components")];
 
-/** Palavras do sistema que não podem virar texto de tela. */
-const PROIBIDAS = /\b(pipelines?|kanban)\b/i;
+/** Palavra do sistema que não pode virar texto de tela — "pipeline" saiu da
+ * lista em 15/10 (ver cabeçalho): é a palavra escolhida agora para a lista de
+ * pipelines, e proibi-la reprovaria a própria mudança pedida. */
+const PROIBIDAS = /\bkanban\b/i;
 
 /**
  * Texto que o usuário LÊ, extraído sem parser: conteúdo entre `>` e `<` de JSX,
@@ -77,7 +94,7 @@ function textosVisiveis(src: string): string[] {
 }
 
 describe("o vocabulário do funil na interface", () => {
-  it("nenhuma tela mostra 'pipeline' ou 'kanban' ao usuário", () => {
+  it("nenhuma tela mostra 'kanban' ao usuário", () => {
     const infratores: string[] = [];
     for (const f of ARQUIVOS) {
       const src = readFileSync(f, "utf8");
@@ -87,11 +104,11 @@ describe("o vocabulário do funil na interface", () => {
     }
     expect(
       infratores,
-      "palavra do sistema em texto de tela — use 'funil', 'etapa' ou 'quadro'",
+      "nome de padrão de engenharia em texto de tela — use 'pipeline', 'funil', 'etapa' ou 'quadro'",
     ).toEqual([]);
   });
 
-  it("nenhum item de menu se chama 'Kanban' ou 'Pipelines'", () => {
+  it("nenhum item de menu se chama 'Kanban'", () => {
     const ruins = NAV_DESTINATIONS.filter((d) => PROIBIDAS.test(d.label));
     expect(ruins.map((d) => d.label)).toEqual([]);
   });

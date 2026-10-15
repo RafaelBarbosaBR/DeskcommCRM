@@ -149,9 +149,9 @@ test.describe("navegação agrupada", () => {
 
   test("e a lista de funis é o item vizinho, com nome próprio", async ({ page }) => {
     await loginAdmin(page);
-    await sidebar(page).getByRole("link", { name: "Funis", exact: true }).click();
+    await sidebar(page).getByRole("link", { name: "Pipeline", exact: true }).click();
     await page.waitForURL(/\/app\/kanban/);
-    await expect(page.getByRole("heading", { name: "Funis", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Pipeline", level: 1 })).toBeVisible();
   });
 
   test("chega em Conhecimento, que só existia atrás das abas de IA", async ({ page }) => {
@@ -255,7 +255,7 @@ test.describe("navegação agrupada", () => {
         fullPage: true,
       });
 
-      await sidebar(page).getByRole("link", { name: "Funis", exact: true }).click();
+      await sidebar(page).getByRole("link", { name: "Pipeline", exact: true }).click();
       await page.waitForURL(/\/app\/kanban/);
       await expect(page.getByRole("dialog")).toHaveCount(0);
       await expectSemOverflowHorizontal(page, "shell mobile após navegar pelo drawer");

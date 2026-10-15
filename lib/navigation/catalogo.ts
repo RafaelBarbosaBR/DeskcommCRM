@@ -87,8 +87,10 @@ export interface NavMetadata {
  * mesma conversa para a sexta tela.
  */
 export const NAV_GROUPS: NavGroup[] = [
-  { id: "atendimento", label: "Atendimento" },
+  // CRM primeiro: Pipeline é o destino mais usado, decisão de 15/10 que troca a
+  // ordem anterior (Atendimento primeiro).
   { id: "crm", label: "CRM", hub: { href: "/app/crm", label: "Ver tudo em CRM" } },
+  { id: "atendimento", label: "Atendimento" },
   { id: "ia", label: "Agente de IA", hub: { href: "/app/ai", label: "Ver tudo em IA" } },
   { id: "canais", label: "Canais" },
   { id: "analise", label: "Análise", hub: { href: "/app/analise", label: "Ver tudo em Análise" } },
@@ -218,19 +220,20 @@ export const NAV_CATALOG = [
 
   // ---- CRM — o funil ----
   {
-    // ⚠️ ERA "Kanban", e a URL continua sendo. O nome saiu da interface porque o
-    // produto tinha CINCO vocabulários para a mesma coisa — "Kanban" no menu,
-    // "Pipelines" no título desta tela, "Funis" no menu ao lado, "funil" em todo
-    // o corpo dela e "quadro" no onboarding inteiro. Três deles no mesmo
-    // viewport: o <h1> dizia "Pipelines", o estado vazio dizia "Sem pipelines
-    // configurados" e o botão embaixo dizia "Criar meu primeiro funil".
+    // Decisão de 15/10: voltou a "Pipeline", revertendo a unificação anterior
+    // para "Funis" (histórico abaixo). É o primeiro destino do menu — o CRM
+    // virou o grupo de abertura (ver NAV_GROUPS).
     //
-    // Ficou "Funis" porque é o que esta tela É: a lista dos funis, de onde se
-    // abre o quadro de cada um. "Pipeline" é palavra de quem construiu o
-    // sistema; "funil de vendas" é palavra de quem vende.
+    // ⚠️ Histórico: ERA "Kanban" no menu, "Pipelines" no título da tela, "Funis"
+    // no menu ao lado, "funil" no corpo e "quadro" no onboarding — cinco
+    // vocabulários para a mesma coisa, três no mesmo viewport. Foi unificado
+    // para "Funis" com o argumento de que "pipeline" é palavra de quem constrói
+    // e "funil de vendas" é palavra de quem vende. `vocabulario-do-funil.test.ts`
+    // chegou a proibir "Pipeline" voltar à interface — o teste foi atualizado
+    // junto com esta reversão.
     href: "/app/kanban",
-    label: "Funis",
-    description: "Seus funis de venda — clique em um para abrir o quadro de clientes.",
+    label: "Pipeline",
+    description: "Seus pipelines de venda — clique em um para abrir o quadro de clientes.",
     icon: "Kanban",
     group: "crm",
     section: "O dia a dia da venda",

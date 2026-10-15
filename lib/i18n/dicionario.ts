@@ -1371,6 +1371,7 @@ export const DICIONARIO: Traducoes = {
   // "Kanban" saiu do menu (a tela virou "Funis"); "Etapas do funil" é o nome novo
   // da tela de configuração, que antes disputava "Funis" com ela.
   Funis: { es: "Embudos" },
+  Pipeline: { es: "Pipeline" },
   "Etapas do funil": { es: "Etapas del embudo" },
   "Tipos de agendamento": { es: "Tipos de cita" },
   Automação: { es: "Automatización" },
@@ -8951,6 +8952,39 @@ export const DICIONARIO: Traducoes = {
   "Criar funil": { es: "Crear embudo" },
   "Criar meu primeiro funil": { es: "Crear mi primer embudo" },
   "Novo funil": { es: "Nuevo embudo" },
+  // Decisão de 15/10: a lista/board de pipeline volta a "Pipeline" — as
+  // entradas acima (vocabulário "funil") ficam de debt morto; estas são as que
+  // os componentes chamam agora.
+  "Nome do pipeline — ex.: Consultas, Obras, Matrículas": {
+    es: "Nombre del pipeline — ej.: Consultas, Obras, Matrículas",
+  },
+  "Nome do novo pipeline": { es: "Nombre del nuevo pipeline" },
+  "Criar pipeline": { es: "Crear pipeline" },
+  "Criar meu primeiro pipeline": { es: "Crear mi primer pipeline" },
+  "Novo pipeline": { es: "Nuevo pipeline" },
+  "Pipelines arquivados": { es: "Pipelines archivados" },
+  "Pipeline de destino": { es: "Pipeline de destino" },
+  "Pipeline de clientes": { es: "Pipeline de clientes" },
+  "Deixar de ser pipeline de clientes": { es: "Dejar de ser pipeline de clientes" },
+  "Nenhum pipeline ainda": { es: "Ningún pipeline todavía" },
+  "Um pipeline é o caminho que o cliente percorre até fechar. Crie o primeiro para ter um quadro.": {
+    es: "Un pipeline es el camino que el cliente recorre hasta cerrar. Crea el primero para tener un tablero.",
+  },
+  "Isso não tem volta: o pipeline e as etapas dele somem. Se ele já recebeu negócio, a exclusão é recusada e ele continua arquivado.": {
+    es: "Esto no tiene vuelta atrás: el pipeline y sus etapas desaparecen. Si ya recibió un negocio, la eliminación se rechaza y sigue archivado.",
+  },
+  "Pipeline arquivado não aparece na lista nem recebe negócio novo. Traga de volta para usar outra vez, ou exclua de vez para liberar o nome.": {
+    es: "El pipeline archivado no aparece en la lista ni recibe negocios nuevos. Tráelo de vuelta para usarlo otra vez, o elimínalo definitivamente para liberar el nombre.",
+  },
+  "Um arquivo CSV com uma linha por lead. Os leads entram na primeira etapa aberta do pipeline escolhido.": {
+    es: "Un archivo CSV con una línea por lead. Los leads entran en la primera etapa abierta del pipeline elegido.",
+  },
+  "Quem já tem atendimento marcado entra pelo pipeline de clientes. Sem um pipeline marcado, entra pelo padrão.": {
+    es: "Quien ya tiene una cita entra por el pipeline de clientes. Si no hay un pipeline marcado, entra por el predeterminado.",
+  },
+  "Para separar quem já é cliente, ligue “Clientes pela agenda” em Configurações › Tipos de agendamento. Enquanto estiver desligado, todo contato novo entra pelo pipeline padrão.": {
+    es: "Para separar a los clientes actuales, activa “Clientes por la agenda” en Configuración › Tipos de cita. Mientras esté desactivado, todo contacto nuevo entra por el pipeline predeterminado.",
+  },
   "Subir": { es: "Subir" },
   "na lista": { es: "en la lista" },
   "Descer": { es: "Bajar" },
@@ -12489,6 +12523,7 @@ export const DICIONARIO: Traducoes = {
   "Scripts salvos para responder mais rápido, seus ou da equipe.": { es: "Scripts guardados para responder más rápido, tuyos o del equipo." },
   "Se o agente está melhorando, onde ele erra e o que falta ensinar.": { es: "Si el agente está mejorando, dónde se equivoca y qué falta enseñar." },
   "Seus funis de venda — clique em um para abrir o quadro de clientes.": { es: "Tus embudos de venta. Haz clic en uno para abrir el tablero de clientes." },
+  "Seus pipelines de venda — clique em um para abrir o quadro de clientes.": { es: "Tus pipelines de venta. Haz clic en uno para abrir el tablero de clientes." },
   "Seus números de WhatsApp: por QR ou canal oficial da Meta, com saúde, reconexão e templates.": { es: "Tus números de WhatsApp: por QR o canal oficial de Meta, con salud, reconexión y plantillas." },
   "Agendamento criado.": { es: "Cita creada." },
   "Agendamento remarcado.": { es: "Cita reprogramada." },

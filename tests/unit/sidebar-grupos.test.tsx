@@ -69,7 +69,8 @@ describe("Sidebar agrupado", () => {
       .filter(Boolean);
     // Organização não tem título aqui: seu hub (Configurações) vive no rodapé
     // fixo, fora da área que rola — medido, ele caía fora da dobra até em 1080px.
-    expect(titulos).toEqual(["Atendimento", "CRM", "Agente de IA", "Canais", "Análise"]);
+    // CRM primeiro desde 15/10 (Pipeline é o destino mais usado).
+    expect(titulos).toEqual(["CRM", "Atendimento", "Agente de IA", "Canais", "Análise"]);
   });
 
   it("leva às Etapas do funil pelo CRM, e não por Configurações", () => {
@@ -108,7 +109,7 @@ describe("Sidebar agrupado", () => {
   it("e os dois itens de funil não disputam o mesmo nome", () => {
     comoPapel("admin");
     render(<Sidebar collapsed={false} />);
-    expect(screen.getByRole("link", { name: "Funis" })).toHaveAttribute("href", "/app/kanban");
+    expect(screen.getByRole("link", { name: "Pipeline" })).toHaveAttribute("href", "/app/kanban");
   });
 
   it("desenterra Audit Log — e Nuvemshop ficou de fora, por escolha", () => {
@@ -177,7 +178,7 @@ describe("Sidebar agrupado", () => {
     comoPapel("admin");
     render(<Sidebar collapsed={false} />);
     expect(screen.getByRole("link", { name: /Inbox/ })).toHaveAttribute("aria-current", "page");
-    // "Kanban" saiu da interface; o item da mesma URL agora se chama "Funis".
-    expect(screen.getByRole("link", { name: "Funis" })).not.toHaveAttribute("aria-current");
+    // "Kanban" saiu da interface; o item da mesma URL se chama "Pipeline" (15/10).
+    expect(screen.getByRole("link", { name: "Pipeline" })).not.toHaveAttribute("aria-current");
   });
 });
