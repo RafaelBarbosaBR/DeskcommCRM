@@ -26,6 +26,7 @@ import { BulkActionBar } from "@/components/kanban/BulkActionBar";
 import { NewLeadDialog } from "@/components/kanban/NewLeadDialog";
 import { Button } from "@/components/ui/button";
 import { Plus } from "@/lib/ui/icons";
+import { camposDoFunil } from "@/lib/leads/campos-do-funil";
 import type { LeadFilters } from "@/lib/kanban/filters";
 import { applyFilters, filtersFromParams, filtersToParams } from "@/lib/kanban/filters";
 import { categoriaDoMotivo } from "@/lib/leads/motivos-de-perda-do-funil";
@@ -144,6 +145,7 @@ export function PipelinePageClient({
           // #1751: o quadro é a lista que o diálogo confere ANTES de criar —
           // é ela que faz o aviso de negócio duplicado existir sem rede.
           leads={data.leads}
+          fieldDefs={camposDoFunil(data.pipeline.settings ?? null)}
         />
       )}
       <FilterBar

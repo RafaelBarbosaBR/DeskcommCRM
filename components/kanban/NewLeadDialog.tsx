@@ -37,6 +37,7 @@ import { createLeadSchema, type CreateLeadInput } from "@/lib/schemas/leads";
 import { MOEDA_PADRAO, parseReaisToCents, simboloDaMoeda } from "@/lib/money";
 import { rotuloDoContato } from "@/lib/contacts/rotulo-do-contato";
 import type { Contact } from "@/lib/types/contacts";
+import { CustomFieldsEditor, type CustomFieldDef } from "@/components/contacts/CustomFieldsEditor";
 import { EcoDoValor } from "./EcoDoValor";
 import { SeletorDeContato } from "./SeletorDeContato";
 
@@ -69,6 +70,9 @@ interface Props {
    * mesmo funil + aberto, e depender de quem chama é como a regra se perde.
    */
   leads?: Lead[];
+  /** Os campos de `crm_pipelines.settings.fields` — o mesmo catálogo que o
+   * dossiê já edita (`LeadFieldsForm`), agora também na criação. */
+  fieldDefs?: CustomFieldDef[];
 }
 
 function defaultStageId(stages: Stage[]): string {
@@ -84,6 +88,7 @@ export function NewLeadDialog({
   contactId,
   leads,
   onCreated,
+  fieldDefs = [],
 }: Props) {
   const t = useT();
   const org = useActiveOrg();
@@ -93,6 +98,7 @@ export function NewLeadDialog({
   const initialStage = useMemo(() => defaultStageId(stages), [stages]);
   // Quem abre o diálogo já sabendo o contato (Inbox) não escolhe de novo.
   const [contato, setContato] = useState<Contact | null>(null);
+  const [customFields, setCustomFields] = useState<Record<string, unknown>>({});
   // ─── O AVISO DE NEGÓCIO ABERTO DUPLICADO (issue #1751) ─────────────────────
   //
   // Guarda TAMBÉM os valores do formulário: quem chega aqui já preencheu tudo,
@@ -122,6 +128,7 @@ export function NewLeadDialog({
     if (!open) {
       setContato(null);
       setAviso(null);
+      setCustomFields({});
     }
   }
 
@@ -206,6 +213,7 @@ export function NewLeadDialog({
     if (values.description.trim()) payload.description = values.description.trim();
     if (valueCents !== null) payload.value_cents = valueCents;
     if (values.expected_close_date) payload.expected_close_date = values.expected_close_date;
+    if (Object.keys(customFields).length > 0) payload.custom_fields = customFields;
 
     const parsed = createLeadSchema.safeParse(payload);
     if (!parsed.success) {
@@ -254,6 +262,7 @@ export function NewLeadDialog({
       });
       setContato(null);
       setAviso(null);
+      setCustomFields({});
       onOpenChange(false);
     } catch {
       // toast already shown
@@ -334,6 +343,15 @@ export function NewLeadDialog({
               </SelectContent>
             </Select>
           </div>
+
+          {fieldDefs.length > 0 && (
+            <CustomFieldsEditor
+              fields={fieldDefs}
+              value={customFields}
+              onChange={setCustomFields}
+              mode="lead"
+            />
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">

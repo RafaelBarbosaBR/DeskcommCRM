@@ -191,6 +191,14 @@ export const createLeadSchema = z.object({
   contact_id: z.string().uuid().nullable().optional(),
   value_cents: z.coerce.number().int().nonnegative().nullable().optional(),
   /**
+   * Os campos de `crm_pipelines.settings.fields` (estilo Kommo, #2694):
+   * ausente até aqui, então `NewLeadDialog` preenchia `CustomFieldsEditor` e o
+   * Zod descartava a chave em silêncio antes de chegar à rota — o handler
+   * (`createLeadHandler`) já sabia gravar `input.custom_fields`, só o schema
+   * compartilhado (cliente + `POST /api/v1/leads`) não o deixava passar.
+   */
+  custom_fields: z.record(z.string(), z.unknown()).optional(),
+  /**
    * Sem `default`, e isso É o conserto.
    *
    * Com `.default("BRL")` o campo nunca chegava ausente ao handler: quem
