@@ -82,10 +82,14 @@ describe("o elo que some sem barulho", () => {
     );
   });
 
-  it("e o bloco vem ANTES da linha do tempo que anuncia o canal", () => {
-    // É a timeline que diz "Entrou no funil". A porta atrás do anúncio
-    // obrigaria a rolar para achar o que o próprio texto acabou de prometer.
+  it("e o bloco vem DEPOIS da linha do tempo, não antes (16/10)", () => {
+    // Decisão invertida: a timeline (com o campo de comentário) é o que se usa
+    // em TODA abertura do dossiê e precisa estar visível sem rolar; a conversa
+    // é a porta de SAÍDA para outro lugar (a Inbox) e não compete pelo topo.
+    // Antes disto o bloco vinha primeiro, com o argumento espelhado ("a porta
+    // atrás do anúncio obrigaria rolar") — válido até o pedido explícito de
+    // trocar a ordem tornar esse argumento obsoleto.
     const fonte = readFileSync("components/kanban/LeadDossier.tsx", "utf8");
-    expect(fonte.indexOf("<ConversaNoDossie")).toBeLessThan(fonte.indexOf("<LeadTimeline"));
+    expect(fonte.indexOf("<LeadTimeline")).toBeLessThan(fonte.indexOf("<ConversaNoDossie"));
   });
 });

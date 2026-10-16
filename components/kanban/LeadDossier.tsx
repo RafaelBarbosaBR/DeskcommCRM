@@ -190,16 +190,14 @@ export function LeadDossier({
             </Tabs>
           </div>
 
-          {/* coluna direita: a conversa, depois a timeline — o que ACONTECEU,
-              ao lado do card, sem disputar espaço com o formulário. */}
+          {/* coluna direita: a timeline primeiro, a conversa depois (16/10) —
+              inverte a ordem anterior (conversa primeiro). O comentário é o
+              que se escreve o tempo todo, e precisa estar visível SEM rolar;
+              a conversa é a porta de saída para outro lugar, e cabe mais
+              abaixo, sem disputar o topo com o que se usa a cada abertura do
+              dossiê. */}
           <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-6">
-            <ConversaNoDossie
-              conversa={lead.conversa}
-              contactId={lead.contact_id}
-              phone={lead.contact_phone}
-            />
-
-            <section className="flex-1 pt-3">
+            <section className="flex-1">
               <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-muted">
                 {t("Linha do tempo")}
               </h3>
@@ -211,6 +209,12 @@ export function LeadDossier({
                 isError={timeline.isError}
               />
             </section>
+
+            <ConversaNoDossie
+              conversa={lead.conversa}
+              contactId={lead.contact_id}
+              phone={lead.contact_phone}
+            />
           </div>
         </div>
       </SheetContent>
