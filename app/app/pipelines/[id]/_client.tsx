@@ -24,6 +24,7 @@ import { KanbanBoard } from "@/components/kanban/KanbanBoard";
 import { FilterBar } from "@/components/kanban/FilterBar";
 import { BulkActionBar } from "@/components/kanban/BulkActionBar";
 import { NewLeadDialog } from "@/components/kanban/NewLeadDialog";
+import { SeletorDePipeline, type PipelineDaLista } from "@/components/kanban/SeletorDePipeline";
 import { Button } from "@/components/ui/button";
 import { Plus } from "@/lib/ui/icons";
 import { camposDoFunil } from "@/lib/leads/campos-do-funil";
@@ -36,10 +37,12 @@ export function PipelinePageClient({
   pipelineId,
   initialName,
   role,
+  pipelines,
 }: {
   pipelineId: string;
   initialName: string;
   role: Role;
+  pipelines: PipelineDaLista[];
 }) {
   const t = useT();
   const { data, isLoading, error, pulses, realtimeStatus, seguranca } = useBoard(pipelineId);
@@ -129,9 +132,12 @@ export function PipelinePageClient({
           fora da viewport em telas estreitas. De `sm:` pra cima volta a ser
           uma linha só, como sempre foi. */}
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">
-          {data?.pipeline.name ?? initialName}
-        </h1>
+        <div className="flex min-w-0 items-center gap-1">
+          <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">
+            {data?.pipeline.name ?? initialName}
+          </h1>
+          <SeletorDePipeline pipelineId={pipelineId} pipelines={pipelines} />
+        </div>
         <Button onClick={() => setNewOpen(true)} disabled={!data} className="shrink-0">
           <Plus size={16} className="mr-2" /> {t("Novo Lead")}
         </Button>

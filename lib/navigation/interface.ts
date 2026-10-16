@@ -158,7 +158,12 @@ export function interfaceTemDestino(
 }
 export function homeDaInterface(raw: unknown, platform: boolean, role: Role | null): string {
   const visible = destinosDaInterface(raw, platform, role);
+  // Pipeline é a porta de entrada desde 16/10 — CRM virou o primeiro grupo do
+  // menu (catalogo.ts) pelo mesmo motivo. Inbox continua o segundo critério:
+  // quem não tem Pipeline na interface (vínculo que o tirou) ainda abre em
+  // algo útil, em vez de cair direto no "primeiro não-essencial" genérico.
   return (
+    visible.find((d) => d.href === "/app/kanban")?.href ??
     visible.find((d) => d.href === "/app/inbox")?.href ??
     visible.find((d) => !essencial(d, role, platform))?.href ??
     "/app/settings/profile"

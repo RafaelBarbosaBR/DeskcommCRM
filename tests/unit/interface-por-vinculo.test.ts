@@ -54,6 +54,14 @@ describe("interface por vínculo é apresentação", () => {
       expect.arrayContaining(["/app/team", "/app/settings/profile", "/app/settings/security"]),
     );
   });
+  it("home prioriza Pipeline sobre Inbox; cai para Inbox quando Pipeline não está na interface", () => {
+    expect(homeDaInterface(null, false, "admin")).toBe("/app/kanban");
+    const semPipeline = interfaceSettingsSchema.parse({
+      preset: "completa",
+      destinos: ["/app/inbox", "/app/contacts"],
+    });
+    expect(homeDaInterface(semPipeline, false, "admin")).toBe("/app/inbox");
+  });
   it("escrita recusa arbitrário/vazio; leitura remove obsoleto e degrada sem lançar", () => {
     expect(
       interfaceSettingsSchema.safeParse({ preset: "completa", destinos: ["https://evil.test"] })

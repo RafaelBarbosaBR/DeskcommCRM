@@ -13565,6 +13565,7 @@ export const DICIONARIO: Traducoes = {
   "Não consegui carregar o contato.": { es: "No pude cargar el contacto." },
   Dados: { es: "Datos" },
   Principal: { es: "Principal" },
+  "Trocar de pipeline": { es: "Cambiar de pipeline" },
   Links: { es: "Enlaces" },
   "Abrir no WhatsApp": { es: "Abrir en WhatsApp" },
   "Ver ficha completa do contato": { es: "Ver la ficha completa del contacto" },

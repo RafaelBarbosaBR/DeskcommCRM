@@ -26,5 +26,22 @@ export default async function PipelinePage({
     .eq("id", id)
     .maybeSingle();
   if (!pipeline) notFound();
-  return <PipelinePageClient pipelineId={id} initialName={pipeline.name} role={activeOrg.role} />;
+  // Para o seletor de pipelines do cabeçalho (16/10): a MESMA consulta aberta
+  // que /app/kanban já faz (leitura é papel nenhum — só a gestão exige
+  // manager+), buscada aqui no servidor para não precisar de uma rota nova
+  // nem repetir o gate de papel de `GET /api/v1/pipelines`.
+  const { data: outros } = await supabase
+    .from("crm_pipelines")
+    .select("id, name")
+    .eq("organization_id", activeOrg.orgId)
+    .eq("is_archived", false)
+    .order("position");
+  return (
+    <PipelinePageClient
+      pipelineId={id}
+      initialName={pipeline.name}
+      role={activeOrg.role}
+      pipelines={outros ?? []}
+    />
+  );
 }
