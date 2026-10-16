@@ -13564,6 +13564,7 @@ export const DICIONARIO: Traducoes = {
   "Este negócio não tem contato vinculado.": { es: "Este negocio no tiene contacto vinculado." },
   "Não consegui carregar o contato.": { es: "No pude cargar el contacto." },
   Dados: { es: "Datos" },
+  Principal: { es: "Principal" },
   Links: { es: "Enlaces" },
   "Abrir no WhatsApp": { es: "Abrir en WhatsApp" },
   "Ver ficha completa do contato": { es: "Ver la ficha completa del contacto" },
