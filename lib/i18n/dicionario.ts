@@ -9550,6 +9550,25 @@ export const DICIONARIO: Traducoes = {
     es: "Gana la regla más específica: persona y servicio antes que persona, y persona antes que servicio. No gana el porcentaje más alto.",
   },
   "Pessoa": { es: "Persona" },
+  "Domínio": { es: "Dominio" },
+  "Ramal": { es: "Extensión" },
+  "Sem ramal": { es: "Sin extensión" },
+  "Conta api4com": { es: "Cuenta api4com" },
+  "Nenhuma conta api4com conectada nesta organização ainda.": {
+    es: "Ninguna cuenta api4com conectada en esta organización todavía.",
+  },
+  "Trocar a conta conectada": { es: "Cambiar la cuenta conectada" },
+  "Conectar uma conta": { es: "Conectar una cuenta" },
+  "E-mail da conta api4com": { es: "Correo de la cuenta api4com" },
+  "A senha não é guardada — ela é usada uma vez para gerar um acesso permanente, cifrado, e descartada.":
+    {
+      es: "La contraseña no se guarda — se usa una vez para generar un acceso permanente, cifrado, y se descarta.",
+    },
+  "Ramais da equipe": { es: "Extensiones del equipo" },
+  "Cada pessoa que vai discar pelo CRM precisa de um ramal já existente na conta api4com.": {
+    es: "Cada persona que va a llamar desde el CRM necesita una extensión ya existente en la cuenta api4com.",
+  },
+  "Token inválido — reconecte": { es: "Token inválido — reconecta" },
   "Qualquer pessoa": { es: "Cualquier persona" },
   "Qualquer serviço": { es: "Cualquier servicio" },
   "Percentual": { es: "Porcentaje" },

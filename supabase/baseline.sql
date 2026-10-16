@@ -52967,3 +52967,105 @@ alter table public.platform_branding
 
 comment on column public.platform_branding.accent_dark_hex is
   'Segunda semente da marca (#2482), só para o tema ESCURO: o bloco [data-theme=dark] deriva dela pela mesma derivarMarca, com os mesmos pisos de contraste. NULL = os dois temas derivam de accent_hex, como sempre. --color-brand continua sendo accent_hex (e-mail e logo nao tem tema). Lida/escrita so server-side (service_role), como o resto da tabela.';
+
+-- ---- api4com: schema de telefonia (migration 0629) ----
+-- Espelho exato da migration 20261016190000_0629_api4com_telefonia.sql.
+
+create table if not exists public.api4com_connections (
+  organization_id uuid primary key references public.organizations(id) on delete cascade,
+  domain text not null,
+  access_token_encrypted bytea not null,
+  account_email text not null,
+  webhook_path_token text not null default encode(extensions.gen_random_bytes(24), 'hex'),
+  status text not null default 'connecting'
+    check (status in ('connecting', 'healthy', 'token_invalid', 'disconnected', 'error')),
+  last_webhook_at timestamptz,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint api4com_connections_webhook_path_token_unique unique (webhook_path_token)
+);
+
+alter table public.api4com_connections enable row level security;
+
+drop policy if exists api4com_connections_select on public.api4com_connections;
+create policy api4com_connections_select on public.api4com_connections
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists api4com_connections_admin_write on public.api4com_connections;
+create policy api4com_connections_admin_write on public.api4com_connections
+  for all
+  using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  )
+  with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+revoke all on public.api4com_connections from anon;
+
+drop trigger if exists trg_api4com_connections_set_updated_at on public.api4com_connections;
+create trigger trg_api4com_connections_set_updated_at
+  before update on public.api4com_connections
+  for each row execute function public.fn_set_updated_at();
+
+create or replace view public.api4com_connections_safe
+  with (security_invoker = true) as
+select
+  organization_id, domain, account_email, webhook_path_token, status,
+  last_webhook_at, created_by, created_at, updated_at
+from public.api4com_connections;
+
+revoke all on public.api4com_connections_safe from anon;
+grant select on public.api4com_connections_safe to authenticated;
+
+create table if not exists public.api4com_extensions (
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  extension text not null,
+  sip_password_encrypted bytea,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (organization_id, user_id)
+);
+
+alter table public.api4com_extensions enable row level security;
+
+drop policy if exists api4com_extensions_select on public.api4com_extensions;
+create policy api4com_extensions_select on public.api4com_extensions
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists api4com_extensions_admin_write on public.api4com_extensions;
+create policy api4com_extensions_admin_write on public.api4com_extensions
+  for all
+  using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  )
+  with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+revoke all on public.api4com_extensions from anon;
+
+drop trigger if exists trg_api4com_extensions_set_updated_at on public.api4com_extensions;
+create trigger trg_api4com_extensions_set_updated_at
+  before update on public.api4com_extensions
+  for each row execute function public.fn_set_updated_at();
+
+alter table public.voice_calls
+  add column if not exists provider_call_id text;
+
+alter table public.voice_calls drop constraint if exists voice_calls_provider_check;
+alter table public.voice_calls
+  add constraint voice_calls_provider_check
+  check (provider = any (array['wacalls', 'sip', 'api4com']));
+
+create unique index if not exists idx_voice_calls_org_provider_call_id
+  on public.voice_calls (organization_id, provider, provider_call_id)
+  where provider_call_id is not null;
+
+notify pgrst, 'reload schema';

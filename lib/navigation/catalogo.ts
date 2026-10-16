@@ -1062,6 +1062,15 @@ export const NAV_CATALOG = [
     minRole: "admin",
   },
   {
+    href: "/app/settings/telefonia",
+    label: "Telefonia",
+    description: "Conecte a conta api4com e mapeie o ramal de cada pessoa para ligar pelo CRM.",
+    icon: "Phone",
+    group: "organizacao",
+    section: "Dados e acesso",
+    minRole: "admin",
+  },
+  {
     href: "/app/extensions",
     label: "Extensões",
     description:

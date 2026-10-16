@@ -17,9 +17,13 @@
  * ainda não migrou pra tela (compatibilidade, não fica pra sempre).
  *
  * "mode: human" fica pra quando o atendente quer discar direto (a IA não
- * entra na ponte de áudio) — mesmo endpoint, o worker decide com base nesse
- * campo. A ponte WebRTC pro navegador do atendente não está implementada
- * neste esqueleto.
+ * entra na ponte de áudio). Até a migration 0629 o worker decidia com base
+ * nesse campo, mas a ponte WebRTC pro navegador do atendente nunca foi
+ * implementada neste esqueleto Asterisk/ARI — `mode: human` agora tenta a
+ * api4com PRIMEIRO (`lib/channels/api4com/`, que resolve a ponte de áudio via
+ * webphone no navegador) e só cai no trunk Asterisk/PJSIP de sempre quando a
+ * api4com não está configurada pra este usuário. `mode: ai` nunca muda:
+ * sempre o trunk, sempre `originateCall`.
  */
 import { requireSupportWrite } from "@/lib/impersonate/support";
 import { randomUUID } from "node:crypto";
@@ -29,8 +33,11 @@ import { ok, fail } from "@/lib/api/wrappers";
 import { ApiError } from "@/lib/api/types";
 import { audit } from "@/lib/audit";
 import { requireRole } from "@/lib/auth/require-role";
+import { Api4comError, api4comClickToCall } from "@/lib/channels/api4com/client";
+import { api4comCredsForOrg, api4comExtensionForUser } from "@/lib/channels/api4com/credentials";
 import { createCallSchema, listCallsQuerySchema } from "@/lib/schemas/calls";
 import { validateRequest } from "@/lib/schemas/_validate";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { originateCall } from "@/lib/voip/ariClient";
 import { idsDeContatosPessoais } from "@/app/api/v1/conversations/_handler";
@@ -73,9 +80,12 @@ export function mapStatusParaApi(status: string, endReason: string | null): stri
 }
 
 /**
- * GET /api/v1/calls — lista chamadas SIP da org ativa, mais recente primeiro.
- * `provider=eq.sip` sempre: chamada de WhatsApp (WaCalls) tem tela própria
- * (app/api/v1/voice/calls/*), não entra aqui.
+ * GET /api/v1/calls — lista chamadas de voz "de verdade" (SIP + api4com) da
+ * org ativa, mais recente primeiro. Chamada de WhatsApp (WaCalls) tem tela
+ * própria (app/api/v1/voice/calls/*), não entra aqui — `provider in
+ * ('sip','api4com')`, nunca `'wacalls'`. As duas origens convivem na mesma
+ * tela porque, pro operador, "liguei pra esse cliente" é um fato só — a
+ * api4com é só QUAL provedor atendeu o modo humano desta vez.
  */
 export async function GET(req: NextRequest): Promise<Response> {
   const requestId = randomUUID();
@@ -95,7 +105,7 @@ export async function GET(req: NextRequest): Promise<Response> {
     .from("voice_calls")
     .select(LIST_COLS)
     .eq("organization_id", activeOrg.orgId)
-    .eq("provider", "sip")
+    .in("provider", ["sip", "api4com"])
     .order("started_at", { ascending: false })
     .limit(q.limit);
 
@@ -199,8 +209,76 @@ export async function POST(req: NextRequest): Promise<Response> {
     }
   }
 
+  // ── MODO HUMANO: api4com, quando a organização conectou a conta e ESTE
+  // usuário tem ramal mapeado (Configurações > Telefonia). A IA nunca passa
+  // por aqui — `mode === "ai"` segue 100% pelo trunk Asterisk/PJSIP de
+  // sempre, intocado. Sem api4com configurada (ou sem ramal deste usuário),
+  // modo humano cai no MESMO caminho de trunk SIP que já existia — a api4com
+  // é um provedor A MAIS para o modo humano, não uma substituição.
+  if (input.mode === "human") {
+    const admin = createAdminClient();
+    const creds = await api4comCredsForOrg(admin, activeOrg.orgId);
+    const extension = creds ? await api4comExtensionForUser(admin, activeOrg.orgId, authUser.id) : null;
+
+    if (creds && extension) {
+      const { data: callRow, error: insertError } = await supabase
+        .from("voice_calls")
+        .insert({
+          organization_id: activeOrg.orgId,
+          provider: "api4com",
+          direction: "outbound",
+          status: "ringing",
+          peer_phone: input.toNumber,
+          lead_id: input.leadId ?? null,
+          contact_id: input.contactId ?? null,
+          owner_user_id: authUser.id,
+          handled_by: "human",
+          started_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+      if (insertError || !callRow) {
+        return fail("internal_error", insertError?.message ?? "failed_to_create_call", 500, { requestId });
+      }
+
+      try {
+        // `metadata.voice_call_id` é a correlação que o webhook usa pra achar
+        // esta linha de volta (ver lib/channels/api4com/events-bridge.ts) —
+        // a api4com devolve o metadata inteiro no evento.
+        const chamada = await api4comClickToCall(creds.accessToken, {
+          extension,
+          caller: extension,
+          called: input.toNumber,
+          metadata: { voice_call_id: callRow.id, mode: input.mode },
+        });
+
+        await audit({
+          action: "call.created",
+          actorUserId: authUser.id,
+          organizationId: activeOrg.orgId,
+          resourceType: "voice_calls",
+          resourceId: callRow.id,
+          requestId,
+          metadata: { direction: "outbound", mode: input.mode, to_number: input.toNumber, provider: "api4com" },
+        });
+
+        return ok({ callId: callRow.id, providerCallId: chamada.id }, { status: 201, requestId });
+      } catch (err) {
+        await supabase.from("voice_calls").update({ status: "ended", end_reason: "failed" }).eq("id", callRow.id);
+        const status = err instanceof Api4comError ? err.status : 502;
+        return fail(
+          "originate_failed",
+          err instanceof Error ? err.message : "originate_failed",
+          status >= 400 && status < 500 ? 422 : 502,
+          { requestId },
+        );
+      }
+    }
+  }
+
   // Trunk da organização (Configurações > Trunk SIP) — fallback pro env pra
-  // quem ainda não cadastrou nada na tela.
+  // quem ainda não cadastrou nada na tela. Caminho de sempre: modo IA sempre,
+  // e modo humano quando a api4com não está configurada pra este usuário.
   const { data: trunkConfig } = await supabase
     .from("voip_trunk_settings")
     .select("endpoint_name, is_active")

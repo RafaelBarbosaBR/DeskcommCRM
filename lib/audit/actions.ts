@@ -762,6 +762,13 @@ export const AUDIT_ACTIONS = [
   "call.created",
   "voip_trunk.created",
   "voip_trunk.updated",
+  // Conexão da conta api4com (migration 0629) — provedor do modo humano de
+  // chamada, ao lado do trunk SIP acima. "connected" cobre a primeira vez e
+  // "reconnected" uma troca de credencial; "disconnected" é a remoção.
+  "api4com.connected",
+  "api4com.reconnected",
+  "api4com.disconnected",
+  "api4com.extension_mapped",
 
   // Chamada de voz WhatsApp (spec 18, migration 0234). Ligá-la vincula um
   // SEGUNDO aparelho ao número que já atende, por um caminho que não é o

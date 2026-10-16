@@ -209,6 +209,12 @@ type EntradaDeMarca = {
 
 const MARCA_CONGELADA: Record<string, EntradaDeMarca> = {
   // ─── PROTOCOLO — contrato de fio. Renomear quebra integração alheia. ───
+  "lib/channels/api4com/client.ts": {
+    categoria: "PROTOCOLO",
+    motivo:
+      "`gateway` fixo que identifica esta integração do lado da api4com (PATCH /integrations, api4comUpsertWebhook). Mandar o MESMO valor em toda chamada faz o PATCH atualizar a integração já criada em vez de duplicá-la na conta do cliente — é identificador técnico, nunca aparece em tela.",
+    marcas: ["deskcomm-crm"],
+  },
   "lib/ai/pontos/pkce-da-assinatura.ts": {
     categoria: "PROTOCOLO",
     motivo:
@@ -827,6 +833,16 @@ type CategoriaDeHost =
 type EntradaDeHost = { categoria: CategoriaDeHost; motivo: string };
 
 const HOSTS_DECLARADOS: Record<string, EntradaDeHost> = {
+  "api.api4com.com": {
+    categoria: "FORNECEDOR",
+    motivo:
+      "endpoint padrão da API de voz da api4com (lib/channels/api4com/client.ts) — login, click-to-call, extensões, webhook. O código FALA com ele; API4COM_API_BASE_URL sobrescreve só para homologação (mesma régua de ZERNIO_API_BASE_URL).",
+  },
+  "suaempresa.api4com.com": {
+    categoria: "AMOSTRA",
+    motivo:
+      "formato de exemplo no placeholder do campo Domínio (Configurações > Telefonia): o domínio REAL é o que o cliente digita, não vem de env nenhum — é texto fixo só para mostrar o padrão `<dominio>.api4com.com` que a api4com atribui a cada conta. Não é destino de chamada nem credencial. Fica AMOSTRA porque chega à TELA, mesma régua de wa.me/meet.jit.si (mais abaixo neste arquivo).",
+  },
   "chatgpt.com": {
     categoria: "FORNECEDOR",
     motivo:
@@ -1239,6 +1255,13 @@ describe("catraca de host de terceiro no código que embarca", () => {
       // protocolo manda. Entrou aqui porque a régua nova do #914 passou a
       // enxergá-lo, e não porque o produto ganhou host novo.
       "s.whatsapp.net",
+      // Decisão escrita: formato de exemplo no placeholder do campo Domínio
+      // (Configurações > Telefonia, api4com) — `<dominio>.api4com.com` é o
+      // padrão que a api4com atribui a cada conta. O produto não fala com
+      // esse host específico (o domínio real vem do que o cliente digita);
+      // mesma natureza do `wa.me`/`meet.jit.si` abaixo. Crescimento escrito,
+      // como a regra pede.
+      "suaempresa.api4com.com",
       "tusitio.com",
       // Exemplo de link do WhatsApp gerado pela tela de Conversões (#924). Está
       // aqui, e não em FORNECEDOR, porque o produto NÃO fala com esse host: quem
