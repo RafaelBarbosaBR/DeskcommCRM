@@ -14,6 +14,7 @@ import { ContatoDoNegocio } from "./ContatoDoNegocio";
 import { ConversaNoDossie } from "./ConversaNoDossie";
 import { LeadFieldsForm } from "./LeadFieldsForm";
 import { ScoreSlot } from "./ScoreSlot";
+import { LeadNoteComposer } from "./LeadNoteComposer";
 import { LeadTimeline } from "./LeadTimeline";
 import { PropostasDoNegocio } from "./PropostasDoNegocio";
 import { OwnerBadge } from "./OwnerBadge";
@@ -202,6 +203,7 @@ export function LeadDossier({
               <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-muted">
                 {t("Linha do tempo")}
               </h3>
+              <LeadNoteComposer leadId={lead.id} />
               <LeadTimeline
                 itens={timeline.itens}
                 chegouAoVivo={timeline.chegouAoVivo}

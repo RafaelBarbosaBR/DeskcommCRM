@@ -69,6 +69,19 @@ export const cloneLeadSchema = z.object({
 });
 export type CloneLeadInput = z.infer<typeof cloneLeadSchema>;
 
+/**
+ * addLeadNoteSchema → POST /api/v1/leads/[id]/notes (16/10).
+ *
+ * O comentário manual na linha do tempo do dossiê. `text` vira o `reason` da
+ * atividade `note` (mesmo tipo que o webhook e a IA já escrevem via
+ * `emitLeadActivity`) — não é campo novo no banco, é o mesmo vocabulário
+ * fechado de `lib/leads/activity-vocabulary.ts` usado por um quarto escritor.
+ */
+export const addLeadNoteSchema = z.object({
+  text: z.string().min(1).max(4_000),
+});
+export type AddLeadNoteInput = z.infer<typeof addLeadNoteSchema>;
+
 export const winLeadSchema = z.object({}).passthrough();
 export type WinLeadInput = z.infer<typeof winLeadSchema>;
 

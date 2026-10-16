@@ -13566,6 +13566,10 @@ export const DICIONARIO: Traducoes = {
   Dados: { es: "Datos" },
   Principal: { es: "Principal" },
   "Trocar de pipeline": { es: "Cambiar de pipeline" },
+  "Escreva um comentário sobre este negócio…": {
+    es: "Escribe un comentario sobre este negocio…",
+  },
+  Comentar: { es: "Comentar" },
   Links: { es: "Enlaces" },
   "Abrir no WhatsApp": { es: "Abrir en WhatsApp" },
   "Ver ficha completa do contato": { es: "Ver la ficha completa del contacto" },
