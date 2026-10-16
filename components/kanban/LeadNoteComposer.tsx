@@ -10,7 +10,9 @@ import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/types";
 
 /**
- * O comentário manual no topo da linha do tempo (16/10).
+ * O comentário manual, ABAIXO da linha do tempo (16/10) — como o composer de
+ * uma conversa: escreve-se embaixo, e a nota nova sobe para o topo da lista
+ * acima (ordem mais recente primeiro, que a rota já devolve).
  *
  * Escreve em `crm_lead_activities` como `type: "note"` — o MESMO tipo que o
  * webhook de captação e a ferramenta da IA já gravam (`POST
@@ -41,7 +43,7 @@ export function LeadNoteComposer({ leadId }: { leadId: string }) {
   }
 
   return (
-    <div className="mb-3 flex flex-col gap-2">
+    <div className="mt-3 flex flex-col gap-2">
       <Textarea
         value={texto}
         onChange={(e) => setTexto(e.target.value)}
