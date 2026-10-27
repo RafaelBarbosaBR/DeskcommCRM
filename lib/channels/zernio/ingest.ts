@@ -29,15 +29,14 @@ import { corpoDaLocalizacao } from "@/lib/messaging/localizacao";
 import { encontrarContatoPorTelefone } from "@/lib/channels/contato-por-telefone";
 import { canonicalPhoneBR } from "@/lib/channels/phone-variants";
 import { marcarConversaComMensagem } from "@/lib/channels/marcar-conversa";
+import { emitirTelefoneGanho } from "@/lib/contacts/telefone-ganho";
 
 import { extrairAtribuicaoMeta } from "@/lib/channels/atribuicao-de-anuncio-oficial";
-import { estamparAtribuicaoDoContato } from "@/lib/leads/atribuicao-de-anuncio";
+import { estamparAtribuicaoDoContato, metadataDoAnuncio } from "@/lib/leads/atribuicao-de-anuncio";
+import { ancoraCtwaDaMensagem } from "@/lib/leads/prova-meta-lead-submitted";
 import { extrairEEstamparAtribuicaoGoogle } from "@/lib/plataformas-de-anuncio/google/atribuicao";
 import { pausarIaPorAtendimentoManual } from "@/lib/escalacao/atendimento-manual";
-import {
-  ehNumeroInternoDeAviso,
-  registrarMensagemIgnorada,
-} from "@/lib/escalacao/numero-interno-de-aviso";
+import { consumirRespostaDoSuporteNoWhatsApp } from "@/lib/escalacao/resposta-whatsapp-ao-caso";
 
 import { aplicarEfeitosPosEntrada } from "../pos-entrada";
 
@@ -123,17 +122,19 @@ export async function ingestZernioInbound(
   // é do provedor, não o identificador de privacidade do WhatsApp, e casar por
   // ela exigiria um segundo campo na configuração sem consumidor nenhum hoje.
   if (
-    msg.identity.phone &&
-    (await ehNumeroInternoDeAviso(admin, input.organizationId, {
-      kind: "phone",
-      phone: msg.identity.phone,
-      lid: null,
-    }))
+    await consumirRespostaDoSuporteNoWhatsApp(admin, {
+      organizationId: input.organizationId,
+      channelSessionId: input.channelSessionId,
+      identidade: {
+        kind: msg.identity.phone ? "phone" : "unknown",
+        phone: msg.identity.phone,
+        lid: null,
+      },
+      direction: msg.direction,
+      texto: msg.text,
+      externalId: msg.externalId,
+    })
   ) {
-    await registrarMensagemIgnorada(admin, input.organizationId, {
-      direction: "inbound",
-      sessionId: input.channelSessionId,
-    });
     return { status: "ignored", reason: "numero_interno_de_aviso" };
   }
 
@@ -186,12 +187,28 @@ export async function ingestZernioInbound(
       msg,
     });
     // O telefone pode chegar agora e faltar no contato — vale gravar.
+    //
+    // (#3315) E vale AVISAR: a ficha que estava sem número passou a ter um, que é
+    // exatamente a transição que `contact.phone_added` nomeia. O `select("id")`
+    // não é decoração — é ele que prova que ESTA gravação foi a que preencheu
+    // (o filtro `.is("phone_number", null)` recusa a ficha que já tinha número, e
+    // o dublê que só conta a chamada diria "emitiu" para os dois casos).
     if (msg.identity.phone) {
-      await admin
+      const telefone = canonicalPhoneBR(msg.identity.phone);
+      const { data: afetadas } = await admin
         .from("contacts")
-        .update({ phone_number: canonicalPhoneBR(msg.identity.phone) })
+        .update({ phone_number: telefone })
         .eq("id", existente.contact_id)
-        .is("phone_number", null);
+        .is("phone_number", null)
+        .select("id");
+      if (((afetadas as { id: string }[] | null) ?? []).length > 0) {
+        await emitirTelefoneGanho(admin, {
+          organizationId: input.organizationId,
+          contactId: existente.contact_id,
+          telefone,
+          origem: "zernio.ingest.thread_existente",
+        });
+      }
     }
     if (inseridaNaExistente !== "duplicate") {
       await marcarConversa(admin, input.organizationId, existente.id, msg);
@@ -507,12 +524,32 @@ async function upsertContact(
   // `is null` no filtro: só preenche o que está vazio. Sobrescrever apagaria
   // uma correção feita à mão na tela por um valor que a plataforma pode mandar
   // diferente entre eventos.
+  //
+  // (#3315) O mesmo filtro é o CRITÉRIO da emissão de `contact.phone_added`: o
+  // `select("id")` diz se a gravação casou linha, isto é, se o contato estava
+  // MESMO sem número até agora. Sem validar isso, emitir aqui seria disparar a
+  // regra numa troca de número — que não é "ganhar" nenhum.
+  //
+  // E não há disparo em dobro com o `emit_event` que a própria RPC
+  // (`fn_upsert_wa_contact`, #3315) faz: quando ela preenche a ficha vazia, este
+  // `update` já não casa linha nenhuma e não emite; quando ela não preenche (ou
+  // `kind` é lid), quem preenche é este update, e só ele emite.
   if (msg.identity.phone) {
-    await admin
+    const telefone = canonicalPhoneBR(msg.identity.phone);
+    const { data: afetadas } = await admin
       .from("contacts")
-      .update({ phone_number: canonicalPhoneBR(msg.identity.phone) })
+      .update({ phone_number: telefone })
       .eq("id", contactId)
-      .is("phone_number", null);
+      .is("phone_number", null)
+      .select("id");
+    if (((afetadas as { id: string }[] | null) ?? []).length > 0) {
+      await emitirTelefoneGanho(admin, {
+        organizationId,
+        contactId,
+        telefone,
+        origem: "zernio.ingest.upsert_contato",
+      });
+    }
   }
 
   return contactId;
@@ -573,6 +610,12 @@ async function insertMessage(
   const { msg } = input;
   const temAnexo = msg.attachments.length > 0;
   const primeiro = msg.attachments[0];
+  // O anúncio DESTA mensagem, quando ela nasceu de um clique. O contato guarda
+  // só o primeiro (primeiro toque, em `efeitosDaEntrada`); sem este rastro, quem
+  // volta por OUTRO anúncio aparece na conversa como se viesse do antigo.
+  // Só na entrada: eco de saída não vem de clique de ninguém.
+  const anuncio =
+    msg.direction === "inbound" ? metadataDoAnuncio(extrairAtribuicaoMeta(msg.referral)) : {};
 
   const { data, error } = await admin
     .from("messages")
@@ -623,11 +666,15 @@ async function insertMessage(
       ...(temAnexo && primeiro?.url
         ? { media_url: primeiro.url, media_mime: mimeDoAnexo(primeiro.type) }
         : {}),
-      metadata: temAnexo
-        ? { provider_attachments: msg.attachments }
-        : msg.location
-          ? { location: msg.location }
-          : {},
+      metadata: {
+        ...(temAnexo
+          ? { provider_attachments: msg.attachments }
+          : msg.location
+            ? { location: msg.location }
+            : {}),
+        ...anuncio,
+        ...(msg.direction === "inbound" ? ancoraCtwaDaMensagem(extrairAtribuicaoMeta(msg.referral)) : {}),
+      },
       ...(msg.sentAt ? { sent_at: msg.sentAt } : {}),
     })
     .select("id")

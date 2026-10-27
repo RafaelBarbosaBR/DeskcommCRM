@@ -1,10 +1,11 @@
 /**
- * O NÚMERO QUE RECEBE OS AVISOS É INTERNO — E NADA QUE VENHA DELE VIRA ATENDIMENTO.
+ * O NÚMERO DE AVISOS É INTERNO — NÃO VIRA CONVERSA DE CLIENTE.
  *
  * ## O que acontece sem este corte
  *
- * A equipe responde "ok" ao aviso de caso. Essa mensagem entra pelo webhook como
- * qualquer outra e, na ordem em que os efeitos rodam, vira:
+ * Uma mensagem solta da equipe não pode virar conversa de cliente. Respostas
+ * explícitas `RESPONDER`/`PERGUNTAR` ao caso são tratadas antes deste corte, no
+ * módulo `resposta-whatsapp-ao-caso.ts`. O resto, se passasse, poderia virar:
  *
  *   · um CONTATO com o número do plantão e uma CONVERSA — e é o INSERT da
  *     conversa que dispara o pedido de rodízio pelo banco, então um atendente
@@ -36,8 +37,8 @@
  * tentação de acrescentar o número "para depurar" é o defeito conhecido: o log
  * de diagnóstico vira depósito de dado pessoal, num arquivo que ninguém
  * expurga. O que identifica a linha é a organização e a direção; o QUE foi
- * ignorado está, em contagem, na configuração — e é a tela que diz ao operador
- * "3 mensagens deste número foram ignoradas, é o esperado".
+ * ignorado está, em contagem, na configuração — e é a tela que mostra quantas
+ * mensagens fora do formato de resposta de caso foram ignoradas.
  *
  * **Não** `emit_event`: evento sem consumidor é o anti-pattern nº 3 do
  * CLAUDE.md, e o descarte aqui é decisão de PRODUTO — a mesma natureza do
@@ -70,6 +71,9 @@ export interface NumeroInternoDeAviso {
   destino: string | null;
   /** `config_aviso_de_caso.destino_jid` — o endereço que o transporte resolveu. */
   jid: string | null;
+  respostaWhatsappHabilitada?: boolean;
+  /** `config_aviso_de_caso.channel_session_id` — a conexão que envia os avisos. */
+  sessaoId?: string | null;
 }
 
 /**
@@ -87,6 +91,57 @@ const _cache = new Map<string, { at: number; valor: NumeroInternoDeAviso }>();
 /** Esvazia o memo. Usado pelos testes e por quem grava a configuração. */
 export function limparCacheDoNumeroInterno(): void {
   _cache.clear();
+  _cacheDaAgenda.clear();
+}
+
+const _cacheDaAgenda = new Map<string, { at: number; valor: string | null }>();
+
+/**
+ * O número PRÓPRIO do aviso de agendamento (0753), quando ele não reusa o do
+ * aviso de caso — memoizado como o outro. Nunca lança.
+ *
+ * Quando o aviso de agendamento usa o número do aviso de caso, o corte acima já
+ * o cobre e aqui não há nada a acrescentar. Quando tem número próprio, ele é
+ * interno pela MESMA razão: o dono responde "ok" ao aviso, e essa resposta não
+ * pode virar lead, conversa nem despacho da IA. `ligado` também é ignorado
+ * aqui, pela mesma razão do cabeçalho.
+ *
+ * Fica de fora das respostas `RESPONDER`/`PERGUNTAR`, que são do aviso de CASO:
+ * por isso o número da agenda não entra em `NumeroInternoDeAviso.destino`.
+ */
+export async function lerNumeroDoAvisoDeAgendamento(
+  db: SupabaseClient,
+  organizationId: string,
+): Promise<string | null> {
+  const agora = Date.now();
+  const emCache = _cacheDaAgenda.get(organizationId);
+  if (emCache && agora - emCache.at < TTL_DO_CACHE_MS) return emCache.valor;
+  try {
+    const r = await db
+      .from("config_aviso_de_agendamento")
+      .select("usa_numero_do_aviso_de_caso, telefone_destino")
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (r.error) throw new Error(r.error.message);
+    const linha = r.data as { usa_numero_do_aviso_de_caso?: boolean | null; telefone_destino?: string | null } | null;
+    const valor = linha && linha.usa_numero_do_aviso_de_caso === false ? (linha.telefone_destino ?? null) : null;
+    _cacheDaAgenda.set(organizationId, { at: agora, valor });
+    return valor;
+  } catch (err) {
+    // Mesma decisão da leitura do aviso de caso: aberta na ação, nomeada no log.
+    logger.warn("[aviso-interno] não foi possível ler o número do aviso de agendamento", {
+      organizationId,
+      causa: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/** O chat é o número próprio do aviso de agendamento? Pura. */
+export function ehOChatDoAvisoDeAgendamento(parsed: ChatIdentidade, destino: string | null): boolean {
+  if (!destino) return false;
+  return (parsed.kind === "phone" || parsed.kind === "lid") && !!parsed.phone &&
+    phoneLookupVariants(destino).includes(parsed.phone);
 }
 
 /**
@@ -99,13 +154,18 @@ export function limparCacheDoNumeroInterno(): void {
 export function ehOChatDoAviso(parsed: ChatIdentidade, cfg: NumeroInternoDeAviso): boolean {
   if (!cfg.destino && !cfg.jid) return false;
 
-  if (parsed.kind === "phone" && parsed.phone && cfg.destino) {
-    return phoneLookupVariants(cfg.destino).includes(parsed.phone);
+  // Em modo privacidade (`@lid`) o ingestor do canal preenche `phone` com o
+  // `_data.key.remoteJidAlt` do payload — e é por ele que o número cadastrado
+  // é reconhecido, porque o transporte resolve o destino por telefone
+  // (`<tel>@c.us`) e o `destino_jid` nunca termina em `@lid`.
+  if ((parsed.kind === "phone" || parsed.kind === "lid") && parsed.phone && cfg.destino &&
+      phoneLookupVariants(cfg.destino).includes(parsed.phone)) {
+    return true;
   }
 
-  // O destinatário em modo privacidade chega SEM telefone, com um identificador
-  // que o canal inventa. O JID só é conhecido depois do primeiro aviso enviado —
-  // antes disso uma resposta dele passa, e esse buraco está declarado no teste.
+  // Sem o telefone alternativo, o `@lid` só casa pelo JID, que só é conhecido
+  // depois de um aviso enviado a esse endereço — esse buraco está declarado no
+  // teste.
   if (parsed.kind === "lid" && parsed.lid && cfg.jid) {
     return cfg.jid === `${parsed.lid}@lid`;
   }
@@ -133,7 +193,7 @@ export async function lerNumeroInternoDeAviso(
   try {
     const r = await db
       .from("config_aviso_de_caso")
-      .select("telefone_destino, destino_jid")
+      .select("telefone_destino, destino_jid, resposta_whatsapp_habilitada, channel_session_id")
       .eq("organization_id", organizationId)
       .maybeSingle();
     if (r.error) throw new Error(r.error.message);
@@ -146,13 +206,20 @@ export async function lerNumeroInternoDeAviso(
       organizationId,
       causa: err instanceof Error ? err.message : String(err),
     });
-    return { destino: null, jid: null };
+    return { destino: null, jid: null, respostaWhatsappHabilitada: false, sessaoId: null };
   }
 
-  const linha = data as { telefone_destino?: string | null; destino_jid?: string | null } | null;
+  const linha = data as {
+    telefone_destino?: string | null;
+    destino_jid?: string | null;
+    resposta_whatsapp_habilitada?: boolean | null;
+    channel_session_id?: string | null;
+  } | null;
   const valor: NumeroInternoDeAviso = {
     destino: linha?.telefone_destino ?? null,
     jid: linha?.destino_jid ?? null,
+    respostaWhatsappHabilitada: linha?.resposta_whatsapp_habilitada === true,
+    sessaoId: linha?.channel_session_id ?? null,
   };
   _cache.set(organizationId, { at: agora, valor });
   return valor;
@@ -178,7 +245,8 @@ export async function ehContatoDoNumeroInterno(
   contactId: string,
 ): Promise<boolean> {
   const cfg = await lerNumeroInternoDeAviso(db, organizationId);
-  if (!cfg.destino && !cfg.jid) return false;
+  const daAgenda = await lerNumeroDoAvisoDeAgendamento(db, organizationId);
+  if (!cfg.destino && !cfg.jid && !daAgenda) return false;
 
   // Mesmo `try` da leitura acima, e pela mesma razão: o CINTO não pode ser o
   // que derruba a cadeia de efeitos que ele existe para proteger.
@@ -202,14 +270,12 @@ export async function ehContatoDoNumeroInterno(
   if (!data) return false;
 
   const linha = data as { phone_number?: string | null; wa_lid?: string | null };
-  return ehOChatDoAviso(
-    {
-      kind: linha.phone_number ? "phone" : "lid",
-      phone: linha.phone_number ?? null,
-      lid: linha.wa_lid ?? null,
-    },
-    cfg,
-  );
+  const chat: ChatIdentidade = {
+    kind: linha.phone_number ? "phone" : "lid",
+    phone: linha.phone_number ?? null,
+    lid: linha.wa_lid ?? null,
+  };
+  return ehOChatDoAviso(chat, cfg) || ehOChatDoAvisoDeAgendamento(chat, daAgenda);
 }
 
 /** A pergunta que os ingestores fazem, com a leitura já resolvida. */
@@ -221,7 +287,8 @@ export async function ehNumeroInternoDeAviso(
   // Atalho barato: grupo e formato desconhecido nunca são o número de aviso, e
   // perguntar ao banco por eles gastaria a consulta quente à toa.
   if (parsed.kind !== "phone" && parsed.kind !== "lid") return false;
-  return ehOChatDoAviso(parsed, await lerNumeroInternoDeAviso(db, organizationId));
+  if (ehOChatDoAviso(parsed, await lerNumeroInternoDeAviso(db, organizationId))) return true;
+  return ehOChatDoAvisoDeAgendamento(parsed, await lerNumeroDoAvisoDeAgendamento(db, organizationId));
 }
 
 /**

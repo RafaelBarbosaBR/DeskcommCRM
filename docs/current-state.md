@@ -222,9 +222,9 @@ e o nome do script sugere cobertura total que o conteúdo não entrega.
 
 ### 4.3 Rate limit HTTP praticamente inexistente 🔴
 
-`checkRateLimit` (`lib/ai/dispatcher/rate-limit.ts`) é chamado em **2** lugares:
-o webhook público de captação e o dispatcher de IA. Sem proteção: `/login`, `/signup`,
-`/team/accept-invite/:token`, os crons, `/api/internal/*`, `/api/mcp`, webhooks WAHA
+`checkRateLimit` (`lib/ai/dispatcher/rate-limit.ts`) tem mais de um chamador —
+reconte, não cite: `grep -rln 'checkRateLimit(' app lib --include='*.ts' | grep -v '\.test\.'`. Sem proteção: `/login`, `/signup`,
+`/team/accept-invite/:token`, os crons, `/api/mcp`, webhooks WAHA
 e Nuvemshop. Detalhe e impacto em [`threat-model.md`](threat-model.md).
 
 ### 4.4 `node_modules` deste checkout está incompleto 🟠

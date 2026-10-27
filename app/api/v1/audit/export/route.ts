@@ -14,6 +14,7 @@ import { requireRole } from "@/lib/auth/require-role";
 import { createClient } from "@/lib/supabase/server";
 import { auditQuerySchema } from "@/lib/schemas/audit";
 import { traduzir } from "@/lib/i18n/dicionario";
+import { neutralizarFormula } from "@/lib/csv/neutralizar-formula";
 
 export const dynamic = "force-dynamic";
 
@@ -55,7 +56,7 @@ const HEADER = [
 
 function csvEscape(v: unknown): string {
   if (v === null || v === undefined) return "";
-  const s = typeof v === "string" ? v : JSON.stringify(v);
+  const s = neutralizarFormula(typeof v === "string" ? v : JSON.stringify(v));
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }

@@ -8,12 +8,14 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { FlowArrow, Plus, Sparkle } from "@/lib/ui/icons";
+import { FlowArrow, Plus, Sparkle, UploadSimple } from "@/lib/ui/icons";
 import { useFollowupFlows, type FollowupFlowPointerRow } from "@/hooks/followup/useFollowupFlows";
 import type { FollowupFlowSurface } from "@/lib/followup/api-schemas";
 import { DeleteFollowupFlowButton } from "./DeleteFollowupFlowButton";
 import { DuplicateFollowupFlowButton } from "./DuplicateFollowupFlowButton";
+import { ExportFollowupFlowButton } from "./ExportFollowupFlowButton";
 import { FlowStatusBadge } from "./FlowStatusBadge";
+import { ImportFlowDialog } from "./ImportFlowDialog";
 import { ModelosDialog } from "./ModelosDialog";
 import { NewFlowDialog } from "./NewFlowDialog";
 import { RenameFollowupFlowButton } from "./RenameFollowupFlowButton";
@@ -33,12 +35,27 @@ function formatUpdatedAt(iso: string, idioma: string): string {
   });
 }
 
+/**
+ * A política de handoff em palavra de gente, para o cartão da lista (#3104).
+ *
+ * A coluna mostrava o valor CRU do banco (`pause`, `cancel`, `allow`) ao lado
+ * de «Handoff» — com o perfil em espanhol, «Transferencia: pause». O `value`
+ * gravado continua o mesmo; o seletor da barra de publicação mantém as frases
+ * longas dele («Pausar durante handoff»), porque ali há espaço para explicar.
+ */
+const HANDOFF_EM_PALAVRA: Record<string, string> = {
+  pause: "Pausar",
+  cancel: "Cancelar",
+  allow: "Permitir",
+};
+
 export function FlowsList({ initialData, canWrite, surface }: Props) {
   const tagDoIdioma = useTagDeIdioma();
   const t = useT();
   const { data } = useFollowupFlows({ initialData, ...(surface ? { surface } : {}) });
   const [dialogOpen, setDialogOpen] = useState(false);
   const [modelosOpen, setModelosOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const deAtendimento = surface === "atendimento";
 
   const flows = data ?? [];
@@ -68,9 +85,23 @@ export function FlowsList({ initialData, canWrite, surface }: Props) {
     </Button>
   );
 
+  // Importar fica ao lado de "Novo fluxo", sempre como botão secundário: é o
+  // caminho de quem JÁ tem um fluxo pronto (exportado aqui ou em outra conta).
+  const importButton = (
+    <Button
+      onClick={() => setImportOpen(true)}
+      variant="outline"
+      className="w-full sm:w-auto"
+      data-testid="import-followup-flow"
+    >
+      <UploadSimple size={14} aria-hidden className="mr-2" /> {t("Importar fluxo")}
+    </Button>
+  );
+
   const dialogos = canWrite && (
     <>
       <NewFlowDialog open={dialogOpen} onOpenChange={setDialogOpen} surface={surface} />
+      <ImportFlowDialog open={importOpen} onOpenChange={setImportOpen} baseHref={baseHref} />
       {!deAtendimento && (
         <ModelosDialog
           open={modelosOpen}
@@ -102,6 +133,7 @@ export function FlowsList({ initialData, canWrite, surface }: Props) {
             <div className="mt-1 flex flex-col items-center gap-2 sm:flex-row">
               {!deAtendimento && modelosButton}
               {newFlowButton}
+              {importButton}
             </div>
           )}
         </Card>
@@ -110,12 +142,17 @@ export function FlowsList({ initialData, canWrite, surface }: Props) {
     );
   }
 
+  // Os diálogos ficam no MESMO lugar da árvore nos dois ramos — segundo filho do fragmento.
+  // Dentro da <div> deste ramo, a primeira importação (a lista vai de 0 para 1) remontava o diálogo e o
+  // resultado sumia: o que resolver antes de publicar e o link « Abrir o fluxo » nunca apareciam.
   return (
+    <>
     <div className="flex flex-col gap-4">
       {canWrite && (
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
           {!deAtendimento && modelosButton}
           {newFlowButton}
+          {importButton}
         </div>
       )}
 
@@ -133,21 +170,24 @@ export function FlowsList({ initialData, canWrite, surface }: Props) {
                 <dl className="grid grid-cols-2 gap-2 pt-1 text-xs">
                   <div>
                     <dt className="text-text-muted">{t("Versão")}</dt>
-                    <dd className="font-mono">{flow.active_version_id ? "publicada" : "—"}</dd>
+                    <dd className="font-mono">{flow.active_version_id ? t("publicada") : "—"}</dd>
                   </div>
                   <div>
-                    <dt className="text-text-muted">Handoff</dt>
-                    <dd className="font-mono">{flow.handoff_policy}</dd>
+                    <dt className="text-text-muted">{t("Handoff")}</dt>
+                    <dd className="font-mono">
+                      {t(HANDOFF_EM_PALAVRA[flow.handoff_policy] ?? flow.handoff_policy)}
+                    </dd>
                   </div>
                 </dl>
                 <p className="mt-auto pt-2 text-xs text-text-muted">
-                  Atualizado em {formatUpdatedAt(flow.updated_at, tagDoIdioma)}
+                  {t("Atualizado em")} {formatUpdatedAt(flow.updated_at, tagDoIdioma)}
                 </p>
               </Link>
               {canWrite && (
                 <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-2">
                   <RenameFollowupFlowButton flowId={flow.id} flowName={flow.name} />
                   <DuplicateFollowupFlowButton flowId={flow.id} />
+                  <ExportFollowupFlowButton flowId={flow.id} />
                   <DeleteFollowupFlowButton flowId={flow.id} flowName={flow.name} listHref={baseHref} />
                 </div>
               )}
@@ -155,8 +195,8 @@ export function FlowsList({ initialData, canWrite, surface }: Props) {
           </li>
         ))}
       </ul>
-
-      {dialogos}
     </div>
+    {dialogos}
+    </>
   );
 }

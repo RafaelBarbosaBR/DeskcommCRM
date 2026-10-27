@@ -182,7 +182,13 @@ test.describe("a automação conta o que aconteceu de verdade", () => {
       ).toBeVisible({ timeout: 10_000 });
       await numeros.first().click();
 
-      await editor.getByRole("textbox").last().fill(`Olá {{nome}}, vi que você se cadastrou.`);
+      // A MENSAGEM é o `<Textarea>` do passo. O `#2734` acrescentou, LOGO
+      // DEPOIS dela, o `<Input>` da URL de mídia — os dois são role `textbox`,
+      // e o `.last()` de antes passou a preencher a URL da mídia, deixando a
+      // mensagem vazia: o schema recusa, nenhum POST sai e a espera expira. O
+      // seletor estrutural (`textarea` = a mensagem; a mídia é `<input>`) não
+      // depende de copy nem de ordem.
+      await editor.locator("textarea").fill(`Olá {{nome}}, vi que você se cadastrou.`);
 
       const [salvo] = await Promise.all([
         page.waitForResponse(

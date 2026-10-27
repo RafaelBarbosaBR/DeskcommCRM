@@ -45,7 +45,7 @@ import type { createAdminClient } from "@/lib/supabase/admin";
 import { MODELO_DO_JEV, type FalhaDaDecisao, type Pergunta, type Resposta } from "./cliente";
 import type { ConfigDoJev, EstadoQuePergunta } from "./config";
 import { podeTentar, registrarFalha, registrarSucesso } from "./disjuntor";
-import { chaveDasTarefas, decidirNoPonto, type DependenciasDoPonto } from "./ponto";
+import { decidirNoPonto, destinoDasTarefas, type DependenciasDoPonto } from "./ponto";
 import { codigoDoErroDoJev } from "./textos";
 import {
   CONFERENCIA_DE_CAMPO,
@@ -296,8 +296,13 @@ export async function conferirCamposDoNegocio(
       ...deps,
       // A chave desta tarefa (e não a de um ponto — não há ponto no registro).
       // `decidirNoPonto` sem `ponto` só resolveria a chave se cada PERGUNTA
-      // fosse id de tarefa, e aqui as perguntas são por campo.
-      buscarChave: deps.buscarChave ?? ((org: string) => chaveDasTarefas(org, [tarefa])),
+      // fosse id de tarefa, e aqui as perguntas são por campo. A ORIGEM vem
+      // junto com a chave: ela escolhe a base, o nome do modelo e o provedor da
+      // credencial, e sem ela o Jev via OpenRouter mandaria o nome errado.
+      // Chave injetada por teste continua vencendo, pelo caminho de sempre.
+      ...(deps.buscarDestino || deps.buscarChave
+        ? {}
+        : { buscarDestino: (org: string) => destinoDasTarefas(org, [tarefa]) }),
     },
   );
   if (!r.ok) {

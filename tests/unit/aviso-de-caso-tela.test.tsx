@@ -17,7 +17,7 @@
  *
  * Mocar o componente esconderia a peça do único teste que monta esta árvore.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
@@ -28,6 +28,7 @@ vi.mock("@/hooks/ai/useAvisoDeCaso", () => ({
   CHAVE_DO_AVISO: ["ai-aviso-de-caso"],
   useAvisoDeCaso: () => consulta(),
   useSalvarAvisoDeCaso: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useRemoverAvisoDeCaso: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useTestarAvisoDeCaso: () => ({ mutateAsync: vi.fn(), isPending: false, data: undefined }),
 }));
 
@@ -49,6 +50,7 @@ function estado(patch: Partial<EstadoDoAviso> = {}): EstadoDoAviso {
       telefone: "+5531998966398",
       rotulo: "Plantão da Ana",
       ligado: true,
+      resposta_whatsapp_habilitada: false,
       atualizado_em: "2026-09-18T12:00:00.000Z",
     },
     conexoes: [
@@ -151,6 +153,27 @@ describe("os avisos de estado viram frase", () => {
     expect(bloco.textContent).toContain("17/09");
   });
 
+  it("o texto do descarte segue a opção de responder casos pelo WhatsApp", () => {
+    const descarte = (comandos: number) =>
+      estado({
+        avisos: [
+          {
+            codigo: "descarte_acontecendo",
+            bloqueia: false,
+            dados: { ignoradas: 3, ultimaEm: "2026-09-17T15:30:00.000Z", comandos },
+          },
+        ],
+      });
+    const { unmount } = montar(descarte(0));
+    expect(screen.getByTestId("alerta-descarte_acontecendo").textContent).toContain(
+      "não chega ao CRM",
+    );
+    expect(screen.getByTestId("alerta-descarte_acontecendo").textContent).not.toContain("RESPONDER");
+    unmount();
+    montar(descarte(1));
+    expect(screen.getByTestId("alerta-descarte_acontecendo").textContent).toContain("RESPONDER");
+  });
+
   it("instalação saudável não mostra bloco de alerta nenhum", () => {
     montar(estado());
     expect(screen.queryByTestId("alertas-do-aviso")).toBeNull();
@@ -160,7 +183,7 @@ describe("os avisos de estado viram frase", () => {
 describe("o switch e o botão de teste", () => {
   it("o switch fica travado quando a regra diz que não dá para ligar", () => {
     montar(estado({ pode_ligar: false, config: null }));
-    expect(screen.getByRole("switch")).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Receber avisos no WhatsApp" })).toBeDisabled();
   });
 
   it("sem endereço público o switch fica travado MESMO com conexão e número salvos", () => {
@@ -172,12 +195,12 @@ describe("o switch e o botão de teste", () => {
         avisos: [{ codigo: "sem_endereco_publico", bloqueia: true }],
       }),
     );
-    expect(screen.getByRole("switch")).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Receber avisos no WhatsApp" })).toBeDisabled();
   });
 
   it("com tudo em ordem o switch destrava", () => {
     montar(estado());
-    expect(screen.getByRole("switch")).toBeEnabled();
+    expect(screen.getByRole("switch", { name: "Receber avisos no WhatsApp" })).toBeEnabled();
   });
 
   it("o botão de teste só fica ativo com configuração SALVA", () => {
@@ -251,6 +274,40 @@ describe("o que a tela diz sem ninguém perguntar", () => {
     const laco = screen.getByTestId("laco-do-aviso");
     expect(laco.textContent).toContain("12 min");
     expect(laco.textContent).toContain("190 min");
+  });
+});
+
+describe("a remoção do destinatário (issue #3338)", () => {
+  it("só aparece com configuração SALVA — antes disso não há o que remover", () => {
+    montar(estado({ config: null }));
+    expect(screen.queryByRole("button", { name: /remover destinatário/i })).toBeNull();
+
+    montar(estado());
+    expect(
+      screen.getAllByRole("button", { name: /remover destinatário/i }).at(-1),
+    ).toBeInTheDocument();
+  });
+
+  it("a confirmação diz a consequência ANTES de apagar, e dá como voltar atrás", () => {
+    montar(estado());
+    fireEvent.click(screen.getByRole("button", { name: "Remover destinatário" }));
+
+    const bloco = screen.getByTestId("confirmar-remocao");
+    expect(bloco.textContent).toContain("volta a ser um número comum");
+    // A configuração apagada também é lida pela Agenda e pela ação "Mensagem
+    // para a equipe": a confirmação tem de dizer que esses envios param junto.
+    expect(bloco.textContent).toContain("Agenda");
+    expect(bloco.textContent).toContain("Mensagem para a equipe");
+    expect(screen.getByRole("button", { name: "Manter" })).toBeInTheDocument();
+
+    // Desistir fecha a pergunta e não é remoção nenhuma.
+    fireEvent.click(screen.getByRole("button", { name: "Manter" }));
+    expect(screen.queryByTestId("confirmar-remocao")).toBeNull();
+  });
+
+  it("a remoção é OUTRA coisa que o switch: a tela diz isso", () => {
+    montar(estado());
+    expect(screen.getByText(/sai da configuração e volta a entrar no Inbox/i)).toBeInTheDocument();
   });
 });
 

@@ -39,10 +39,12 @@ function linhaRecusada() {
   };
 }
 
-/** Cadeia `from().select().eq().eq().order().limit()` que resolve a lista. */
+/** Cadeia `from().select().eq().in().order().limit()` que resolve a lista. */
 function dubleLista(linhas: Array<Record<string, unknown>>) {
   const cadeia: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "order", "limit", "not"]) {
+  // `in` entrou com o provedor api4com (migration 0629): o GET agora lista
+  // `provider in ('sip','api4com')` em vez de `eq('provider','sip')` sozinho.
+  for (const m of ["select", "eq", "in", "order", "limit", "not"]) {
     cadeia[m] = () => cadeia;
   }
   cadeia.then = (ok: (r: unknown) => unknown) =>

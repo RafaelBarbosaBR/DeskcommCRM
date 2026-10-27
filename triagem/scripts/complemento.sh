@@ -140,7 +140,33 @@ else p tabela_nova "n/a"; fi
 
 # --- security definer exposta ---
 if c -qi 'security definer'; then
-  c -qiE 'revoke (execute|all( privileges)?) on function.*from.*(public|anon)' && p definer_revoke "tem revoke" || p definer_revoke "security definer SEM revoke — as DUAS origens"
+  # As origens se SOMAM por FUNÇÃO. O regex anterior fechava em `(public|anon)`
+  # e aceitava o revoke de UMA origem só, embora a mensagem já falasse das DUAS
+  # (medido na main no #2304); a primeira correção passou a exigir as duas, mas
+  # na MESMA declaração — e aí reprovava função correta que parte o revoke em
+  # duas linhas, uma para `public` e outra para `anon` (as migrations 0428 e
+  # 0442 revogam assim). Agora o `from public` de uma linha e o `from anon` de
+  # outra, para a MESMA função, somam; e as origens de funções DIFERENTES NÃO se
+  # misturam (misturar continua reprovando). A chave é a referência entre
+  # `on function` e o `from`, lida sem diferenciar maiúscula, e o
+  # `revoke[[:space:]]+…[[:space:]]+on[[:space:]]+function` aceita espaço
+  # múltiplo (as 0428/0442 alinham `revoke all     on`). Bash 3.2 não tem array
+  # associativo — o awk, que o script já usa, tem, e agrega por chave numa passada.
+  REVOGA=$(c -iE 'revoke[[:space:]]+(execute|all([[:space:]]+privileges)?)[[:space:]]+on[[:space:]]+function.*from')
+  DEF_OK=$(awk '
+    {
+      low = tolower($0)
+      lista = low; sub(/.*from/, "", lista)
+      fn = low
+      sub(/.*on[[:space:]]+function/, "", fn)
+      sub(/from.*/, "", fn)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", fn)
+      if (lista ~ /(^|[^[:alnum:]_])public([^[:alnum:]_]|$)/) rev_pub[fn] = 1
+      if (lista ~ /(^|[^[:alnum:]_])anon([^[:alnum:]_]|$)/)   rev_anon[fn] = 1
+    }
+    END { for (f in rev_pub) if (f in rev_anon) { print 1; exit } print 0 }
+  ' <<<"$REVOGA")
+  [ "$DEF_OK" = 1 ] && p definer_revoke "tem revoke" || p definer_revoke "security definer SEM revoke — as DUAS origens"
 fi
 
 # --- 4. console.log (no-console é warn, o CI não reprova) ---

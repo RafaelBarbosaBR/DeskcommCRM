@@ -1,7 +1,8 @@
 /**
  * POST /api/v1/cobranca/assinatura/plano — a empresa troca de plano (spec §7e):
  * o MESMO caminho do card do dono (`lib/cobranca/troca.ts`). Em teste grátis
- * vale na hora; depois, na próxima cobrança paga — e a tela diz a data.
+ * vale na hora; upgrade pago exige confirmação do proporcional; downgrade vale
+ * na próxima renovação — e a tela diz a data.
  */
 import { randomUUID } from "node:crypto";
 
@@ -50,7 +51,7 @@ export async function POST(req: NextRequest) {
     });
   }
   return ok(
-    { changed: r.changed, quando: r.quando, plano_id: r.planoId, plano_agendado_id: r.planoAgendadoId, vale_a_partir_de: r.valeAPartirDe },
+    { changed: r.changed, quando: r.quando, plano_id: r.planoId, plano_agendado_id: r.planoAgendadoId, vale_a_partir_de: r.valeAPartirDe, url_pagamento: r.urlPagamento ?? null },
     { requestId },
   );
 }

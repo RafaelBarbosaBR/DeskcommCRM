@@ -5,7 +5,7 @@ import { useLocaleDeData } from "@/hooks/i18n/useLocaleDeData";
 import type { Locale } from "date-fns";
 import { format, formatDistanceToNowStrict } from "date-fns";
 import { useT } from "@/hooks/i18n/useT";
-import { Robot } from "@/lib/ui/icons";
+import { Check, Robot, Sparkle } from "@/lib/ui/icons";
 import { ChannelLogo } from "@/components/inbox/ChannelLogo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +19,7 @@ import {
 } from "@/lib/inbox/comando-da-conversa";
 import { cn } from "@/lib/utils";
 import type { ConversationWithContact } from "@/hooks/inbox/useConversationsRealtime";
-import { rotuloDoContato } from "@/lib/contacts/rotulo-do-contato";
+import { rotuloParaAEquipe } from "@/lib/contacts/rotulo-do-contato";
 import { phoneForDisplay } from "@/lib/channels/phone-variants";
 import { rotuloDoCanalDaConversa } from "@/lib/channels/estado";
 
@@ -62,6 +62,31 @@ interface Props {
    * afirme nada".
    */
   automaticoDaOrg?: boolean;
+  /**
+   * Marca esta linha no lote (#2484, F1). Presente só quando a seleção
+   * múltipla está ligada — sem ela a caixa não aparece, e a lista continua
+   * sendo o que era.
+   */
+  selecionado?: boolean;
+  /**
+   * Liga o modo de seleção: com esta prop a linha ganha a caixa de marcação.
+   * A ação da caixa é SEPARADA do clique na linha — quem marca não abre a
+   * conversa, e quem abre não marca.
+   */
+  onAlternarSelecao?: (id: string) => void;
+  /**
+   * Marca (ou desmarca) ESTA conversa como exemplo para o agente aprender
+   * (#3006). Presente = a linha monta o controle; AUSENTE = a linha é
+   * exatamente a que era, sem controle nenhum e sem selo — é o que mantém os
+   * testes que renderizam a linha sozinha, e a lista que não oferece a ação.
+   *
+   * A CHAMADA À ROTA NÃO MORA AQUI, e isso é de propósito. Vem por prop, como
+   * o `automaticoDaOrg`: uma resposta por lista, não por linha — e, medido, a
+   * linha é renderizada sem `QueryClientProvider` em vários testes do repo, o
+   * que faria um `useQueryClient()` aqui dentro derrubar todos eles com "No
+   * QueryClient set". Quem faz o `POST .../usable-for-rag` é a lista.
+   */
+  onAlternarExemplo?: (id: string, enabled: boolean) => void;
 }
 
 /**
@@ -135,11 +160,14 @@ export function ConversationListItem({
   mostrarAtendente,
   mostrarAutomatico = true,
   automaticoDaOrg,
+  selecionado = false,
+  onAlternarSelecao,
+  onAlternarExemplo,
 }: Props) {
   const localeDaData = useLocaleDeData();
   const t = useT();
   const c = conversation.contacts ?? null;
-  const displayName = rotuloDoContato(c, t);
+  const displayName = rotuloParaAEquipe(c, t);
   const phoneFallback = c?.phone_number ? phoneForDisplay(c.phone_number) : "??";
   const tags = c?.tags ?? [];
   const visibleTags = tags.slice(0, 2);
@@ -221,25 +249,80 @@ export function ConversationListItem({
   const canal = conversation.channel_sessions ?? null;
   const rotuloCanal = rotuloDoCanalDaConversa(canal, t);
 
+  /**
+   * A CONVERSA MARCADA COMO EXEMPLO PARA O AGENTE (#3006).
+   *
+   * `usable_for_rag` é a coluna que a rota `usable-for-rag` liga; quem a traz
+   * para cá é o `SELECT_COLS` da lista. Os dois rótulos são literais `t()`
+   * separados — a cerca de espanhol cobra chave por chave, e uma escolha
+   * ternária dentro do `t()` ficaria invisível para ela.
+   */
+  const exemploMarcado = Boolean(conversation.usable_for_rag);
+  const rotuloExemplo = exemploMarcado
+    ? t("Deixar de usar como exemplo")
+    : t("Usar como exemplo para a IA");
+
   const temSelos =
     visibleTags.length > 0 ||
+    exemploMarcado ||
     (mostrarAtendente && comando.quem === "humano") ||
     (mostrarCanal && rotuloCanal != null) ||
     Boolean(c?.is_blocked) ||
     Boolean(c?.is_anonymized);
 
   return (
-    <button
-      type="button"
-      data-conversation-id={conversation.id}
-      onClick={() => onSelect(conversation.id)}
+    <div
       className={cn(
-        "group relative flex w-full items-start gap-3 border-b border-border/70 px-3 py-2.5 text-left transition-colors hover:bg-surface-elevated",
-        "focus-visible:outline-hidden focus-visible:bg-surface-elevated",
-        isSelected && "bg-accent-50 hover:bg-accent-50",
+        "relative flex w-full items-start border-b border-border/70",
+        selecionado && "bg-accent-soft",
       )}
-      aria-current={isSelected ? "true" : undefined}
     >
+      {/*
+        A CAIXA DE SELEÇÃO (#2484, F1) — fora do botão da linha, de propósito:
+        controle interativo dentro de `<button>` é HTML inválido, e o clique na
+        caixa NÃO pode abrir a conversa. Marcar e abrir são gestos diferentes.
+      */}
+      {onAlternarSelecao && (
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={selecionado}
+          aria-label={t("Selecionar conversa")}
+          title={t("Selecionar conversa")}
+          data-testid={`selecao-em-lote-${conversation.id}`}
+          onClick={() => onAlternarSelecao(conversation.id)}
+          className={cn(
+            "mt-3 ml-2 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border transition-colors",
+            "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent",
+            selecionado
+              ? "border-accent bg-accent text-accent-foreground"
+              : "border-muted-foreground bg-background hover:bg-surface-elevated",
+          )}
+        >
+          {selecionado && <Check size={12} weight="bold" aria-hidden />}
+        </button>
+      )}
+      <button
+        type="button"
+        data-conversation-id={conversation.id}
+        onClick={() => onSelect(conversation.id)}
+        className={cn(
+          "group relative flex min-w-0 flex-1 items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-surface-elevated",
+          "focus-visible:outline-hidden focus-visible:bg-surface-elevated",
+          // `accent-soft`, e não um degrau fixo da rampa: os degraus têm o MESMO
+          // hex nos dois temas, e o `accent-50` (quase branco) no escuro deixava o
+          // nome — `text-text`, claro no escuro — branco sobre branco.
+          // Marcada no lote, quem pinta é o wrapper: no escuro o `accent-soft` é
+          // translúcido, e pintar os dois o somava (prévia a 3,2:1). O botão fica
+          // transparente também no hover/foco, senão o cinza do hover cobria só ele
+          // e a linha ficava em dois tons; o foco vira anel, como o da caixa.
+          isSelected &&
+            (selecionado
+              ? "hover:bg-transparent focus-visible:bg-transparent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+              : "bg-accent-soft hover:bg-accent-soft"),
+        )}
+        aria-current={isSelected ? "true" : undefined}
+      >
       {isSelected && (
         <span className="absolute inset-y-0 left-0 w-0.5 bg-accent" aria-hidden />
       )}
@@ -327,7 +410,9 @@ export function ConversationListItem({
           <p
             className={cn(
               "min-w-0 truncate text-[13px]",
-              unread > 0 ? "text-text" : "text-text-muted",
+              // Na aberta, `text-text`: `text-muted` sobre o `accent-soft` do
+              // escuro dá 4,2:1, abaixo do AA (medido em selecionada-legivel-no-escuro.test).
+              unread > 0 || isSelected ? "text-text" : "text-text-muted",
             )}
           >
             {isAi && mostrarAutomatico ? (
@@ -344,6 +429,20 @@ export function ConversationListItem({
 
         {temSelos && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            {/* O SELO DO EXEMPLO vem ANTES das etiquetas de propósito: a faixa
+                mostra no máximo 2 etiquetas e as que sobram viram "+N". Um
+                estado que decide se a conversa entra na base de conhecimento
+                do agente não pode ser o primeiro a ser cortado. */}
+            {exemploMarcado && (
+              <Badge
+                variant="outline"
+                data-testid="selo-exemplo-ia"
+                className="h-4 gap-1 px-1.5 text-[10px] font-normal text-accent"
+              >
+                <Sparkle size={10} weight="fill" aria-hidden />
+                {t("Exemplo para a IA")}
+              </Badge>
+            )}
             {visibleTags.map((t) => (
               <ChipDeEtiqueta key={t} tag={t} className="h-4 px-1.5 text-[10px]" />
             ))}
@@ -380,6 +479,43 @@ export function ConversationListItem({
           </div>
         )}
       </div>
-    </button>
+      </button>
+      {/*
+        O CONTROLE DE "EXEMPLO PARA A IA" (#3006) fica FORA do botão da linha,
+        como a caixa de seleção logo acima e pelo mesmo motivo: controle
+        interativo dentro de `<button>` é HTML inválido, e marcar não pode abrir
+        a conversa. O gesto de marcar é separado do gesto de abrir.
+
+        Fica sempre visível, e não só no hover: o defeito que esta issue
+        conserta é justamente um recurso que ninguém achava. Um ícone que só
+        aparece sob o cursor continuaria escondido no celular, onde não há
+        hover — e o alvo de toque é maior do que o desenho sugere.
+
+        Desmarcado usa `text-text-muted`, não `text-text-subtle`: é componente
+        gráfico e precisa de 3:1 contra o fundo da linha. Medido na prova de
+        tela, subtle dava 2,81:1 no escuro (#605e54 sobre #161510). Muted, no
+        pior fundo de cada tema (linha selecionada, `bg-accent-soft`): 5,74:1 no
+        claro (#5d594f sobre #e4ebe0) e 4,23:1 no escuro (#8e8b7f sobre #272b20).
+      */}
+      {onAlternarExemplo && (
+        <button
+          type="button"
+          data-testid={`exemplo-ia-${conversation.id}`}
+          aria-pressed={exemploMarcado}
+          aria-label={rotuloExemplo}
+          title={rotuloExemplo}
+          onClick={() => onAlternarExemplo(conversation.id, !exemploMarcado)}
+          className={cn(
+            "mr-1 mt-2.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm transition-colors",
+            "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent",
+            exemploMarcado
+              ? "text-accent hover:bg-accent-soft"
+              : "text-text-muted hover:bg-surface-elevated hover:text-text",
+          )}
+        >
+          <Sparkle size={14} weight={exemploMarcado ? "fill" : "regular"} aria-hidden />
+        </button>
+      )}
+    </div>
   );
 }

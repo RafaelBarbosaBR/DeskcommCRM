@@ -19,6 +19,19 @@ describe("política por canal HTTP",()=>{
  it.each([401,403])("preserva negativa de autorização %s",async(status)=>{vi.mocked(requireRole).mockResolvedValue({ok:false,response:new Response(null,{status})} as never);expect((await PATCH(req())).status).toBe(status);expect(rpc).not.toHaveBeenCalled();});
  it("support readonly não chega à RPC",async()=>{vi.mocked(requireSupportWrite).mockResolvedValue(new Response(null,{status:403}) as never);expect((await PATCH(req())).status).toBe(403);expect(rpc).not.toHaveBeenCalled();});
  it("platform admin também prova MFA",async()=>{vi.mocked(mfaEmDivida).mockResolvedValue(true);expect((await PATCH(req())).status).toBe(403);expect(rpc).not.toHaveBeenCalled();});
- it("lista vazia persiste, org vem da sessão e reset é explícito",async()=>{expect((await PATCH(req())).status).toBe(200);expect(rpc).toHaveBeenCalledWith("fn_set_channel_routing",{p_org:org,p_channel:channel,p_users:[],p_reset:false});expect((await PATCH(req({channel_session_id:channel,user_ids:[],organization_id:channel}))).status).toBe(422);});
+ it("lista vazia persiste, org vem da sessão e reset é explícito",async()=>{expect((await PATCH(req())).status).toBe(200);expect(rpc).toHaveBeenCalledWith("fn_set_channel_routing",{p_org:org,p_channel:channel,p_users:[],p_reset:false,p_mode:null,p_default_assignee:null});expect((await PATCH(req({channel_session_id:channel,user_ids:[],organization_id:channel}))).status).toBe(422);});
  it.each([["P0002",404],["22023",422]])("RPC %s não vira sucesso parcial",async(code,status)=>{rpc.mockResolvedValue({data:null,error:{code}});expect((await PATCH(req())).status).toBe(status);});
+ it("modo e destino padrão do NÚMERO atravessam a rota (issue #2331)",async()=>{
+  const ana="20000000-0000-4000-8000-00000000000a";
+  expect((await PATCH(req({channel_session_id:channel,user_ids:[ana],distribution_mode:"round_robin",default_assignee_user_id:ana}))).status).toBe(200);
+  expect(rpc).toHaveBeenCalledWith("fn_set_channel_routing",{p_org:org,p_channel:channel,p_users:[ana],p_reset:false,p_mode:"round_robin",p_default_assignee:ana});
+ });
+ it("modo fora da lista da tela é recusado antes da RPC",async()=>{
+  expect((await PATCH(req({channel_session_id:channel,user_ids:[],distribution_mode:"telefone"}))).status).toBe(422);
+  expect(rpc).not.toHaveBeenCalled();
+ });
+ it("destino padrão nulo explícito continua chegando à RPC como nulo (número sem regra)",async()=>{
+  expect((await PATCH(req({channel_session_id:channel,user_ids:[],distribution_mode:null,default_assignee_user_id:null}))).status).toBe(200);
+  expect(rpc).toHaveBeenCalledWith("fn_set_channel_routing",{p_org:org,p_channel:channel,p_users:[],p_reset:false,p_mode:null,p_default_assignee:null});
+ });
 });

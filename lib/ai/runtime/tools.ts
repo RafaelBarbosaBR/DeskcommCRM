@@ -33,6 +33,13 @@ import type { McpContext, McpToolDefinition } from "@/lib/mcp/types";
 import { resolveActiveLeadForContact, type LeadCandidate } from "@/lib/leads/active-lead";
 import { podeChamarFerramenta, recusaParaOModelo } from "@/lib/leads/escopo-de-funil";
 import { escritaCabeNoTurno } from "./escopo-das-escritas";
+import {
+  chaveDaEscritaDoNegocio,
+  criarFilaDeEscritasDoNegocio,
+  EscritaDoNegocioSemDesfechoError,
+  PRAZO_ESCRITA_NEGOCIO_MS,
+} from "./escritas-do-negocio";
+import { guardServiceEffect } from "@/lib/atendimento/fronteira-server";
 
 export interface RuntimeHandoffSignal {
   triggered: boolean;
@@ -202,6 +209,7 @@ function shapeToZodObject(shape: Record<string, z.ZodTypeAny>): z.ZodTypeAny {
 function wrapMcpTool(
   def: McpToolDefinition,
   input: PickToolsInput,
+  executarEscrita: ReturnType<typeof criarFilaDeEscritasDoNegocio>,
 ): Tool {
   const inputSchema = shapeToZodObject(def.inputSchema as Record<string, z.ZodTypeAny>);
 
@@ -409,9 +417,20 @@ function wrapMcpTool(
         // aqui, no único ponto que tem `input`, para valer para todo chamador
         // de `pickToolsFromMcp` — quem não tem contato de turno (rota HTTP,
         // MCP externo, agente sem conversa) continua com o ctx de antes (#2158).
-        const result = await def.handler(
-          argsRecord as never,
-          input.contatoDoTurno ? { ...input.ctx, contatoDoTurno: input.contatoDoTurno } : input.ctx,
+        // Depois da tradução contato → negócio: ids diferentes podem mirar o mesmo card.
+        // Aguarda TODAS as escritas do handler, inclusive atividade que troca updated_at.
+        // A trava otimista nativa continua recusando interferência humana real.
+        const result = await executarEscrita(
+          chaveDaEscritaDoNegocio(input.ctx.organizationId, def, argsRecord),
+          async () => {
+            // O comando pode ter sido perdido enquanto esta escrita esperava na fila.
+            // A guarda anterior à chamada não autoriza começar um handler depois disso.
+            if (def.category === "write") await guardServiceEffect();
+            return def.handler(
+              argsRecord as never,
+              input.contatoDoTurno ? { ...input.ctx, contatoDoTurno: input.contatoDoTurno } : input.ctx,
+            );
+          },
         );
 
         // Capture handoff signal so the runtime can short-circuit the loop.
@@ -433,6 +452,16 @@ function wrapMcpTool(
         //
         // Só quem declara é afetado: sem `motivoDoVazio` nada muda.
         const motivoDoVazio = def.motivoDoVazio?.(result) ?? null;
+
+        // O TERMO desta chamada, quando a tool declara um (#484, caminho 2).
+        //
+        // É o que deixa a leitura no painel contar "não achei POR TERMO" — a
+        // lista de compras do dono da loja — em vez de só "falhou por tool". O
+        // termo sobe mesmo quando a busca ACHOU: total × falhas por termo é o
+        // sinal que separa "termo difícil" de "termo que não existe", e só as
+        // falhas mostrariam o termo sem a régua dele. Sem `termoBuscado` nada
+        // muda — a chave nem aparece no `metadata` (mesma disciplina do motivo).
+        const termoBuscado = def.termoBuscado?.(argsRecord as never) ?? null;
 
         // Recusa devolvida PELO HANDLER também não é sucesso (#2158): a ficha de
         // outro cliente recusada em `crm_get_contact` volta no mesmo formato da
@@ -461,6 +490,7 @@ function wrapMcpTool(
           ...(motivoDoVazio === null
             ? {}
             : { desfecho: "sem_resultado" as const, motivo: motivoDoVazio }),
+          ...(termoBuscado === null ? {} : { termo: termoBuscado }),
         });
         return result;
       } catch (err) {
@@ -473,6 +503,19 @@ function wrapMcpTool(
           success: false,
           errorMessage: message,
         });
+        if (err instanceof EscritaDoNegocioSemDesfechoError) {
+          logger.error("escrita do negócio sem desfecho; novas escritas recusadas", {
+            tool_name: def.name,
+            organization_id: input.ctx.organizationId,
+            request_id: input.ctx.requestId,
+            prazo_ms: PRAZO_ESCRITA_NEGOCIO_MS,
+          });
+          return {
+            error: message,
+            resultado_incerto: true,
+            mensagem: "Há uma escrita deste negócio ainda sem desfecho confirmado. Não confirme sucesso, não repita nem tente outra escrita: peça à equipe para conferir. A operação em andamento não foi cancelada.",
+          };
+        }
         // Recusa por papel/scope NAO e erro de execucao — e defeito de
         // configuracao: o humano ligou a capacidade na tela e ela nao existe na
         // pratica. Devolver so ao modelo faz a promessa quebrada sumir sem
@@ -513,6 +556,7 @@ function recusaDoHandler(result: unknown): string | null {
 
 export function pickToolsFromMcp(input: PickToolsInput): Record<string, Tool> {
   const result: Record<string, Tool> = {};
+  const executarEscrita = criarFilaDeEscritasDoNegocio();
 
   for (const id of input.toolIds) {
     const def = getToolByName(id);
@@ -551,7 +595,7 @@ export function pickToolsFromMcp(input: PickToolsInput): Record<string, Tool> {
     )
       continue;
 
-    result[def.name] = wrapMcpTool(def, input);
+    result[def.name] = wrapMcpTool(def, input, executarEscrita);
   }
 
   // Auto-inject handoff tool when enabled even if not in tool_ids — Spec 10
@@ -559,7 +603,7 @@ export function pickToolsFromMcp(input: PickToolsInput): Record<string, Tool> {
   if (input.handoffToolEnabled && !result[HANDOFF_TOOL_NAME]) {
     const handoff = allTools.find((t) => t.name === HANDOFF_TOOL_NAME);
     if (handoff) {
-      result[HANDOFF_TOOL_NAME] = wrapMcpTool(handoff, input);
+      result[HANDOFF_TOOL_NAME] = wrapMcpTool(handoff, input, executarEscrita);
     }
   }
 
@@ -571,7 +615,7 @@ export function pickToolsFromMcp(input: PickToolsInput): Record<string, Tool> {
       if (deCapacidadeDesligada(nome, input.capacidadesLigadas ?? []) || result[nome]) continue;
       const tool = allTools.find((t) => t.name === nome);
       if (tool) {
-        result[nome] = wrapMcpTool(tool, input);
+        result[nome] = wrapMcpTool(tool, input, executarEscrita);
       }
     }
   }
@@ -605,20 +649,36 @@ export function pickToolsFromMcp(input: PickToolsInput): Record<string, Tool> {
         input.servidorMcpExterno.ferramentas,
         ocupados,
         escolhas,
-        // Junta de teste (ver `ServidorMcpExternoMontado.fetch`): em produção
-        // isto vem vazio e a saída usa o guard anti-SSRF.
-        input.servidorMcpExterno.fetch ? { fetch: input.servidorMcpExterno.fetch } : undefined,
+        {
+          // Junta de teste (ver `ServidorMcpExternoMontado.fetch`): em produção
+          // vem vazia e a saída usa o guard anti-SSRF.
+          ...(input.servidorMcpExterno.fetch ? { fetch: input.servidorMcpExterno.fetch } : {}),
+          // A identidade do contato, resolvida no banco por `carregar.ts`.
+          ...(input.servidorMcpExterno.cabecalhos
+            ? { cabecalhos: input.servidorMcpExterno.cabecalhos }
+            : {}),
+        },
       );
+      // O servidor carrega a identidade DESTE contato? Só então a leitura
+      // remota serve a uma conversa.
+      const identificado =
+        input.contatoDoTurno !== undefined &&
+        input.servidorMcpExterno.contato === input.contatoDoTurno;
+      // Com contato, a auditoria da remota leva o `contact_id` da conversa
+      // (`metadata.contact_id`, em `auditMcpToolCall`).
+      const entradaDaRemota = input.contatoDoTurno
+        ? { ...input, ctx: { ...input.ctx, contatoDoTurno: input.contatoDoTurno } }
+        : input;
       for (const def of remotas) {
         // ESCOLHA (b), item 8, em dois níveis. O primeiro é
-        // `carregarServidorMcpExterno`, que não carrega servidor nenhum para
-        // turno com contato — este é o de defesa: se um chamador futuro
-        // passar as duas coisas, a LEITURA remota não monta (o servidor não
-        // recebe o contato do turno e poderia devolver dado de outro cliente)
-        // e a ESCRITA monta para ser RECUSADA logo acima por
-        // `escrita_sem_escopo_do_turno`, nunca executada.
-        if (input.contatoDoTurno && def.category === "read") continue;
-        result[def.name] = wrapMcpTool(def, input);
+        // `carregarServidorMcpExterno`, que só carrega servidor para turno com
+        // contato quando o agente ligou a opção — este é o de defesa: sem a
+        // identidade do contato amarrada ao servidor, a LEITURA remota não
+        // monta (poderia devolver dado de outro cliente), e a ESCRITA monta
+        // para ser RECUSADA logo acima por `escrita_sem_escopo_do_turno`,
+        // nunca executada — com ou sem identidade.
+        if (input.contatoDoTurno && def.category === "read" && !identificado) continue;
+        result[def.name] = wrapMcpTool(def, entradaDaRemota, executarEscrita);
       }
     }
   }

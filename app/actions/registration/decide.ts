@@ -8,6 +8,7 @@ import { audit } from "@/lib/audit";
 import { escritaDeAdminOuRecusa } from "@/lib/auth/escritaDeAdminOuRecusa";
 import type { RecusaDeEscritaDeAdmin } from "@/lib/auth/recusa-de-escrita-de-admin";
 import { ensureTenantForUser } from "@/lib/auth/provision";
+import { ipDoCliente } from "@/lib/http/ip-do-cliente";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const entradaSchema = z.object({
@@ -68,7 +69,14 @@ export async function decideRegistrationRequest(
         {
           id: conta.user.id,
           email: conta.user.email,
-          user_metadata: { org_name: pedido.requested_organization_name },
+          // O plano escolhido no cadastro (#2846) viaja junto: sem ele, a empresa
+          // nasceria no padrão — ou, sem padrão, o gatilho recusaria toda aprovação.
+          user_metadata: {
+            org_name: pedido.requested_organization_name,
+            ...(typeof conta.user.user_metadata?.cobranca_plan_id === "string"
+              ? { cobranca_plan_id: conta.user.user_metadata.cobranca_plan_id }
+              : {}),
+          },
         },
         { source: "signup" },
       );
@@ -100,7 +108,7 @@ export async function decideRegistrationRequest(
     resourceId: pedido.id,
     actingAsPlatformAdmin: true,
     requestId: hdrs.get("x-request-id"),
-    ip: hdrs.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ip: ipDoCliente(hdrs),
     userAgent: hdrs.get("user-agent"),
   });
 

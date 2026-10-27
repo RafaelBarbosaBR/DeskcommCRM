@@ -29,7 +29,7 @@
  * Os textos são a CHAVE em português do dicionário (`lib/i18n/dicionario.ts`);
  * quem desenha passa por `t()`/`traduzir()`.
  */
-import type { Role } from "@/lib/auth/types";
+import { type Role, visibilidadeRestritaAoAtendente } from "@/lib/auth/types";
 import { MODULOS_OPCIONAIS, MODULOS_OPCIONAIS_POR_FLAG, MODULOS_SO_DA_INSTALACAO, type ModuloOpcional } from "@/lib/instalacao/modulos";
 import { NAV_CATALOG, type NavMetadata } from "@/lib/navigation/catalogo";
 import { vendaPeloCanalLigada } from "@/lib/conversoes/venda-pelo-canal";
@@ -330,10 +330,10 @@ const DO_SERVIDOR: RecursoOpcional[] = [
     nome: "Notificação com a aba fechada",
     oQueFaz: "Os alertas chegam na bandeja do computador mesmo com o sistema fechado.",
     nivel: "servidor",
-    padrao: "desligado",
+    padrao: "ligado",
     quemDecide: "dono_do_servidor",
     href: null,
-    comoLigar: "No arquivo de ambiente, o par VAPID_PUBLIC_KEY e VAPID_PRIVATE_KEY.",
+    comoLigar: "Nasce pronto pelo kit de instalação, mas só funciona em endereço com https (em http://IP nenhum navegador entrega o aviso com o sistema fechado). Se aparecer desligado, rode no servidor: bash hostgator-setup-kit/update.sh",
     ler: peloServidor("web_push"),
   },
   {
@@ -378,7 +378,7 @@ const DA_EMPRESA: RecursoOpcional[] = [
     padrao: "desligado",
     quemDecide: "manager",
     href: "/app/settings/atendimento",
-    ler: peloSettings((s) => s.visibility_mode === "own" || s.visibility_mode === "own_and_unassigned"),
+    ler: peloSettings((s) => visibilidadeRestritaAoAtendente(s.visibility_mode)),
   },
   {
     id: "assinatura_do_emissor",

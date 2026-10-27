@@ -9,6 +9,7 @@
  * Timeout 5s, sem retry. Erros 401 são distintos de erros de rede.
  */
 import { baseDaApiDoJev } from "@/lib/ai/decisao/cliente";
+import { caminhoDaProva, ORIGEM_PADRAO, type OrigemDoJev } from "@/lib/ai/decisao/origem";
 import { PROVEDOR_POR_ASSINATURA, type ProvedorComChave } from "@/lib/ai/pontos/provedores";
 import { motivoDaRecusaDeDestino } from "@/lib/automation/destinos-internos-autorizados";
 import { env } from "@/lib/env";
@@ -285,10 +286,24 @@ export async function validateRequestyKey(apiKey: string): Promise<ValidationRes
  * gasta token. O formato do catálogo é `{ models: [{ name }] }`, diferente do
  * `{ data: [{ id }] }` dos outros. A base é a mesma que o cliente usa, para o
  * dublê do e2e validar pelo mesmo caminho.
+ *
+ * ═══ A ORIGEM MUDA A PROVA, E É POR ISSO QUE ELA ENTRA AQUI ═══
+ *
+ * Via OpenRouter (`./decisao/origem`) o MESMO Jev responde, mas o catálogo
+ * `/v1/models` de lá é PÚBLICO — responde 200 para qualquer string, e provar a
+ * chave por ele gravaria qualquer coisa como validada (o defeito que este
+ * arquivo já corrigiu para o provedor OpenRouter, medido em 2026-09-02). Quem
+ * prova a chave na OpenRouter é `GET /v1/key` (`caminhoDaProva`), sobre a MESMA
+ * base que a chamada usará — um dublê ou proxy prova o par exato que vai sair.
+ * (A credencial OpenRouter da CONVERSA é provada por `validateOpenRouterKey`,
+ * que é outro caminho de escrita, e não muda.)
  */
-export async function validateTypeSafeKey(apiKey: string): Promise<ValidationResult> {
+export async function validateTypeSafeKey(
+  apiKey: string,
+  origem: OrigemDoJev = ORIGEM_PADRAO,
+): Promise<ValidationResult> {
   try {
-    const res = await timedFetch(`${baseDaApiDoJev()}/v1/models`, {
+    const res = await timedFetch(`${baseDaApiDoJev(origem)}${caminhoDaProva(origem)}`, {
       method: "GET",
       headers: { Authorization: `Bearer ${apiKey}` },
     });
@@ -298,6 +313,10 @@ export async function validateTypeSafeKey(apiKey: string): Promise<ValidationRes
     if (!res.ok) {
       return { ok: false, error: `provider_status_${res.status}` };
     }
+    // A prova da OpenRouter não devolve catálogo, e o catálogo dela não é a
+    // lista do Jev: a tela do Jev não a usa (o rótulo e o prefixo da chave são
+    // estáticos). Provar a chave é o que importa; inventar uma lista não.
+    if (origem === "openrouter") return { ok: true, models: [] };
     const json = (await res.json()) as { models?: { name?: string }[] };
     const models = (json.models ?? []).map((m) => m.name ?? "").filter(Boolean);
     return { ok: true, models };

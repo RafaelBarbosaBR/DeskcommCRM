@@ -33,7 +33,7 @@ describe("trocar de plano pela empresa", () => {
   it("⭐ agenda para a próxima cobrança paga, diz a partir de quando, e audita com quem clicou", async () => {
     h.trocar.mockResolvedValue({ ok: true, changed: true, quando: "agendado", planoId: "atual", planoAgendadoId: PLANO, valeAPartirDe: "2026-11-01T00:00:00.000Z", de: "atual" });
     expect((await (await trocar({ plano_id: PLANO })).json()).data).toEqual({
-      changed: true, quando: "agendado", plano_id: "atual", plano_agendado_id: PLANO, vale_a_partir_de: "2026-11-01T00:00:00.000Z",
+      changed: true, quando: "agendado", plano_id: "atual", plano_agendado_id: PLANO, vale_a_partir_de: "2026-11-01T00:00:00.000Z", url_pagamento: null,
     });
     expect(h.trocar).toHaveBeenCalledWith({}, ORG, PLANO);
     expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cobranca.plano_trocado", actorUserId: "admin-1", organizationId: ORG, metadata: { de: "atual", para: PLANO, quando: "agendado" } }));

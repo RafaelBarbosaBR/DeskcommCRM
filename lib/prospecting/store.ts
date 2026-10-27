@@ -21,9 +21,13 @@ import {
   type SearchInput,
   type Prospect,
 } from "./schema";
-import { ProspectingError } from "./provider";
+import { CanalReconectandoError, ProspectingError } from "./provider";
+import { audit } from "@/lib/audit";
+import { vereditoPuro } from "./site-classify";
+import { pedidoDaProspeccao } from "./pedido-da-prospeccao";
 import {
   provedorDaOrganizacao,
+  provedorExigeCredencialDaOrganizacao,
   validarCredencialDaOrganizacao,
 } from "./provedor";
 
@@ -40,6 +44,17 @@ export interface Campaign {
   next_send_at: Date;
   created_at: Date;
   error: string | null;
+  /**
+   * DESDE QUANDO ESTA CAMPANHA ESPERA O CANAL VOLTAR AO `WORKING` (issue #3073).
+   *
+   * `null` = não está esperando. É gravado no primeiro adiamento por reconexão
+   * (`coalesce(channel_down_since, now())`) e LIMPO quando o tick observa o canal
+   * em `WORKING` (ou ao iniciar/retomar a campanha). É esta a régua do teto do
+   * adiamento — `channel_sessions.last_status_change_at` não serve: a ingestão a
+   * regrava a cada evento, então um canal que alterna `STARTING`↔`STOPPED`
+   * reiniciaria o relógio a cada volta.
+   */
+  channel_down_since: Date | null;
 }
 export interface Candidate {
   id: string;
@@ -123,6 +138,11 @@ export async function configureCredential(
   // responde com a MESMA validação de sempre — `users/me`, mesma URL, mesmo
   // erro — então quem não pediu nada não muda de comportamento.
   await validarCredencialDaOrganizacao(pool, org, key);
+  // #2942: o `local-http` NÃO tem segredo por organização — a URL do engine
+  // vem da INSTALAÇÃO (`PROSPECTING_LOCAL_HTTP_URL`). Nessa escolha o
+  // `configure` é só o gatilho de validação (o health check do engine) e o
+  // valor recebido é IGNORADO: não é gravado nem usado.
+  if (!(await provedorExigeCredencialDaOrganizacao(pool, org))) return;
   const encrypted = await encryptWebhookSecret(admin, key);
   if (!encrypted)
     throw new ProspectingError("A cifra de credenciais da instalação não está disponível.");
@@ -144,12 +164,17 @@ export async function createSearch(
       [org, requestId],
     );
     if (prior.rows[0]) return prior.rows[0];
-    const key = await credential(db, admin, org);
     // O provedor é ESCOLHA desta organização (#1758) e resolve-se ANTES de
     // qualquer escrita: escolha desconhecida falha fechado sem deixar campanha
     // órfã no banco. As outras organizações resolvem as suas próprias — a
     // escolha de uma não vaza para a outra.
     const provedor = await provedorDaOrganizacao(db, org);
+    // A credencial só é exigida de quem tem segredo POR ORGANIZAÇÃO: o
+    // `local-http` da #2942 lê a URL do engine da INSTALAÇÃO
+    // (`PROSPECTING_LOCAL_HTTP_URL`) e não tem o que buscar aqui.
+    const key = (await provedorExigeCredencialDaOrganizacao(db, org))
+      ? await credential(db, admin, org)
+      : "";
     const { rows } = await db.query<Campaign>(
       "insert into prospecting_campaigns(organization_id,request_id,name,search) values($1,$2,$3,$4) returning *",
       [org, requestId, search.name, search],
@@ -183,13 +208,17 @@ export async function createSearch(
 }
 export async function synchronizeSearch(db: pg.PoolClient, admin: SupabaseClient, c: Campaign) {
   if (!c.run_id) return;
-  const key = await credential(db, admin, c.organization_id);
   // A escolha ATUAL desta organização (#1758), relida a cada tick — e não
   // necessariamente o provedor que lançou esta execução: nada aqui guarda quem
   // lançou. Trocar de provedor com uma busca em andamento faz o novo ler um id
   // que não é dele. Rotear pelo provedor que lançou fica para a fatia que
   // trouxer um provedor real (#2174).
   const provedor = await provedorDaOrganizacao(db, c.organization_id);
+  // Como em `createSearch`: só quem tem segredo POR ORGANIZAÇÃO busca a
+  // credencial aqui (#2942, `local-http` lê a URL da instalação).
+  const key = (await provedorExigeCredencialDaOrganizacao(db, c.organization_id))
+    ? await credential(db, admin, c.organization_id)
+    : "";
   const run = await provedor.readSearch(key, c.run_id);
   if (["FAILED", "ABORTED", "TIMED-OUT"].includes(run.status)) {
     await db.query(
@@ -203,16 +232,31 @@ export async function synchronizeSearch(db: pg.PoolClient, admin: SupabaseClient
   if (!dataset) throw new ProspectingError("Busca concluída sem resultado disponível.");
   const items = await provedor.readResults(key, dataset, c.search.limit);
   let inserted = 0;
+  let invalidos = 0;
+  const classesPuras: Record<string, number> = {};
+  const agoraIso = new Date().toISOString();
   await db.query("begin");
   try {
     for (const item of items) {
       const p = normalizeProspect(item);
-      if (!p) continue;
+      if (!p) {
+        invalidos++;
+        continue;
+      }
+      // Fase pura do enriquecimento (spec 24, sem rede): agregador e sem-site
+      // já nascem resolvidos em `data.site`. O `website` cru é preservado —
+      // é a URL que a fase de rede vai buscar.
+      const puro = vereditoPuro(p.website, agoraIso);
+      const data = puro ? { ...p, site: puro } : p;
       const result = await db.query(
         "insert into prospecting_candidates(organization_id,campaign_id,place_id,phone,data) values($1,$2,$3,$4,$5) on conflict do nothing",
-        [c.organization_id, c.id, p.key, p.phone, p],
+        [c.organization_id, c.id, p.key, p.phone, data],
       );
-      inserted += result.rowCount ?? 0;
+      const gravou = result.rowCount ?? 0;
+      inserted += gravou;
+      if (gravou > 0 && puro) {
+        classesPuras[puro.classe] = (classesPuras[puro.classe] ?? 0) + 1;
+      }
     }
     await db.query(
       "update prospecting_campaigns set search_status='succeeded',dataset_id=$3,cost_usd=$4,result_count=$5,skipped_count=$6,error=null,updated_at=now() where organization_id=$1 and id=$2",
@@ -230,7 +274,72 @@ export async function synchronizeSearch(db: pg.PoolClient, admin: SupabaseClient
     await db.query("rollback");
     throw error;
   }
+  // Funil de descarte (spec 24): inválidos + duplicados (já na base) + classes
+  // puras do enriquecimento. Uma vez por busca, no fechamento — a transição
+  // para `succeeded` acima é o efeito que autoriza o audit.
+  if (items.length > 0) {
+    void audit({
+      action: "prospecting.search_completed",
+      organizationId: c.organization_id,
+      bypassedRls: true,
+      resourceType: "prospecting",
+      resourceId: c.id,
+      metadata: {
+        campaign_id: c.id,
+        total: items.length,
+        inseridos: inserted,
+        duplicados: items.length - invalidos - inserted,
+        invalidos,
+        classes_puras: classesPuras,
+      },
+      requestId: `prospecting:search:${c.id}`,
+    });
+  }
 }
+/**
+ * A SESSÃO VAI VOLTAR SOZINHA?
+ *
+ * `STARTING` é a reconexão em curso — é o estado que a linha assume no instante
+ * da queda, e a tela o rotula "Conectando…" (`lib/channels/estado.ts`). `STOPPED`
+ * é a sessão parada que o vigia religa sem ninguém (`deveRetomarSessao`,
+ * `session-reconciler.ts`). Desses dois a sessão volta por conta própria — e é
+ * por isso que eles ADIAM o envio em vez de pausar a campanha.
+ *
+ * `SCAN_QR_CODE` e `FAILED` ficam DE FORA de propósito: são os dois estados de
+ * ESCALADA (alguém precisa ler o QR no celular, ou o número caiu de vez — pode
+ * ser banimento, e religar sozinho piora). Neles a recusa de configuração
+ * continua valendo, como antes.
+ */
+function canalReconectando(status: string): boolean {
+  return status === "STARTING" || status === "STOPPED";
+}
+
+/**
+ * A FRASE DA ATIVAÇÃO E DA RETOMADA — UMA SÓ, porque a origem é uma só (issue #3073).
+ *
+ * Quem recusa a ativação (`activateCampaign`) e quem recusa a retomada
+ * (`POST /api/v1/prospecting` ação `resume`) passa pela MESMA `validateConfig`,
+ * então a tela dos dois caminhos recebe esta mensagem. Ela substituiu "o envio
+ * sai quando ela voltar", que era FALSA ali: a ativação/retomada foi RECUSADA e
+ * nada sai sozinho — o operador é que tenta de novo. No caminho do tick (onde a
+ * campanha de fato ADIA), a mesma frase nunca chega à tela: só é logada, e o
+ * envio sai sozinho quando `next_send_at` vencer com o canal de volta.
+ */
+export const MSG_CANAL_RECONECTANDO =
+  "A conexão de saída está reconectando. Tente de novo em instantes.";
+
+/**
+ * A RECUSA DO CANAL QUE NÃO VOLTA SOZINHO — e o motivo do TETO do adiamento.
+ *
+ * Fonte única: é lançada para `SCAN_QR_CODE`/`FAILED` (as escaladas) logo abaixo
+ * e é o motivo gravado quando a espera pela reconexão estoura
+ * `TETO_DO_ADIAMENTO_MS` (`worker.ts`): passado o teto, o canal "reconectando há
+ * tempo demais" cai exatamente nesta recusa, e a campanha pausa com a frase — a
+ * mesma que o operador já conhece do canal caído de vez.
+ */
+export const MSG_CANAL_DESCONECTADO =
+  "A conexão de saída está desconectada e precisa ser reconectada antes de a campanha continuar.";
+
 export async function validateConfig(db: pg.PoolClient, org: string, input: CampaignConfig) {
   const config = campaignConfigSchema.parse(input);
   const agent = (
@@ -253,14 +362,27 @@ export async function validateConfig(db: pg.PoolClient, org: string, input: Camp
       [org, config.channel_session_id],
     )
   ).rows[0];
-  if (
-    !channel ||
-    channel.status !== "WORKING" ||
-    !capabilitiesOf(channel.provider).freeformOutsideWindow
-  )
+  // TRÊS MOTIVOS MUITO DIFERENTES, TRÊS RECUSAS DIFERENTES. Antes os três caíam
+  // na MESMA mensagem e no MESMO escopo `campanha` — que é o escopo que o tick
+  // lê para PAUSAR a fila. Foi assim que uma reconexão de segundos parou a
+  // campanha (issue #3073): o canal voltou a `WORKING` e a campanha não.
+  if (!channel)
     throw new ProspectingError(
-      "Escolha uma conexão ativa que permita iniciar conversas de texto. Canais que exigem modelo aprovado ainda não participam desta campanha.",
+      "A conexão escolhida não existe nesta organização ou foi arquivada. Escolha uma conexão ativa para esta campanha.",
     );
+  if (!capabilitiesOf(channel.provider).freeformOutsideWindow)
+    throw new ProspectingError(
+      "Esta conexão exige modelo aprovado e ainda não participa desta campanha. Escolha uma conexão que permita iniciar conversas de texto.",
+    );
+  // O ÚNICO dos três que NÃO é defeito: a sessão está voltando sozinha.
+  if (canalReconectando(channel.status))
+    throw new CanalReconectandoError(MSG_CANAL_RECONECTANDO);
+  if (channel.status !== "WORKING")
+    // Fora dos estados que voltam sozinhos (reconexão em curso / sessão parada
+    // que o vigia religa) e fora das escaladas: o canal está desconectado e
+    // alguém precisa reconectá-lo. A recusa continua valendo — falhar fechado é
+    // o certo para o que não se sabe explicar.
+    throw new ProspectingError(MSG_CANAL_DESCONECTADO);
   const router = await loadActiveRouter(db as unknown as pg.Pool, org, config.channel_session_id);
   if (router) {
     if (!router.sticky || !router.members.some((m) => m.agentId === config.agent_id))
@@ -352,10 +474,19 @@ export async function criarPegadaDoCandidato(
   // A triagem já recusou quem não tem telefone; esta guarda só diz isso ao compilador,
   // que não enxerga a triagem daqui (no laço original o `continue` já estreitava o tipo).
   if (!p.phone) throw new ProspectingError("Sem telefone brasileiro válido.", 422, "candidato");
+  // ─── O CARIMBO DO PEDIDO (#3072) ─────────────────────────────────────────
+  //
+  // Este `requestId` vai parar em `metadata.request_id` do `lead.created` que o
+  // `createLeadHandler` emite (`app/api/v1/leads/_handler.ts`). Era
+  // `rule:${c.id}` — a marca que o motor RESERVA para a ação de regra —, e por
+  // isso o motor pulava o negócio aberto pela campanha como se fosse laço de
+  // regra: nenhuma regra de "negócio criado" rodava para a empresa abordada.
+  // A campanha não é regra; o carimbo dela é próprio e o anti-laço das regras
+  // fica intacto.
   const ctx = {
     organization_id: org,
     actor: { type: "webhook_source" as const, id: c.id },
-    requestId: `rule:${c.id}`,
+    requestId: pedidoDaProspeccao(c.id),
   };
   // O negócio é VALIDADO antes de qualquer escrita: `normalizeProspect` aceita um nome de
   // uma letra, e o negócio exige duas. Sem isto o contato nascia, o negócio recusava, e a
@@ -550,11 +681,17 @@ export async function activateCampaign(
       ).rows.length
     )
       throw new ProspectingError("Pause a campanha atual antes de iniciar outra.", 409);
-    if (c.config && JSON.stringify(campaignConfigSchema.parse(c.config)) !== JSON.stringify(config))
-      throw new ProspectingError(
-        "A preparação já começou. Retome com a mesma configuração da campanha.",
-        409,
-      );
+    if (c.config) {
+      // Config PARCIAL salva pelo meio (sem `agent_id`) não pode ser comparada:
+      // o `parse` cru estourava ZodError antes de qualquer comparação e a
+      // campanha ficava sem como ser iniciada (medido na VPS: 3 rascunhos).
+      const salva = campaignConfigSchema.safeParse(c.config);
+      if (salva.success && JSON.stringify(salva.data) !== JSON.stringify(config))
+        throw new ProspectingError(
+          "A preparação já começou. Retome com a mesma configuração da campanha.",
+          409,
+        );
+    }
     await db.query(
       "update prospecting_campaigns set config=$3 where organization_id=$1 and id=$2",
       [org, id, config],
@@ -570,7 +707,7 @@ export async function activateCampaign(
     ).rows;
     await enfileirarCandidatos(db, admin, org, c, config, candidates);
     await db.query(
-      "update prospecting_campaigns set config=$3,status='running',next_send_at=now()+interval '1 minute',error=null,updated_at=now() where organization_id=$1 and id=$2",
+      "update prospecting_campaigns set config=$3,status='running',next_send_at=now()+interval '1 minute',error=null,channel_down_since=null,updated_at=now() where organization_id=$1 and id=$2",
       [org, id, config],
     );
     return { started: true };

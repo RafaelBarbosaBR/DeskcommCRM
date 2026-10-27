@@ -34,7 +34,13 @@ export interface AtendimentoConfig {
   manual_reply_silence_minutes: number | null;
 }
 
-const MODO_COPY: Record<RoutingMode, { titulo: string; corpo: string }> = {
+/**
+ * A cópia dos modos de distribuição. Exportada porque a tela por número
+ * (`_channels-form.tsx`, issue #2331) precisa dos MESMOS rótulos: o modo do
+ * número é o mesmo conjunto, e o dono do negócio tem que ler a mesma frase nos
+ * dois lugares.
+ */
+export const MODO_COPY: Record<RoutingMode, { titulo: string; corpo: string }> = {
   manual: {
     titulo: "Cada um pega o que quiser",
     corpo:

@@ -23,6 +23,11 @@ services:
   caddy:
     volumes:
       - ./Caddyfile.single-server:/etc/caddy/Caddyfile:ro
+      # Ponto de extensão (#2724), a MESMA da variante normal: arquivos .caddy
+      # soltos nesta pasta local são importados pelo fim do Caddyfile do modo
+      # single-server. A pasta não é versionada, então publicar outro serviço
+      # não mexe em arquivo do repositório nem trava a atualização.
+      - ./caddy-sites:/etc/caddy/sites:ro
       - caddy-data:/data
       - caddy-config:/config
     networks:
@@ -33,6 +38,8 @@ services:
           # chamada entre os servicos precisa sair da VPS e voltar pelo IP.
           - ${DOMAIN}
       supabase_private: {}
+      # A rede dos serviços extras de caddy-sites/ (#2724), a mesma da base.
+      caddy-sites: {}
 
 networks:
   supabase_private:

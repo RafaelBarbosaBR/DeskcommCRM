@@ -16,8 +16,19 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ApiError } from "@/lib/api/types";
 import { logger } from "@/lib/logger";
 
-/** No que a captação deu. Espelha o CHECK de `webhook_lead_captures.outcome`. */
-export type DesfechoDaCaptacao = "criado" | "duplicado" | "recusado";
+/**
+ * No que a captação deu.
+ *
+ * Os QUATRO valores são o vocabulário do CHECK de
+ * `webhook_lead_captures.outcome` (migration 0683, que alargou o da 0174), e a
+ * tela "Leads recebidos" (`lib/schemas/lead-captures.ts`) espelha a mesma
+ * lista: as três listas — coluna, aqui e lá — não podem divergir, e é a
+ * `desfecho-da-captacao-um-vocabulario-so` que cobra isso.
+ *
+ * `atualizado` é o desfecho do card que a integração REESCREVEU (#2316), e ele
+ * só existe com a opção `update_existing_lead_on_capture` ligada na fonte.
+ */
+export type DesfechoDaCaptacao = "criado" | "duplicado" | "recusado" | "atualizado";
 
 /**
  * Por que uma captação foi recusada. Vocabulário só do TypeScript — a coluna
@@ -181,7 +192,7 @@ export async function registrarCaptacao(
   admin: SupabaseClient,
   captacao: CaptacaoParaRegistrar,
 ): Promise<void> {
-  const { error } = await admin.from("webhook_lead_captures").insert({
+  const linha = {
     organization_id: captacao.organizationId,
     webhook_source_id: captacao.webhookSourceId,
     source_name: captacao.sourceName,
@@ -198,19 +209,19 @@ export async function registrarCaptacao(
     user_agent: captacao.userAgent?.slice(0, 500) ?? null,
     origin: captacao.origin ?? null,
     request_id: captacao.requestId ?? null,
-  });
+  };
+  const { error } = await admin.from("webhook_lead_captures").insert(linha);
+  if (!error) return;
 
   // Falha ABERTA na ação (o lead entra de qualquer jeito) e ABERTA na
   // informação: a causa vai para o log nomeada. Um "não gravou o histórico" em
   // silêncio seria indistinguível de "não chegou nada", que é justamente a
   // pergunta que esta tabela veio responder.
-  if (error) {
-    logger.error("[webhooks.captacao] não foi possível registrar o histórico da captação", {
-      organizationId: captacao.organizationId,
-      webhookSourceId: captacao.webhookSourceId,
-      outcome: captacao.outcome,
-      errorCode: error.code,
-      errorMessage: error.message,
-    });
-  }
+  logger.error("[webhooks.captacao] não foi possível registrar o histórico da captação", {
+    organizationId: captacao.organizationId,
+    webhookSourceId: captacao.webhookSourceId,
+    outcome: captacao.outcome,
+    errorCode: error.code,
+    errorMessage: error.message,
+  });
 }

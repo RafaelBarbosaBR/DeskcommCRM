@@ -8,13 +8,16 @@ export type TriggerEvent = (typeof TRIGGER_EVENTS)[number];
 export type ActionType =
   | "create_or_move_lead"
   | "send_whatsapp_message"
+  | "send_email"
   | "send_ai_message"
   | "add_tag"
   | "assign_owner"
   | "call_webhook"
   | "start_message_flow"
   | "create_task"
-  | "apply_task_plan";
+  | "apply_task_plan"
+  // #2642 — o único destino que não é o lead: a EQUIPE.
+  | "notify_team";
 
 export const TRIGGER_LABELS: Record<TriggerEvent, string> = {
   "lead.created": "Quando entrar um contato novo (webhook)",
@@ -36,6 +39,10 @@ export const TRIGGER_LABELS: Record<TriggerEvent, string> = {
   "message.failed": "Quando uma mensagem não for entregue",
   "lead.tag_added": "Quando um lead ganhar uma tag",
   "contact.tag_added": "Quando um contato ganhar uma tag",
+  // #2812 — a frase diz a TRANSIÇÃO (ficha que estava SEM número recebe um), e
+  // não "contato atualizado": o que interessa a quem monta a regra é o fato
+  // novo, e "atualizado" aconteceria em toda edição de ficha.
+  "contact.phone_added": "Quando um contato ganhar um telefone",
   // A frase evita "agendamento criado", que não diz ao operador o que ele vê na
   // agenda: um horário marcado pode nascer pendente (o tipo pede confirmação) ou
   // já confirmado, e os dois caem aqui.
@@ -62,6 +69,9 @@ export const TRIGGER_LABELS: Record<TriggerEvent, string> = {
 export const ACTION_LABELS: Record<ActionType, string> = {
   create_or_move_lead: "Criar/mover lead no funil",
   send_whatsapp_message: "Enviar mensagem no WhatsApp",
+  // #2726 — mesma altura das irmãs: a frase diz o CANAL, que é o que quem
+  // monta a regra escolhe. "E-mail" e não "correo": o rótulo é o do produto.
+  send_email: "Enviar e-mail",
   send_ai_message: "Mensagem escrita pela IA",
   add_tag: "Adicionar tag",
   assign_owner: "Atribuir a um atendente",
@@ -72,4 +82,8 @@ export const ACTION_LABELS: Record<ActionType, string> = {
   // #1752 — a SEQUÊNCIA em vez do lembrete único: aplica um plano salvo em
   // Tarefas › Planos ao negócio, criando as N tarefas de uma vez e na ordem.
   apply_task_plan: "Aplicar um plano de tarefas ao negócio",
+  // #2642 — o único destino que não é o lead. A frase diz "equipe" e não
+  // "WhatsApp" porque quem recebe é o WhatsApp cadastrado em Avisos, e quem
+  // lê a lista precisa saber que quem recebe é GENTE DA CASA, não o cliente.
+  notify_team: "Mensagem para a equipe (resumo do negócio ganho)",
 };

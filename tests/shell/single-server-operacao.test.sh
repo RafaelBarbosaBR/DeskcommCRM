@@ -12,7 +12,8 @@
 # precisa do daemon) e é pulado, dizendo, onde ele não existe.
 set -uo pipefail
 unset COMPOSE_PROJECT_NAME SINGLE_SERVER PSQL_DOCKER_NETWORK REVERSE_PROXY \
-  SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD SMTP_FROM_EMAIL SMTP_FROM_NAME
+  SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD SMTP_FROM_EMAIL SMTP_FROM_NAME \
+  RESEND_API_KEY RESEND_FROM_EMAIL
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT_DIR="$ROOT/hostgator-setup-kit"
@@ -40,6 +41,12 @@ mkdir -p "$WORK/bin" "$FLAGS"
   cat <<'STUB'
 printf '%s\n' "$*" >> "$DUBLE_LOG"
 case " $* " in
+  *" compose "*" exec -T app node "*)
+    # O Node do app abre o envelope da Resend: o que chega pela entrada fica
+    # gravado para o teste conferir que o segredo NÃO foi pela linha de comando.
+    cat > "$FLAGS/envelope"
+    [ -f "$FLAGS/envelope-falha" ] && exit 1
+    printf '%s' "${NODE_ABRE:-}"; exit 0 ;;
   *" compose "*)
     printf 'COMPOSE pwd=%s projeto=%s smtp_host=%s\n' "$PWD" \
       "${COMPOSE_PROJECT_NAME-<ausente>}" "${SMTP_HOST-<ausente>}" >> "$DUBLE_LOG"
@@ -55,9 +62,16 @@ case " $* " in
     case " $* " in
       *platform_smtp_settings*) printf '%b' "${PSQL_SMTP:-}" ;;
       *signup_mode*) printf '%b' "${PSQL_SIGNUP:-}" ;;
+      *platform_config*) printf '%b' "${PSQL_RESEND:-}" ;;
       # a checagem do restore.sh conta as tabelas de public antes de pedir a
       # confirmação; a instalação simulada aqui está vazia, então 0
       *" pg_tables"*) printf '0\n' ;;
+      # A CONFERÊNCIA do resultado (#2381, reescrita de 16/10): o restore.sh
+      # identifica as duas consultas dela por estes marcadores no SQL. O banco
+      # simulado TEM a tabela do dump, com as linhas que o COPY declara — é o
+      # restore que entrou mesmo, e a conferência fecha.
+      *"/*conf-tabelas*/"*) printf 'public.contacts\n' ;;
+      *"/*conf-linhas*/"*)  printf 'public.contacts|1\n' ;;
       *" pg_dump "*) echo "-- dump" ;;
       *" tar czf - "*)
         # o snapshot sai pela saída padrão; quem grava o arquivo é o host
@@ -73,6 +87,17 @@ PATH="$WORK/bin:$PATH"
 
 kit() {  # kit <código bash> — roda com o _common.sh carregado, numa subshell
   bash -c 'KIT_DIR="$1"; . "$KIT_DIR/_common.sh"; shift; eval "$1"' _ "$KIT_DIR" "$@"
+}
+
+# O dump de mentira do restore: uma tabela de public com as linhas que o bloco
+# COPY declara. É contra essas contagens que a conferência do resultado do
+# restore.sh mede (#2381, reescrita de 16/10) — um dump sem COPY não tem como
+# ser conferido, e o restore falha fechado.
+dump_de_mentira() {
+  { printf '%s\n' 'CREATE TABLE public.contacts (' '  id uuid NOT NULL PRIMARY KEY' ');' \
+    'COPY public.contacts (id) FROM stdin;' \
+    '11111111-1111-1111-1111-111111111111' \
+    '\.'; } | gzip > "$1"
 }
 
 # Uma instalação single-server falsa, com o que o install-single-server.sh deixa.
@@ -159,7 +184,7 @@ check "pipe do dump que falha reprova o backup" test "$rc" -ne 0
 check "e diz que o dump falhou no meio" contem "$WORK/bk-pipe-falhou.out" "falhou no meio"
 check "e não deixa o arquivo cortado (nem o .parcial) na pasta" \
   bash -c "! ls '$APROJ'/backups/db-*.sql.gz >/dev/null 2>&1 && ! ls '$APROJ'/backups/.db-*.parcial >/dev/null 2>&1"
-printf 'x' | gzip > "$APROJ/backups/db-20260922-030000.sql.gz"
+dump_de_mentira "$APROJ/backups/db-20260922-030000.sql.gz"
 : > "$LOG"
 (cd "$APROJ" && printf 'RESTAURAR\n' | bash "$KIT_DIR/restore.sh" backups/db-20260922-030000.sql.gz) > "$WORK/rs-comum.out" 2>&1; rc=$?
 check "restore.sh comum termina bem" test "$rc" -eq 0
@@ -265,8 +290,8 @@ check "e não imprime 'backup concluído'" bash -c '! grep -q "backup concluído
 check "e não deixa o arquivo cortado dos anexos (nem o .parcial) na pasta" \
   bash -c '! ls "$1"/backups/storage-*.tgz >/dev/null 2>&1 && ! ls "$1"/backups/.storage-*.parcial >/dev/null 2>&1' _ "$PROJ"
 
-printf 'x' | gzip > "$PROJ/backups/db-20260922-030000.sql.gz"
-: > "$PROJ/backups/storage-20260922-030000.tgz"
+dump_de_mentira "$PROJ/backups/db-20260922-030000.sql.gz"
+tar czf "$PROJ/backups/storage-20260922-030000.tgz" -C "$SB/volumes/storage" .
 : > "$LOG"
 (cd "$PROJ" && printf 'RESTAURAR\n' | bash "$KIT_DIR/restore.sh" backups/db-20260922-030000.sql.gz) > "$WORK/rs.out" 2>&1; rc=$?
 check "restore.sh single-server termina bem" test "$rc" -eq 0
@@ -314,7 +339,46 @@ check "host sem remetente é SMTP incompleto, como no CRM (rc=1)" test "$rc" -ne
 
 env_sb_inicial
 PSQL_SMTP='' smtp; rc=$?
-check "CRM sem SMTP nenhum: não inventa, sai 1 para quem chama avisar" test "$rc" -ne 0
+check "CRM sem SMTP nem Resend: não inventa, sai 1 para quem chama avisar" test "$rc" -ne 0
+check "e o .env do Supabase fica intacto" bash -c 'grep -qx "SMTP_HOST=supabase-mail" "$1" && grep -qx "SMTP_PASS=fake_mail_password" "$1"' _ "$SB/.env"
+
+# Medido numa VPS v1.85.0: e-mail SÓ pela Resend (gravada pela tela), GoTrue no
+# supabase-mail, e o cadastro por convite morria em "Error sending confirmation email".
+echo "(c2) sem SMTP, o GoTrue manda pela Resend do CRM:"
+env_sb_inicial; rm -f "$FLAGS/envelope"
+PSQL_RESEND='RESEND_API_KEY\x1ft\x1f\x1fc1fe\x1f1b\x1f7a\nRESEND_FROM_EMAIL\x1ff\x1fconvite@loja.com\x1f\x1f\x1f\n' \
+  NODE_ABRE='re_daTela123' PSQL_SMTP='' smtp; rc=$?
+check "Resend da tela: sincroniza (rc=0)" test "$rc" -eq 0
+check "GoTrue aponta para o SMTP da Resend" grep -qx 'SMTP_HOST="smtp.resend.com"' "$SB/.env"
+check "na porta 465" grep -qx 'SMTP_PORT=465' "$SB/.env"
+check "usuário é 'resend'" grep -qx 'SMTP_USER="resend"' "$SB/.env"
+check "senha é a chave aberta pelo app" grep -qx 'SMTP_PASS="re_daTela123"' "$SB/.env"
+check "remetente é o RESEND_FROM_EMAIL da tela" grep -qx 'SMTP_ADMIN_EMAIL="convite@loja.com"' "$SB/.env"
+check "o envelope chega ao Node pela entrada, não pela linha de comando" \
+  bash -c 'grep -qx "c1fe 1b 7a" "$1" && ! grep -q c1fe "$2"' _ "$FLAGS/envelope" "$LOG"
+
+env_sb_inicial
+RESEND_API_KEY=re_doEnv RESEND_FROM_EMAIL=env@loja.com PSQL_RESEND='' PSQL_SMTP='' smtp; rc=$?
+check "sem linha no banco, a Resend do .env vale (rc=0)" \
+  bash -c '[ "$1" -eq 0 ] && grep -qx "SMTP_PASS=\"re_doEnv\"" "$2" && grep -qx "SMTP_ADMIN_EMAIL=\"env@loja.com\"" "$2"' _ "$rc" "$SB/.env"
+
+env_sb_inicial
+RESEND_API_KEY=re_doEnv RESEND_FROM_EMAIL=env@loja.com \
+  PSQL_RESEND='RESEND_API_KEY\x1ft\x1f\x1fc1fe\x1f1b\x1f7a\n' NODE_ABRE='re_daTela123' PSQL_SMTP='' smtp
+check "linha da tela vence o .env chave a chave (chave da tela, remetente do .env)" \
+  bash -c 'grep -qx "SMTP_PASS=\"re_daTela123\"" "$1" && grep -qx "SMTP_ADMIN_EMAIL=\"env@loja.com\"" "$1"' _ "$SB/.env"
+
+env_sb_inicial; touch "$FLAGS/envelope-falha"
+RESEND_API_KEY=re_doEnv RESEND_FROM_EMAIL=env@loja.com \
+  PSQL_RESEND='RESEND_API_KEY\x1ft\x1f\x1fc1fe\x1f1b\x1f7a\n' PSQL_SMTP='' smtp; rc=$?
+rm -f "$FLAGS/envelope-falha"
+check "envelope que não abre vale vazio, como no app (rc=1, sem cair no .env)" test "$rc" -ne 0
+check "e o .env do Supabase fica intacto" grep -qx 'SMTP_HOST=supabase-mail' "$SB/.env"
+
+env_sb_inicial
+RESEND_API_KEY=re_doEnv RESEND_FROM_EMAIL=env@loja.com \
+  PSQL_SMTP='smtp.loja.com\x1f587\x1fu\x1fs\x1fa@loja.com\x1f\n' smtp
+check "com SMTP no CRM, a Resend não entra (o app também prefere o SMTP)" grep -qx 'SMTP_HOST="smtp.loja.com"' "$SB/.env"
 
 # ════════════════════════════════════════════════════════════════════════════
 echo "(d) o update.sh leva o Supabase à versão pinada:"
@@ -391,6 +455,19 @@ rm -f "$FLAGS/compose-falha"
 check "Supabase que não sobe: reprova sem mexer no modo de cadastro" \
   bash -c '[ "$1" -ne 0 ] && grep -qx "DISABLE_SIGNUP=false" "$2"' _ "$rc" "$SB/.env"
 
+# A Resend como SMTP do GoTrue chega JÁ na atualização que a traz, pelo mesmo
+# caminho do #1653: o corpo novo desta função, não a chamada do update.sh antigo.
+# DISABLE_SIGNUP já no valor do modo: sem ele o sincronizador do cadastro também
+# reinicia o auth na 1ª rodada, e o caso do reinício ficaria verde sem o do SMTP.
+env_sb_inicial; printf 'DISABLE_SIGNUP=false\n' >> "$SB/.env"; : > "$LOG"
+RESEND_API_KEY=re_doEnv RESEND_FROM_EMAIL=env@loja.com PSQL_RESEND='' PSQL_SMTP='' atualiza_sm >/dev/null; rc=$?
+check "Resend sem SMTP: a atualização leva a Resend ao GoTrue (rc=0)" \
+  bash -c '[ "$1" -eq 0 ] && grep -qx "SMTP_HOST=\"smtp.resend.com\"" "$2"' _ "$rc" "$SB/.env"
+check "e reinicia o auth para ele ler o SMTP novo" contem "$LOG" '--no-deps auth'
+: > "$LOG"
+RESEND_API_KEY=re_doEnv RESEND_FROM_EMAIL=env@loja.com PSQL_RESEND='' PSQL_SMTP='' atualiza_sm >/dev/null
+check "rodar de novo com o mesmo SMTP não reinicia o auth" nao_contem "$LOG" '--no-deps auth'
+
 echo "update.sh chama tudo isso no lugar certo:"
 U="$KIT_DIR/update.sh"
 l_guarda="$(grep -n 'recusar_supabase_de_outra_arvore ||' "$U" | cut -d: -f1)"
@@ -407,6 +484,40 @@ for l in "$l_guarda" "$l_atualiza"; do
   check "a linha $l só vale no modo single-server" \
     bash -c 'awk -v l="$2" "NR<l && /^if \\[ \"\\$\\{SINGLE_SERVER:-0\\}\" = \"1\" \\]; then\$/{a=NR} NR<l && /^fi\$/{f=NR} END{exit !(a>f)}" "$1"' _ "$U" "$l"
 done
+
+# #2755 — o aviso de SMTP manda configurar E rodar o update.sh de novo, e diz
+# por quê: o app não leva o SMTP de /admin/email ao GoTrue, quem leva é o
+# `sincronizar_smtp_do_gotrue` do próprio update.sh. Tirar o "rode de novo"
+# deixaria o dono configurando a tela e esperando um e-mail que nunca sai. O
+# bloco é medido ISOLADO (awk até o `fi` dele): o update.sh inteiro tem outras
+# ordens de "rode de novo", e cobrir o arquivo todo mediria a frase errada.
+echo "o aviso de SMTP do update.sh manda configurar e atualizar, e diz por quê (#2755):"
+AVISO_SMTP="$WORK/aviso-smtp.txt"
+awk '/^  if sincronizar_smtp_do_gotrue; then$/{f=1} f{print} f&&/^  fi$/{exit}' "$U" > "$AVISO_SMTP"
+check "achei o bloco do aviso — sem ele os casos abaixo medem nada" test -s "$AVISO_SMTP"
+check "o aviso diz para configurar em /admin/email" contem "$AVISO_SMTP" "Configure em /admin/email"
+check "e manda rodar o update.sh de novo" contem "$AVISO_SMTP" "rode bash hostgator-setup-kit/update.sh de novo"
+check "e diz o porquê: é ele que leva o SMTP ao login" contem "$AVISO_SMTP" "é ele que leva o SMTP ao serviço de login"
+# Só a frase impressa: o comentário do bloco cita o painel para explicar a ausência.
+grep 'c_ylw "⚠ Sem SMTP' "$AVISO_SMTP" > "$WORK/aviso-smtp-frase.txt"
+check "achei a frase impressa do aviso" test -s "$WORK/aviso-smtp-frase.txt"
+check "e não manda para o painel de Atualização, cujo botão só aparece com versão nova" nao_contem "$WORK/aviso-smtp-frase.txt" "painel"
+
+# #2755 — a MESMA correção da saída do update.sh chega à tela final do
+# instalador. Lá a frase era "Configure em /admin/email e rode: bash
+# hostgator-setup-kit/update.sh": mandava rodar sem dizer por quê, e sem o
+# porquê ela se lê como ordem sem motivo. Aqui também é o bloco ISOLADO (awk até
+# o `fi` dele) — o instalador inteiro tem outros avisos, e cobrir o arquivo todo
+# mediria a frase errada.
+S="$KIT_DIR/install-single-server.sh"
+echo "a tela final do instalador diz por que rodar o update.sh (#2755):"
+AVISO_INSTALL="$WORK/aviso-smtp-install.txt"
+awk '/^if sincronizar_smtp_do_gotrue; then$/{f=1} f{print} f&&/^fi$/{exit}' "$S" > "$AVISO_INSTALL"
+check "achei o bloco do aviso do instalador — sem ele os casos abaixo medem nada" test -s "$AVISO_INSTALL"
+check "o aviso diz para configurar em /admin/email" contem "$AVISO_INSTALL" "Configure em /admin/email"
+check "e manda rodar o update.sh" contem "$AVISO_INSTALL" "rode bash hostgator-setup-kit/update.sh"
+check "e diz o porquê: é ele que leva o SMTP ao serviço de login" contem "$AVISO_INSTALL" "leva o SMTP ao servico de login"
+check "a frase antiga, que mandava rodar sem motivo, sumiu" nao_contem "$AVISO_INSTALL" "rode: bash hostgator-setup-kit/update.sh"
 
 [ "$FAILS" -eq 0 ] || { echo "✖ $FAILS falha(s)" >&2; exit 1; }
 echo 'ok: single-server não colide, faz backup dos anexos, manda e-mail e atualiza o Supabase'

@@ -123,6 +123,27 @@ export function SourceDetail({ source, open, onOpenChange }: Props) {
   );
   const [autorizacaoIA, setAutorizacaoIA] = React.useState<{ id: string; ativa: boolean } | null>(null);
   const autorizaIA = autorizacaoIA?.id === source.id ? autorizacaoIA.ativa : source.authorize_ai_on_capture;
+  /**
+   * A opção do #2316, com o mesmo cuidado de estado das outras: `source` é
+   * snapshot, então a resposta do PATCH é o dado mais fresco que esta tela
+   * alcança — e o id junto evita pintar o estado de uma fonte no painel de
+   * outra.
+   */
+  const [atualizacaoDeCard, setAtualizacaoDeCard] = React.useState<{ id: string; ativa: boolean } | null>(null);
+  const atualizaCard =
+    atualizacaoDeCard?.id === source.id
+      ? atualizacaoDeCard.ativa
+      : source.update_existing_lead_on_capture;
+  /**
+   * A opção do #3101, com o mesmo cuidado de estado das irmãs: a resposta do
+   * PATCH é o dado mais fresco que esta tela alcança (`source` é snapshot), e o
+   * id junto evita pintar o estado de uma fonte no painel de outra.
+   */
+  const [reusoDoCardAberto, setReusoDoCardAberto] = React.useState<{ id: string; ativa: boolean } | null>(null);
+  const reusaCardAberto =
+    reusoDoCardAberto?.id === source.id
+      ? reusoDoCardAberto.ativa
+      : source.reuse_open_lead_on_capture;
   const [testing, setTesting] = React.useState(false);
   const [testOk, setTestOk] = React.useState(false);
   const [formFields, setFormFields] = React.useState<WebhookFormField[]>(source.form_fields ?? []);
@@ -385,6 +406,46 @@ export function SourceDetail({ source, open, onOpenChange }: Props) {
             <p className="text-sm text-muted-foreground">
               {t("O integrador deve enviar external_id, ai_service_consent: true, submission_status: completed e ai_service_consent_version com a versão do aviso aceito. Aceitar apenas a política de privacidade não autoriza a IA. Sem external_id, o envio não concede nem renova a autorização; reenviar com o mesmo external_id não libera de novo. Uma recusa (false) num envio completo e válido revoga, mesmo sem external_id.")}
             </p>
+          </section>
+
+          <section className="space-y-2 rounded-sm border border-border p-3">
+            <div className="flex items-center justify-between gap-3">
+              <label htmlFor="update-existing-lead-on-capture" className="block text-sm font-medium text-text">
+                {t("Atualizar o card quando o envio repete o mesmo cadastro")}
+              </label>
+              <Switch id="update-existing-lead-on-capture" checked={Boolean(atualizaCard)}
+                disabled={!podeGerirWebhooks || update.isPending || (!temAssinatura && !atualizaCard)}
+                onCheckedChange={(ativa) => update.mutate(
+                  { id: source.id, update_existing_lead_on_capture: ativa },
+                  { onSuccess: (res) => setAtualizacaoDeCard({ id: source.id, ativa: res.data.update_existing_lead_on_capture }) },
+                )} />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {t("Só para integrações entre sistemas: ligado, um envio com o mesmo external_id que traga dado novo atualiza o card desta fonte — os campos, o título e a etapa pedida em stage, sempre para a frente. Desligado, o padrão, o envio repetido continua sendo reenvio e nada no card muda, nem o que a equipe corrigiu à mão.")}
+            </p>
+            {!temAssinatura && <p className="text-sm text-muted-foreground">
+              {t("Configure a assinatura da fonte antes de deixar a integração atualizar o card. Para remover a assinatura, desligue primeiro a atualização pelo external_id.")}
+            </p>}
+          </section>
+
+          <section className="space-y-2 rounded-sm border border-border p-3">
+            <div className="flex items-center justify-between gap-3">
+              <label htmlFor="reuse-open-lead-on-capture" className="block text-sm font-medium text-text">
+                {t("Reaproveitar o card aberto do contato")}
+              </label>
+              <Switch id="reuse-open-lead-on-capture" checked={Boolean(reusaCardAberto)}
+                disabled={!podeGerirWebhooks || update.isPending || (!temAssinatura && !reusaCardAberto)}
+                onCheckedChange={(ativa) => update.mutate(
+                  { id: source.id, reuse_open_lead_on_capture: ativa },
+                  { onSuccess: (res) => setReusoDoCardAberto({ id: source.id, ativa: res.data.reuse_open_lead_on_capture }) },
+                )} />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {t("Só para fontes com assinatura: ligado, um envio de quem já tem card aberto neste funil atualiza esse card — os campos novos e a etapa da fonte, sempre para a frente — em vez de abrir um segundo card. Desligado, o padrão, cada envio continua virando um card novo.")}
+            </p>
+            {!temAssinatura && <p className="text-sm text-muted-foreground">
+              {t("Configure a assinatura da fonte antes de reaproveitar o card aberto do contato. Para remover a assinatura, desligue primeiro o reaproveitamento do card aberto.")}
+            </p>}
           </section>
 
           <section className="space-y-2">

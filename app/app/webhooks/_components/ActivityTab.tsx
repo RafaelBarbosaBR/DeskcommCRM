@@ -96,17 +96,44 @@ const MOTIVO_DA_PARADA: Record<string, string> = {
     "A pessoa escolhida como responsável não é atendente desta equipe. Escolha outra pessoa na automação.",
   invalid_owner:
     "A pessoa escolhida como responsável não pode atender — o papel dela é só de visualização. Escolha um atendente.",
+  /* #2041 — o modo rodízio de `assign_owner`. Nascem em
+     fn_automation_rodizio_atribuir e saem literais de lib/automation/actions/assign-owner.ts. */
+  ninguem_disponivel:
+    "Ninguém da fila do rodízio pode receber agora: todos estão pausados, saíram da equipe ou só visualizam. O lead ficou sem responsável.",
+  fila_vazia: "A fila do rodízio desta automação está vazia. Abra a automação e escolha quem entra no rodízio.",
+  sem_rodizio:
+    "A automação foi alterada e não tem mais o rodízio que disparou esta ação. Nada foi atribuído.",
+  lead_nao_encontrado: "O lead deste evento não foi encontrado nesta organização, então ninguém foi atribuído.",
   missing_input:
     "A ação não recebeu o que precisava (o lead do evento ou a pessoa configurada). Abra a automação e revise.",
   no_tags: "Esta ação não tem nenhuma etiqueta escolhida. Abra a automação e escolha pelo menos uma.",
   no_target: "O evento que disparou a regra não trouxe um lead nem um contato para etiquetar.",
   no_lead_or_contact: "O evento que disparou a regra não trouxe um lead para criar ou mover.",
   cross_pipeline_move_not_allowed: "Mover um lead para outro funil está desligado nesta organização.",
+  /*
+   * #2769 — o caso específico do ganho, com frase própria: a porta está aberta
+   * (a ação é permitida em `lead.won`), então "mover para outro funil está
+   * desligado" seria mentira. O diagnóstico é outro e o conserto é uma linha:
+   * apontar a ação para o funil de pós-venda. Emitido por
+   * lib/automation/actions/create-or-move-lead.ts como `error`, o mesmo canal
+   * de `cross_pipeline_move_not_allowed` (canal cobrado pela guarda da #1090).
+   */
+  continuacao_exige_outro_funil:
+    "A continuação de um negócio ganho só nasce em OUTRO funil. Aponte esta ação para o funil de pós-venda — nada foi movido.",
   lead_already_transferred_in_event:
     "Outra regra deste mesmo evento já levou o lead para outro funil. Vale a primeira regra; esta não transfere de novo.",
   flow_not_active:
     "O funil escolhido não está ativo, então a inscrição não foi feita. Ative o funil ou escolha outro na automação.",
   live_enrollment_exists: "O contato já está em um funil ativo — esta ação não inscreve duas vezes.",
+  /* #2647 — o roteiro de ATENDIMENTO alcançado pela MESMA ação. Os dois motivos
+     nascem em lib/automation/actions/start-message-flow.ts e chegam pelos
+     mesmos dois canais (`detail.reason` e `action.error`). */
+  banco_do_roteiro_indisponivel:
+    "O roteiro de atendimento não começou: esta instalação não tem a conexão direta do banco configurada, e é por ela que o roteiro é conduzido. Configure-a e execute a regra de novo.",
+  modulo_desligado:
+    "O roteiro de atendimento não começou: o módulo Fluxos de atendimento está desligado nesta instalação.",
+  roteiro_nao_iniciado:
+    "O roteiro de atendimento não começou para este contato: o fluxo pode não estar publicado, o contato já pode ter um roteiro em andamento, ou já ter concluído este sem poder recomeçar.",
   consent_declined: "O contato não autorizou o recebimento de mensagens de marketing.",
   fora_do_pre_go_live:
     "O número deste canal ainda não entrou no pré-go-live, então a mensagem escrita pela IA não sai por ele.",
@@ -115,6 +142,19 @@ const MOTIVO_DA_PARADA: Record<string, string> = {
     "Este número está fora da lista de teste do canal, então a mensagem escrita pela IA não sai por ele.",
   elegibilidade_indeterminada:
     "Não deu para saber se este número pode receber a mensagem da IA: a consulta falhou na hora (rede ou banco), e não é erro de configuração. Tente de novo em alguns minutos.",
+  /*
+   * #3274 — o veto da camada "valores e negociação só com a equipe" (#2877) na
+   * MENSAGEM ESCRITA PELA IA. Nasce literal em
+   * lib/automation/actions/send-ai-message.ts como `detail.reason`, o mesmo
+   * código que a cadeia `before_send` usa; a conversa passa para a equipe.
+   */
+  commercial_requires_human:
+    "Esta empresa deixou valores e negociação só com a equipe, e a mensagem escrita pela IA falava disso: ela não foi enviada e a conversa passou para o atendimento humano.",
+  // A mesma parada quando o orquestrador RECUSOU a passagem
+  // (`passagem_para_a_equipe: false`): a frase acima afirmaria um handoff que
+  // não houve.
+  commercial_requires_human_sem_passagem:
+    "Esta empresa deixou valores e negociação só com a equipe, e a mensagem escrita pela IA falava disso: ela não foi enviada. A conversa não foi passada para a equipe nesta execução — abra a conversa e confira quem vai responder ao cliente.",
   missing_url: "Esta ação de webhook não tem endereço configurado. Abra a automação e preencha.",
   unknown_action:
     "A regra usa um tipo de ação que esta instalação não tem (pode ter saído em uma atualização). Abra a automação e escolha outra ação.",
@@ -168,6 +208,50 @@ const MOTIVO_DA_PARADA: Record<string, string> = {
   resposta_vazia: "A IA não devolveu nenhuma escolha entre as opções desta ação. Tente de novo ou corrija a instrução.",
   sem_json: "A IA respondeu fora do formato esperado e nada foi executado. Tente de novo em alguns minutos.",
   escolha_ausente: "A IA respondeu sem dizer qual opção escolher, então nada foi executado. Tente de novo ou corrija a instrução.",
+  /*
+   * Os motivos da ação 'Mensagem para a equipe' (notify_team, #2642): depois do
+   * recorte do PR #2834 o aviso sai SÓ pelo WhatsApp do número cadastrado em
+   * Avisos, então os motivos de e-mail que existiam aqui saíram com o caminho —
+   * o e-mail para uma pessoa da equipe é o `send_email`, cujas frases estão no
+   * bloco abaixo.
+   */
+  sem_numero_de_aviso_cadastrado: "O aviso à equipe não tem número cadastrado. Cadastre-o em Configurações › Avisos.",
+  canal_da_equipe_nao_encontrado: "O número cadastrado para avisar a equipe não está mais entre as conexões desta organização.",
+  canal_sem_chave: "A conexão do número da equipe está sem credencial. Reconecte o número em Conexões.",
+  telefone_da_equipe_invalido: "O telefone cadastrado para avisar a equipe não é válido para este canal. Corrija-o em Configurações › Avisos.",
+  whatsapp_falhou: "O canal do número da equipe recusou a mensagem agora. A automação tenta de novo no próximo disparo.",
+  whatsapp_enviado: "A equipe foi avisada pelo WhatsApp.",
+  canal_nao_suportado: "A regra guarda um canal que esta ação não envia. Abra a automação e salve de novo com o WhatsApp da equipe.",
+  /* #2726 — a ação `send_email`. Os códigos nascem em
+     lib/automation/actions/send-email.ts e chegam aos DOIS canais da tela:
+     `detail.reason` nas recusas (pelo `para.motivo`, origem declarada em
+     ORIGENS no teste da guarda — `no_contact`, `contact_blocked` e
+     `consent_declined` já moravam aqui, `no_email` e `dono_sem_email` são
+     novos) e `action.error` nos cinco códigos do provedor (pelo
+     `codigoDaFalha`, literal no resultado). Sem frase aqui quem operava a
+     automação lia o código cru.
+     #2642 — o destinatário "membro da equipe" acrescenta os três motivos do
+     vínculo conferido no envio (`sem_membro`, `membro_fora_da_equipe`,
+     `membro_sem_email`) e `membro_indeterminado` quando a consulta não volta. */
+  no_email: "O contato não tem e-mail cadastrado, então não havia endereço para onde enviar.",
+  dono_sem_email:
+    "O negócio não tem responsável com e-mail cadastrado, então não havia endereço para onde enviar. Escolha outro destinatário na automação.",
+  dono_fora_da_equipe:
+    "O responsável do negócio não faz mais parte da equipe, então o e-mail não foi enviado. Troque o responsável do negócio ou escolha outro destinatário na automação.",
+  sem_membro: "A regra não tem a pessoa da equipe escolhida. Abra a automação e escolha quem deve receber.",
+  membro_fora_da_equipe:
+    "A pessoa escolhida não faz mais parte da equipe, então o e-mail não foi enviado. Escolha outra pessoa na automação.",
+  membro_sem_email: "A pessoa escolhida não tem e-mail cadastrado no acesso dela.",
+  email_nao_configurado:
+    "Nenhum e-mail está configurado nesta instalação: ligue o servidor em Admin › E-mail ou conecte o serviço externo de envio.",
+  email_recusado:
+    "O servidor de e-mail recusou a mensagem. O detalhe técnico abaixo traz o motivo que o provedor devolveu.",
+  email_limite_atingido:
+    "O provedor de e-mail limitou os envios por causa do volume. Tente de novo mais tarde.",
+  remetente_recusado:
+    "O servidor recusou o endereço de quem envia. Confira o remetente em Admin › E-mail.",
+  dominio_nao_verificado:
+    "O domínio do remetente não está verificado na Resend. Verifique o domínio na conta Resend e tente de novo.",
 };
 
 function explicacaoDe(
@@ -175,6 +259,14 @@ function explicacaoDe(
   t: (texto: string) => string,
 ): string | null {
   const detail = action.detail ?? {};
+  // A vez do rodízio (#2041) leva nome e posição: a frase pronta em
+  // `explicacao` muda a cada lead e nunca casaria com o dicionário. Traduz o
+  // molde e só depois cola os valores.
+  if (typeof detail.nome === "string" && typeof detail.posicao === "number") {
+    return t("Vez de {nome}, posição {posicao} da fila do rodízio.")
+      .replace("{nome}", detail.nome)
+      .replace("{posicao}", String(detail.posicao));
+  }
   if (typeof detail.explicacao === "string") return t(detail.explicacao);
   // O motivo chega por DOIS canais: `detail.reason` (quem monta o detalhe) e
   // `action.error` (quem devolve só o código — `user_not_in_org` e

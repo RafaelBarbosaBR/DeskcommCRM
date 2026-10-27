@@ -10,41 +10,14 @@ import { audit } from "@/lib/audit";
 import { createHash, randomUUID } from "node:crypto";
 import { lerPlano } from "@/lib/cobranca/dono";
 import { moduloLigado } from "@/lib/instalacao/modulos";
-
-// ---------------------------------------------------------------------------
-// Schemas
-// ---------------------------------------------------------------------------
-
-const querySchema = z.object({
-  q: z.string().optional(),
-  status: z.enum(["active", "suspended", "onboarding", "redacted"]).optional(),
-  cursor: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(30),
-});
-
-// ---------------------------------------------------------------------------
-// Cursor helpers
-// ---------------------------------------------------------------------------
-
-interface CursorPayload {
-  created_at: string;
-  id: string;
-}
-
-function encodeCursor(payload: CursorPayload): string {
-  return Buffer.from(JSON.stringify(payload)).toString("base64url");
-}
-
-function decodeCursor(cursor: string): CursorPayload | null {
-  try {
-    return JSON.parse(Buffer.from(cursor, "base64url").toString("utf-8")) as CursorPayload;
-  } catch {
-    return null;
-  }
-}
+import { querySchema, listarTenants } from "./_lista";
 
 // ---------------------------------------------------------------------------
 // GET /api/v1/admin/tenants
+//
+// `querySchema`, os cursores e o `WHERE` moram em `_lista.ts`: é o MESMO
+// leitor que `export/route.ts` usa, para exportar devolver o que a tela mostra
+// (issue #2777). Ver o cabeçalho de lá.
 // ---------------------------------------------------------------------------
 
 export async function GET(req: NextRequest) {
@@ -53,8 +26,8 @@ export async function GET(req: NextRequest) {
   let adminCtx: Awaited<ReturnType<typeof requirePlatformAdmin>>;
   try {
     adminCtx = await requirePlatformAdmin();
-  } catch {
-    return fail("forbidden", "Platform admin required", 403, { requestId });
+  } catch (err) {
+    return falhaDaEscritaDePlatformAdmin(err, requestId);
   }
 
   const parsed = querySchema.safeParse(Object.fromEntries(req.nextUrl.searchParams.entries()));
@@ -67,47 +40,12 @@ export async function GET(req: NextRequest) {
 
   const { q, status, cursor, limit } = parsed.data;
   const admin = createAdminClient();
-  const cursorPayload = cursor ? decodeCursor(cursor) : null;
-
-  let query = admin
-    .from("organizations")
-    .select(
-      `
-      id,
-      slug,
-      display_name,
-      legal_name,
-      cnpj,
-      status,
-      onboarded_at,
-      suspended_at,
-      created_at,
-      user_count:user_organizations(count),
-      conversations_count:conversations(count)
-    `,
-    )
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(limit + 1);
-
-  if (status === "onboarding") {
-    // Estado derivado: ativo no banco, onboarding ainda não concluído.
-    query = query.eq("status", "active").is("onboarded_at", null);
-  } else if (status) {
-    query = query.eq("status", status);
-  }
-
-  if (q) {
-    query = query.or(`display_name.ilike.%${q}%,slug::text.ilike.%${q}%,cnpj.ilike.%${q}%`);
-  }
-
-  if (cursorPayload) {
-    query = query.or(
-      `created_at.lt.${cursorPayload.created_at},and(created_at.eq.${cursorPayload.created_at},id.lt.${cursorPayload.id})`,
-    );
-  }
-
-  const { data, error } = await query;
+  const { page, has_more, nextCursor, error } = await listarTenants(admin, {
+    q,
+    status,
+    cursor,
+    limit,
+  });
 
   if (error) {
     return fail("internal_error", "Query failed", 500, {
@@ -115,19 +53,6 @@ export async function GET(req: NextRequest) {
       details: error.message,
     });
   }
-
-  const rows = data ?? [];
-  const has_more = rows.length > limit;
-  const page = has_more ? rows.slice(0, limit) : rows;
-
-  const lastRow = page.at(-1);
-  const nextCursor =
-    has_more && lastRow
-      ? encodeCursor({
-          created_at: (lastRow as { created_at: string }).created_at,
-          id: lastRow.id,
-        })
-      : null;
 
   void audit({
     action: "platform_admin.tenants_listed",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { decideRouting, selectRoundRobin, type RoutingCandidate } from "./decide";
+import { decideRouting, resolverRoteamentoPorNumero, selectRoundRobin, type RoutingCandidate } from "./decide";
 import { routingConfigSchema } from "@/lib/schemas/routing";
 
 /**
@@ -166,5 +166,111 @@ describe("modo load — roteia por menor carga (issue #1539)", () => {
       expect(action.attempts).toBe(1);
       expect(new Date(action.nextAttemptAt).getTime()).toBe(NOW.getTime() + 60_000);
     }
+  });
+});
+
+/**
+ * Issue #2331 — regras de atendimento POR NÚMERO (canal).
+ *
+ * O modo de distribuição era UM só para a organização
+ * (`organizations.settings.routing.mode`). Aqui ele passa a poder ser do NÚMERO,
+ * e o número SEM regra própria continua com o comportamento da organização —
+ * nada muda para quem já instalou.
+ */
+describe("regras por número (#2331) — resolverRoteamentoPorNumero", () => {
+  // A organização distribui por CARGA. Os números abaixo discordam dela de
+  // propósito: é o caso "cada número faz uma coisa".
+  const daOrganizacao = routingConfigSchema.parse({ mode: "load" });
+
+  it("canal com regra própria NÃO usa a regra da organização: dois números, modos diferentes, cada um respeitado", () => {
+    const numeroOficial = resolverRoteamentoPorNumero(daOrganizacao, {
+      distribution_mode: "round_robin",
+      default_assignee_user_id: null,
+    });
+    const numeroDoSetor = resolverRoteamentoPorNumero(daOrganizacao, {
+      distribution_mode: "manual",
+      default_assignee_user_id: null,
+    });
+
+    // Cada número com o SEU modo — e nenhum dos dois é o "load" da organização.
+    expect(numeroOficial.mode).toBe("round_robin");
+    expect(numeroDoSetor.mode).toBe("manual");
+    expect(numeroOficial.mode).not.toBe(daOrganizacao.mode);
+    expect(numeroDoSetor.mode).not.toBe(daOrganizacao.mode);
+
+    // E a decisão segue o modo do NÚMERO, não o da organização: a mesma conversa
+    // sem dono é distribuída no número oficial e deixada na fila no do setor.
+    const noOficial = decideRouting({
+      mode: numeroOficial.mode, alreadyAssigned: false, eligibles: [cand("ana", null)],
+      config: daOrganizacao, attempts: 0, now: NOW,
+    });
+    const noSetor = decideRouting({
+      mode: numeroDoSetor.mode, alreadyAssigned: false, eligibles: [cand("ana", null)],
+      config: daOrganizacao, attempts: 0, now: NOW,
+    });
+    expect(noOficial).toEqual({ kind: "assign", userId: "ana" });
+    expect(noSetor).toEqual({ kind: "skip", reason: "manual_mode" });
+  });
+
+  it("canal SEM regra (policy ausente) cai no comportamento da organização", () => {
+    const semPolicy = resolverRoteamentoPorNumero(daOrganizacao, null);
+    expect(semPolicy).toEqual({ mode: "load", defaultAssigneeUserId: null });
+
+    // O outro estado real de "sem regra": a linha existe (o número tem
+    // responsáveis restritos), mas nenhuma das duas colunas foi preenchida.
+    const semModoProprio = resolverRoteamentoPorNumero(daOrganizacao, {
+      distribution_mode: null,
+      default_assignee_user_id: null,
+    });
+    expect(semModoProprio).toEqual({ mode: "load", defaultAssigneeUserId: null });
+
+    // E a organização MANUAL (o padrão do produto) continua sendo manual no
+    // número sem regra: a herança não inventa modo novo.
+    const organizacaoManual = routingConfigSchema.parse({ mode: "manual" });
+    expect(resolverRoteamentoPorNumero(organizacaoManual, null).mode).toBe("manual");
+    expect(resolverRoteamentoPorNumero(organizacaoManual, {
+      distribution_mode: null, default_assignee_user_id: null,
+    }).mode).toBe("manual");
+  });
+
+  it("atendente de destino padrão do número manda mais que o modo (entrega direta)", () => {
+    // Caso real da issue: o segundo número conectado por QR Code entrega TUDO a
+    // uma pessoa específica, sem passar pela distribuição.
+    const doSegundoNumero = resolverRoteamentoPorNumero(daOrganizacao, {
+      distribution_mode: "round_robin",
+      default_assignee_user_id: "bruno",
+    });
+    expect(doSegundoNumero.defaultAssigneeUserId).toBe("bruno");
+
+    const action = decideRouting({
+      mode: doSegundoNumero.mode,
+      alreadyAssigned: false,
+      eligibles: [cand("ana", null, 1), cand("bruno", null, 7)],
+      config: daOrganizacao,
+      defaultAssigneeUserId: doSegundoNumero.defaultAssigneeUserId,
+      attempts: 0,
+      now: NOW,
+    });
+    // Nem o rodízio nem o modo carga escolhem por ele: o destino padrão é
+    // entrega direta. O rodízio daria "ana" (nunca recebeu, desempate por id);
+    // o modo carga também daria "ana" (carga 1 < 7). Só o destino padrão dá
+    // "bruno".
+    expect(action).toEqual({ kind: "assign", userId: "bruno" });
+  });
+
+  it("sem destino padrão o modo decide: nada de entrega direta por acidente", () => {
+    const action = decideRouting({
+      mode: "round_robin", alreadyAssigned: false, eligibles: [cand("ana", null)],
+      config: daOrganizacao, defaultAssigneeUserId: null, attempts: 0, now: NOW,
+    });
+    expect(action).toEqual({ kind: "assign", userId: "ana" });
+  });
+
+  it("idempotência vence o destino padrão: conversa que já tem dono não é reatribuída", () => {
+    const action = decideRouting({
+      mode: "round_robin", alreadyAssigned: true, eligibles: [],
+      config: daOrganizacao, defaultAssigneeUserId: "bruno", attempts: 0, now: NOW,
+    });
+    expect(action).toEqual({ kind: "skip", reason: "already_assigned" });
   });
 });

@@ -151,6 +151,20 @@ beforeEach(() => {
   } as never);
 });
 
+describe("célula que a planilha leria como fórmula", () => {
+  it("texto dentro do metadata que vira célula no Excel pt-BR sai com aspa; o JSON segue legível", async () => {
+    const linhas = [auditoria(1, { metadata: { nome: "x;=1+1", v: [1, -2] } })];
+    const { client } = fakeSupabase({ api_audit_log: linhas });
+    vi.mocked(createClient).mockResolvedValue(client as never);
+
+    const csv = await (await chamar()).text();
+    const [linha] = dadosDoCsv(csv);
+
+    expect(linha).toContain(`""x;'=1+1""`);
+    expect(linha).toContain("[1,-2]");
+  });
+});
+
 describe("o CSV de auditoria lê além de 1.000", () => {
   it("⭐ 2.500 registros saem inteiros (antes: 1.000 calados)", async () => {
     const linhas = Array.from({ length: 2500 }, (_, k) => auditoria(k + 1));

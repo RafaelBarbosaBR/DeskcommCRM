@@ -44,9 +44,9 @@ describe("os dois lados do schema da tool de passagem", () => {
     expect(chaves(LARGO)).toEqual(chaves(requestHumanHandoffInputSchema as unknown as z.ZodType));
   });
 
-  it("a sonda não é vazia: o conjunto tem os quatro campos que a pessoa vai ler", () => {
+  it("a sonda não é vazia: o conjunto tem o motivo e os campos que a pessoa vai ler", () => {
     // GUARDA DE VACUIDADE. Sem ela, dois schemas VAZIOS passariam no caso acima.
-    expect(chaves(LARGO)).toEqual(["cliente_quer", "o_que_tentei", "por_que", "reason"]);
+    expect(chaves(LARGO)).toEqual(["cliente_quer", "motivo_codigo", "o_que_tentei", "por_que", "reason"]);
   });
 
   it("todo campo do lado que o modelo lê tem `.describe()`", () => {
@@ -82,5 +82,25 @@ describe("os dois lados do schema da tool de passagem", () => {
     expect(requestHumanHandoffInputSchema.safeParse({ reason: "cliente irritado" }).success).toBe(
       true,
     );
+  });
+
+  it.each(["requested_human", "critical_stage"])("os dois lados aceitam %s", (motivo_codigo) => {
+    const payload = { motivo_codigo, por_que: "a equipe precisa concluir esta etapa" };
+    expect(LARGO.parse(payload)).toEqual(payload);
+    expect(requestHumanHandoffInputSchema.parse(payload)).toEqual(payload);
+  });
+
+  it("o lado largo deixa o runtime ensinar sobre código inválido", () => {
+    const payload = { motivo_codigo: "inventado" };
+    expect(LARGO.safeParse(payload).success).toBe(true);
+    expect(requestHumanHandoffInputSchema.safeParse(payload).success).toBe(false);
+  });
+
+  it("o modelo aprende as duas opções e quando NÃO usar etapa crítica", () => {
+    const forma = (LARGO as unknown as { def: { shape: Record<string, z.ZodType> } }).def.shape;
+    const descricao = forma.motivo_codigo?.description;
+    expect(descricao).toContain("requested_human");
+    expect(descricao).toContain("critical_stage");
+    expect(descricao).toContain("Não use critical_stage só porque o cliente mencionou agendamento");
   });
 });

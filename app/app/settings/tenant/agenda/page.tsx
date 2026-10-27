@@ -1,11 +1,15 @@
+import { tituloDaAgenda } from "@/lib/agenda/apresentacao";
 import { redirect } from "next/navigation";
 
 import { requireAuth, resolveActiveOrg } from "@/lib/auth/server";
 import { traduzir } from "@/lib/i18n/dicionario";
 import { ROLE_RANK } from "@/lib/auth/types";
 import { createClient } from "@/lib/supabase/server";
-import { clientePelaAgendaLigado, colegasPodemMexerNaAgendaLigado } from "@/lib/schemas/settings";
-import { nomesDosAtendentes } from "@/lib/users/nome-do-atendente";
+import { clientePelaAgendaLigado, colegasPodemMexerNaAgendaLigado, meetAbertoLigado } from "@/lib/schemas/settings";
+import { listSelectableChannels } from "@/lib/channels/selectable";
+import { rotuloDoEstadoDoCanal } from "@/lib/channels/estado";
+import { rotulosDosResponsaveisDaAgenda } from "@/lib/agenda/rotulos-dos-responsaveis";
+import { rotuloDoResponsavel } from "@/lib/agenda/identidade-do-responsavel";
 
 import { TiposDeAgendamentoClient, type TipoRow } from "./_client";
 
@@ -40,7 +44,8 @@ export default async function TiposDeAgendamentoPage() {
   // `viewer` vê a lista (é informação de operação: quanto dura uma consulta);
   // criar e alterar é `manager`, e a rota cobra de novo — a tela esconder não é
   // autorização, é cortesia.
-  const podeEditar = (user.is_platform_admin && !user.support) || ROLE_RANK[activeOrg.role] >= ROLE_RANK.manager;
+  const podeEditar =
+    (user.is_platform_admin && !user.support) || ROLE_RANK[activeOrg.role] >= ROLE_RANK.manager;
 
   const supabase = await createClient();
   // ⚠️ O `error` NÃO é descartável, e descartá-lo já mentiu para quem opera.
@@ -56,11 +61,16 @@ export default async function TiposDeAgendamentoPage() {
   //
   // Lista vazia e falha de leitura são fatos diferentes, e a tela tem de
   // dizer qual dos dois aconteceu.
-  const [{ data: tipos, error: erroTipos }, { data: pessoas }, { data: org }] = await Promise.all([
+  const [
+    { data: tipos, error: erroTipos },
+    { data: pessoas },
+    { data: org },
+    { data: canais, error: erroCanais },
+  ] = await Promise.all([
     supabase
       .from("calendar_event_types")
       .select(
-        "id, name, slug, description, category, duration_minutes, location_kind, location_details, default_owner_user_id, requires_confirmation, is_active, reminder_enabled, reminder_minutes_before, reminder_extra_offsets_minutes, reminder_body, reminder_bodies, default_price_cents",
+        "id, name, slug, description, category, duration_minutes, location_kind, location_details, default_owner_user_id, requires_confirmation, is_active, reminder_channel_session_id, reminder_enabled, reminder_minutes_before, reminder_extra_offsets_minutes, reminder_body, reminder_bodies, default_price_cents, service_enabled, booking_mode, service_capacity",
       )
       .eq("organization_id", activeOrg.orgId)
       .order("is_active", { ascending: false })
@@ -74,39 +84,42 @@ export default async function TiposDeAgendamentoPage() {
     // pela sessão funciona (a policy de leitura é de membro); gravar é só pela
     // RPC, que a action chama.
     supabase.from("organizations").select("settings").eq("id", activeOrg.orgId).maybeSingle(),
+    listSelectableChannels(supabase, activeOrg.orgId)
+      .then((data) => ({ data, error: null }))
+      .catch((error: unknown) => ({
+        data: [],
+        error: { message: error instanceof Error ? error.message : String(error) },
+      })),
   ]);
 
-  // O NOME DE GENTE, e não o fragmento de UUID.
-  //
-  // O seletor de "quem atende" oferecia `0c4f9a1e · admin` — a página lia só
-  // `user_id, role` e nunca resolvia nome. Escolher responsável entre pedaços de
-  // identificador não é escolha: é adivinhação, e o dono do produto tinha de
-  // acertar qual dos fragmentos era ele.
-  //
-  // `nomesDosAtendentes` expõe SÓ `full_name`, de propósito. Não trocar por
-  // `/api/v1/team`, que devolve e-mail e último acesso — PII a mais numa tela de
-  // configuração que não precisa dela.
-  //
-  // Numa VPS sem `SUPABASE_SERVICE_ROLE_KEY` ele devolve Map vazio por decisão
-  // declarada, e o fallback abaixo volta ao rótulo de hoje. Degrada, não some.
-  const nomes = await nomesDosAtendentes((pessoas ?? []).map((p) => String(p.user_id)));
+  // A consulta acima já restringiu os IDs à organização ativa e a membros não revogados.
+  // Nome válido primeiro; sem nome, e-mail do mesmo usuário. Não chamar a rota ampla da equipe.
+  const identidades = await rotulosDosResponsaveisDaAgenda((pessoas ?? []).map((p) => String(p.user_id)), t);
 
   return (
     <div className="flex h-full flex-col gap-6 p-6">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight">{t("Tipos de agendamento")}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{tituloDaAgenda(org?.settings) ?? t("Agendamentos")}</h1>
         <p className="mt-1 text-sm text-text-muted">
-          {t("O que se pode marcar, quanto dura e quem atende. É isto que a tela de marcar e o agente de IA oferecem ao cliente.")}
+          {t(
+            "O que se pode marcar, quanto dura e quem atende. É isto que a tela de marcar e o agente de IA oferecem ao cliente.",
+          )}
         </p>
       </header>
       <TiposDeAgendamentoClient
+        tituloDaAgenda={tituloDaAgenda(org?.settings)}
         tiposIniciais={(tipos ?? []) as TipoRow[]}
+        erroCanais={erroCanais ? erroCanais.message : null}
+        canais={canais.map((c) => ({
+          id: c.id,
+          nome: `${t(c.display_name)}${c.phone_number && c.display_name !== c.phone_number ? ` · ${c.phone_number}` : ""}${c.status === "WORKING" ? "" : ` · ${rotuloDoEstadoDoCanal(c.status, t)}`}`,
+        }))}
         erroDeLeitura={erroTipos ? erroTipos.message : null}
         pessoas={(pessoas ?? []).map((p) => ({
           id: String(p.user_id),
           papel: String(p.role),
           nome:
-            nomes.get(String(p.user_id)) ?? `${String(p.user_id).slice(0, 8)} · ${String(p.role)}`,
+            rotuloDoResponsavel(String(p.user_id), identidades.get(String(p.user_id))?.display_label, null, t),
         }))}
         usuarioAtualId={user.id}
         podeConfigurarGoogle={ROLE_RANK[activeOrg.role] >= ROLE_RANK.agent}
@@ -122,6 +135,12 @@ export default async function TiposDeAgendamentoPage() {
         // `admin`, e não `manager` como os prazos ao lado: ligar reescreve as
         // etiquetas de todo contato com histórico. A RPC cobra de novo.
         podeLigarClientePelaAgenda={ROLE_RANK[activeOrg.role] >= ROLE_RANK.admin}
+        // A opção da issue #2063 (migration 0648): DESLIGADA por padrão, e
+        // só o `true` explícito liga — a mesma régua de `meetAbertoLigado`.
+        meetAbertoLigado={meetAbertoLigado(org?.settings)}
+        // `manager` como a irmã ao lado: é regra da AGENDA e não reescreve
+        // dado nenhum. A RPC cobra de novo.
+        podeMudarMeetAberto={ROLE_RANK[activeOrg.role] >= ROLE_RANK.manager}
       />
     </div>
   );

@@ -17,6 +17,10 @@ export interface AssinaturaDoPainel {
   link_de_pagamento: string | null;
   assinaturas_vivas: number;
   plano_agendado: { id: string; nome: string } | null;
+  periodo_pago_desde: string | null;
+  troca_pagamento_url: string | null;
+  troca_status: string | null;
+  pagamento_inicial_pendente: boolean;
 }
 
 export interface PlanoParaTroca {
@@ -24,6 +28,9 @@ export interface PlanoParaTroca {
   nome: string;
   preco_cents: number;
   intervalo: string;
+  max_assentos: number | null;
+  max_canais: number | null;
+  teto_ia_usd_cents: number | null;
 }
 
 export interface DadosDoPainel {
@@ -71,7 +78,7 @@ export async function lerPainelDaAssinatura(db: SupabaseClient, orgId: string): 
   const { data: a, error } = await db
     .from("cobranca_assinaturas")
     .select(
-      "plano_id, plano_agendado_id, estado, trial_ate, prazo_extra_ate, proximo_vencimento, vencida_desde, cancela_no_fim, modo, provedor, link_de_pagamento, assinaturas_vivas",
+      "plano_id, plano_agendado_id, estado, trial_ate, prazo_extra_ate, proximo_vencimento, vencida_desde, cancela_no_fim, modo, provedor, link_de_pagamento, assinaturas_vivas, periodo_pago_desde, troca_pagamento_url, troca_status, pagamento_inicial_pendente",
     )
     .eq("organization_id", orgId)
     .maybeSingle();
@@ -105,6 +112,10 @@ export async function lerPainelDaAssinatura(db: SupabaseClient, orgId: string): 
           link_de_pagamento: a.link_de_pagamento,
           assinaturas_vivas: a.assinaturas_vivas,
           plano_agendado: agendado ? { id: agendado.id, nome: agendado.nome } : null,
+          periodo_pago_desde: a.periodo_pago_desde,
+          troca_pagamento_url: a.troca_pagamento_url,
+          troca_status: a.troca_status,
+          pagamento_inicial_pendente: a.pagamento_inicial_pendente,
         }
       : null,
     plano: plano
@@ -123,7 +134,8 @@ export async function lerPainelDaAssinatura(db: SupabaseClient, orgId: string): 
     planosParaTroca: plano
       ? todos
           .filter((p) => p.arquivado_em === null && p.oferecido_ao_cliente && p.intervalo === plano.intervalo && p.id !== plano.id)
-          .map((p) => ({ id: p.id, nome: p.nome, preco_cents: p.preco_cents, intervalo: p.intervalo }))
+          .map((p) => ({ id: p.id, nome: p.nome, preco_cents: p.preco_cents, intervalo: p.intervalo,
+            max_assentos: p.max_assentos, max_canais: p.max_canais, teto_ia_usd_cents: p.teto_ia_usd_cents }))
       : [],
   };
 }

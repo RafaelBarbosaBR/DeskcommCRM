@@ -1,6 +1,7 @@
 import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
+import { ehVistoAzul } from "../support/waha-visto-azul";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import { test, expect, type Page, type TestInfo } from "./helpers/test";
@@ -356,6 +357,10 @@ async function deliveryReceiver() {
   const target = new URL(process.env.WAHA_API_BASE_URL!);
   expect(["127.0.0.1", "localhost"]).toContain(target.hostname);
   const server = createServer(async (req, res) => {
+    if (ehVistoAzul(req.url)) {
+      res.end("{}");
+      return;
+    }
     let raw = "";
     for await (const chunk of req) raw += String(chunk);
     bodies.push(JSON.parse(raw));

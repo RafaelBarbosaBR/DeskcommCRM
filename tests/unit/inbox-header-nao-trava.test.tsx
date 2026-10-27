@@ -159,6 +159,40 @@ describe("header do inbox — não trava a largura da tela", () => {
     expect(screen.queryByRole("button", { name: "Mais ações" }), "ação de quem atende escondida num menu").toBeNull();
   });
 
+  it("no celular a barra é UMA fileira que rola, não três ou quatro que comem a conversa", () => {
+    // Relato de quem atende pelo telefone: com ~390px a barra quebrava em várias
+    // fileiras e sobrava pouca altura para as mensagens. Abaixo do `md` ela não
+    // quebra — rola na horizontal — e nenhum botão encolhe até virar ilegível.
+    renderHeader();
+    const classes = barraDeAcoes().className.split(/\s+/);
+    for (const c of ["max-md:flex-nowrap", "max-md:overflow-x-auto", "max-md:[&>*]:shrink-0"]) {
+      expect(classes, `sem \`${c}\` a barra volta a empilhar fileiras no celular`).toContain(c);
+    }
+  });
+
+  it("no celular Assumir vem primeiro, a fileira mostra que rola e some com o teclado (F2)", () => {
+    // Só CSS: a ordem do DOM (a do computador e a do teclado) não muda.
+    renderHeader();
+    const assumir = screen.getByRole("button", { name: "Assumir" });
+    expect(assumir.className.split(/\s+/)).toContain("max-md:order-first");
+
+    const barra = barraDeAcoes();
+    expect(barra.className, "sem a máscara nada indica que há botões à direita").toMatch(
+      /max-md:\[mask-image:linear-gradient\(/,
+    );
+    // Com o teclado aberto a coluna das ações sai, e o fio fica com a altura.
+    // `max-md:` é obrigatório: no computador encolher a janela não é teclado.
+    const coluna = barra.parentElement as HTMLElement;
+    expect(coluna.className.split(/\s+/)).toContain("max-md:group-data-[teclado-aberto]/conversa:hidden");
+    expect(coluna.className).not.toMatch(/(?:^|\s)group-data-\[teclado-aberto\]/);
+  });
+
+  it("no celular o telefone sai do cabeçalho (continua na Ficha)", () => {
+    renderHeader();
+    const telefone = screen.getByText(/5511999|\+55/).closest("p") as HTMLElement;
+    expect(telefone.className.split(/\s+/)).toContain("max-md:hidden");
+  });
+
   it('"Ver contato" existe no DOM e só se cala onde há outra porta', () => {
     renderHeader();
     // Ele NÃO sai do markup: some por CSS a partir de `xl`, exatamente a largura

@@ -104,6 +104,99 @@ describe("roteamento instalado e transacional", () => {
   });
 });
 
+describe("regras por NÚMERO (canal) — issue #2331", () => {
+  // A regra do número viaja na MESMA RPC dos responsáveis, com dois parâmetros
+  // a mais. A chamada de 4 argumentos (helper `policy`, usada neste arquivo
+  // inteiro) continua válida — é a prova de compatibilidade com quem já instalou.
+  const policyComRegra = (users: string[], mode: string | null, destino: string | null) =>
+    asUser(manager, "select fn_set_channel_routing($1,$2,$3,false,$4,$5) result", [org, channel, users, mode, destino]);
+  const regraGravada = async () =>
+    (await query("select distribution_mode, default_assignee_user_id from channel_routing_policies where organization_id=$1 and channel_session_id=$2", [org, channel])).rows[0];
+  const claimSemJornada = (conversation = conv, user = ana) =>
+    query("select fn_channel_routing_claim($1,$2,$3,$4,null) result", [org, conversation, channel, user]).then(r => r.rows[0].result);
+  const disponibilizar = (user: string) =>
+    query("insert into attendant_availability(organization_id,user_id,is_available,capacity,schedule) values($1,$2,true,1,'{}') on conflict(organization_id,user_id) do update set is_available=true,capacity=1,schedule='{}'", [org, user]);
+
+  it("modo e destino padrão persistem; a chamada de 4 argumentos continua sem regra própria", async () => {
+    await policy([ana]);
+    expect(await regraGravada()).toEqual({ distribution_mode: null, default_assignee_user_id: null });
+
+    await policyComRegra([ana], "round_robin", bruno);
+    expect(await regraGravada()).toEqual({ distribution_mode: "round_robin", default_assignee_user_id: bruno });
+
+    // Regravar pelos responsáveis (o que a tela antiga faz) LIMPA a regra do
+    // número em vez de deixar lixo: o número volta a herdar a organização.
+    await policy([ana]);
+    expect(await regraGravada()).toEqual({ distribution_mode: null, default_assignee_user_id: null });
+  });
+
+  it("modo fora da lista da tela e destino que não é membro são recusados sem gravar nada", async () => {
+    await expect(policyComRegra([ana], "telefone", null)).rejects.toThrow("routing_invalid_mode");
+    await expect(policyComRegra([ana], "round_robin", "00000000-0000-4000-8000-000000000000")).rejects.toThrow("routing_invalid_members");
+    expect((await query("select count(*)::int n from channel_routing_policies where organization_id=$1", [org])).rows[0].n).toBe(0);
+  });
+
+  it("destino padrão do número recebe mesmo fora dos responsáveis (entrega direta)", async () => {
+    await disponibilizar(bruno);
+    // Responsáveis = [ana]; destino padrão = bruno. Sem a exceção no claim, a
+    // entrega ao destino padrão cairia em candidate_not_allowed e a conversa
+    // ficaria na fila para sempre.
+    await policyComRegra([ana], "round_robin", bruno);
+    expect(await claimSemJornada(conv, bruno)).toBe("assigned");
+    const r = await query("select assigned_to_user_id from conversations where organization_id=$1 and id=$2", [org, conv]);
+    expect(r.rows[0].assigned_to_user_id).toBe(bruno);
+  });
+
+  it("a exceção do destino padrão não abre a porta para quem não é nem responsável nem destino", async () => {
+    await policyComRegra([ana], "round_robin", bruno);
+    expect(await claimSemJornada(conv, manager)).toBe("candidate_not_allowed");
+  });
+
+  it("CHECK recusa modo inventado e a FK composta recusa destino de fora da organização", async () => {
+    await policyComRegra([ana], "round_robin", bruno);
+    await expect(query("update channel_routing_policies set distribution_mode='telefone' where organization_id=$1 and channel_session_id=$2", [org, channel])).rejects.toMatchObject({ code: "23514" });
+    await expect(query("update channel_routing_policies set default_assignee_user_id='00000000-0000-4000-8000-0000000000ff' where organization_id=$1 and channel_session_id=$2", [org, channel])).rejects.toMatchObject({ code: "23503" });
+  });
+
+  it("worker real: o modo do NÚMERO vence o da organização (org manual, número em rodízio)", async () => {
+    await query("update organizations set settings=jsonb_set(coalesce(settings,'{}'::jsonb),'{routing}','{\"mode\":\"manual\"}') where id=$1", [org]);
+    await policyComRegra([ana], "round_robin", null);
+    await query("delete from event_log where organization_id=$1 and event_type='conversation.routing_requested'", [org]);
+    await query("select fn_request_channel_routing($1,$2)", [org, conv]);
+    const adapter = routingPgSupabase(pool); vi.mocked(createAdminClient).mockReturnValue(adapter.client as never);
+    const result = await runRoutingWorker({ now: new Date() });
+    expect(result.outcomes.assigned).toBe(1);
+    expect(adapter.errors).toEqual([]);
+    expect((await query("select assigned_to_user_id from conversations where organization_id=$1 and id=$2", [org, conv])).rows[0].assigned_to_user_id).toBe(ana);
+  });
+
+  it("worker real: número SEM regra cai no comportamento da organização (manual ⇒ não distribui)", async () => {
+    await query("update organizations set settings=jsonb_set(coalesce(settings,'{}'::jsonb),'{routing}','{\"mode\":\"manual\"}') where id=$1", [org]);
+    await policy([ana]); // número com responsáveis, mas sem modo próprio
+    await query("delete from event_log where organization_id=$1 and event_type='conversation.routing_requested'", [org]);
+    await query("select fn_request_channel_routing($1,$2)", [org, conv]);
+    const adapter = routingPgSupabase(pool); vi.mocked(createAdminClient).mockReturnValue(adapter.client as never);
+    const result = await runRoutingWorker({ now: new Date() });
+    expect(result.outcomes.skipped_manual).toBe(1);
+    expect((await query("select assigned_to_user_id from conversations where organization_id=$1 and id=$2", [org, conv])).rows[0].assigned_to_user_id).toBeNull();
+  });
+
+  it("worker real: destino padrão do número entrega direto, sem passar pela distribuição", async () => {
+    await disponibilizar(bruno);
+    await query("update organizations set settings=jsonb_set(coalesce(settings,'{}'::jsonb),'{routing}','{\"mode\":\"load\"}') where id=$1", [org]);
+    // Modo "manual" no número (entrega direta ao destino padrão) — se o worker
+    // ainda lesse o modo da organização (load), distribuiria por carga.
+    await policyComRegra([], "manual", bruno);
+    await query("delete from event_log where organization_id=$1 and event_type='conversation.routing_requested'", [org]);
+    await query("select fn_request_channel_routing($1,$2)", [org, conv]);
+    const adapter = routingPgSupabase(pool); vi.mocked(createAdminClient).mockReturnValue(adapter.client as never);
+    const result = await runRoutingWorker({ now: new Date() });
+    expect(result.outcomes.assigned).toBe(1);
+    expect(adapter.errors).toEqual([]);
+    expect((await query("select to_user_id from conversation_assignment_events where organization_id=$1 and conversation_id=$2 order by created_at desc limit 1", [org, conv])).rows[0].to_user_id).toBe(bruno);
+  });
+});
+
 describe("reserva de conexão org-owned", () => {
   const key = "10000000-0000-4000-8000-000000000001";
   const reserve = (hash="a".repeat(64)) => asUser(admin,"select fn_reserve_channel_connection($1,$2,$3,'Teste',false) result",[org,key,hash]).then(r=>r.rows[0].result);

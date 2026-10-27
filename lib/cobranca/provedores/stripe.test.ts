@@ -408,6 +408,7 @@ describe("garantirCliente e iniciarAssinatura", () => {
       url: "https://checkout.stripe.com/c/pay/cs_test_1",
       expiraEm: new Date(1790086400 * 1000),
       assinaturaRef: null,
+      sessaoId: "cs_test_1",
     });
     const checkout = chamadas.find((c) => c.rota === "POST /checkout/sessions");
     expect(Object.fromEntries(checkout?.corpo ?? [])).toEqual({
@@ -429,6 +430,59 @@ describe("garantirCliente e iniciarAssinatura", () => {
     });
     // Sem payment_method_types: cartão e boleto aparecem conforme o painel da conta.
     expect(checkout?.headers.get("idempotency-key")).toBe(`${base.chaveIdempotencia}:checkout`);
+  });
+
+  it("⭐ cobra o proporcional numa sessão avulsa e consulta o status direto na Stripe", async () => {
+    const { adaptador, chamadas } = montar({
+      "POST /products": { corpo: { id: PRODUTO } },
+      "POST /checkout/sessions": SESSAO,
+      "GET /checkout/sessions/cs_test_1": { corpo: { status: "complete", payment_status: "paid" } },
+    });
+    const resultado = await adaptador.iniciarAjusteProporcional({ ...base, valorCents: 3065 });
+    expect(resultado).toEqual({ pagamentoRef: "cs_test_1", url: "https://checkout.stripe.com/c/pay/cs_test_1" });
+    expect(Object.fromEntries(chamadas.find((c) => c.rota === "POST /checkout/sessions")?.corpo ?? [])).toMatchObject({
+      mode: "payment", customer: base.clienteRef, client_reference_id: ORG,
+      "line_items[0][price_data][unit_amount]": "3065",
+    });
+    await expect(adaptador.lerPagamentoProporcional("cs_test_1")).resolves.toBe("pago");
+  });
+
+  it.each([
+    [{ status: "open", payment_status: "unpaid" }, "pendente"],
+    // Boleto emitido e ainda não compensado: a sessão já está `complete`.
+    [{ status: "complete", payment_status: "unpaid", payment_intent: { status: "requires_action" } }, "pendente"],
+    [{ status: "complete", payment_status: "unpaid", payment_intent: { status: "processing" } }, "pendente"],
+    // Boleto que venceu sem pagar: a sessão continua `complete`, o PaymentIntent morreu.
+    [{ status: "complete", payment_status: "unpaid", payment_intent: { status: "requires_payment_method" } }, "encerrado"],
+    [{ status: "expired", payment_status: "unpaid", payment_intent: null }, "encerrado"],
+  ])("⭐ ajuste proporcional %j → %s (o PaymentIntent vem expandido)", async (corpo, esperado) => {
+    const { adaptador, chamadas } = montar({ "GET /checkout/sessions/cs_test_1": { corpo } });
+    await expect(adaptador.lerPagamentoProporcional("cs_test_1")).resolves.toBe(esperado);
+    expect(chamadas[0]?.url.searchParams.get("expand[]")).toBe("payment_intent");
+  });
+
+  it("⭐ #2609 expirar a sessão: POST /checkout/sessions/{id}/expire — é a chamada que mata o link no provedor", async () => {
+    const { adaptador, chamadas } = montar({ "POST /checkout/sessions/cs_aberta/expire": { corpo: { id: "cs_aberta", status: "expired" } } });
+    await adaptador.expirarSessao("cs_aberta");
+    expect(chamadas.map((c) => c.rota)).toEqual(["POST /checkout/sessions/cs_aberta/expire"]);
+  });
+
+  it("⭐ #2609 sessão já expirada (404) é o efeito desejado; id que não é checkout da Stripe recusa antes de chamar (422)", async () => {
+    const { adaptador } = montar({
+      "POST /checkout/sessions/cs_aberta/expire": {
+        status: 404,
+        corpo: { error: { type: "invalid_request_error", code: "resource_missing", message: "No such checkout session" } },
+      },
+    });
+    await expect(adaptador.expirarSessao("cs_aberta")).resolves.toBeUndefined();
+    await expect(adaptador.expirarSessao("pay_1")).rejects.toMatchObject({ status: 422, codigo: "sessao_de_outro_provedor" });
+  });
+
+  it("#2609 provedor fora (5xx) ao expirar: propaga — quem chama não pode achar que o link morreu", async () => {
+    const { adaptador } = montar({
+      "POST /checkout/sessions/cs_aberta/expire": { status: 500, corpo: { error: { type: "api_error", message: "boom" } } },
+    });
+    await expect(adaptador.expirarSessao("cs_aberta")).rejects.toMatchObject({ status: 500, transitorio: true });
   });
 
   it("teste grátis ≥ 48 h + 10 min vai como trial_end; 48 h cravadas não vão (relógio e novas tentativas comem a margem)", async () => {
@@ -502,10 +556,12 @@ describe("lerSituacao", () => {
       emAtraso: false,
       vencidaDesde: null,
       proximoVencimento: FIM_DO_ITEM,
+      periodoPagoDesde: new Date(1790000000 * 1000),
       jaPagou: true,
       emTesteNoProvedorAte: null,
       pagamentoSemAssinaturaViva: false,
       linkDePagamento: null,
+      precoCents: 4990,
       statusBruto: "active",
     });
     const subs = chamadas.find((c) => c.rota === "GET /subscriptions");
@@ -624,7 +680,7 @@ describe("trocarPlano, cancelarNoFim, prepararWebhook e portal", () => {
   const PRODUTO_NOVO = `dc_plano_${NOVO.id}`;
   const URL_DO_WEBHOOK = "https://crm.example.com/api/v1/webhooks/cobranca/stripe";
 
-  it("⭐ trocarPlano: preço novo no MESMO item, sem proração — vale na próxima fatura (D-3)", async () => {
+  it("⭐ trocarPlano: preço novo no MESMO item, sem nova cobrança proporcional e preservando a âncora", async () => {
     const { adaptador, chamadas } = montar({
       "GET /subscriptions/sub_1QfixtureAtiva": { corpo: objetos.assinatura },
       "POST /products": { corpo: { id: PRODUTO_NOVO } },

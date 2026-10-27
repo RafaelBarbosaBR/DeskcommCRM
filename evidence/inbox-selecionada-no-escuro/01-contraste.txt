@@ -1,0 +1,7 @@
+aberta, nome: 13.08
+aberta, prévia: 13.08
+aberta+marcada, nome: 13.08
+aberta+marcada, prévia: 13.08
+aberta+marcada, hover: prévia 39,43,32 / wrapper 39,43,32
+aberta+marcada, hover, prévia: 13.08
+aberta+marcada, foco: prévia 39,43,32 / wrapper 39,43,32

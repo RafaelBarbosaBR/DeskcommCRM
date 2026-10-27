@@ -4,20 +4,25 @@ import { useTagDeIdioma } from "@/hooks/i18n/useLocaleDeData";
 import { useRef } from "react";
 
 import { useT } from "@/hooks/i18n/useT";
-import { useActiveOrg, useUser } from "@/hooks/auth/AuthProvider";
+import { useActiveOrg, usePermission, useUser } from "@/hooks/auth/AuthProvider";
 import { ROLE_RANK } from "@/lib/auth/types";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLeadTimeline } from "@/hooks/leads/useLeadTimeline";
 import type { Lead } from "@/lib/types/leads";
+import type { Stage } from "@/lib/kanban/types";
 import { ContatoDoNegocio } from "./ContatoDoNegocio";
 import { ConversaNoDossie } from "./ConversaNoDossie";
-import { LeadFieldsForm } from "./LeadFieldsForm";
+import { LeadFieldsForm, type ControleDosCamposDoNegocio } from "./LeadFieldsForm";
+import { RevisaoDoDocumento } from "./RevisaoDoDocumento";
 import { ScoreSlot } from "./ScoreSlot";
 import { LeadNoteComposer } from "./LeadNoteComposer";
 import { LeadTimeline } from "./LeadTimeline";
 import { PropostasDoNegocio } from "./PropostasDoNegocio";
+import { TarefasDoNegocio } from "./TarefasDoNegocio";
 import { OwnerBadge } from "./OwnerBadge";
+import { EtapaNoDossie } from "./EtapaNoDossie";
+import { useSecoesRecolhidas } from "./SecaoDoDossie";
 import { resolveLeadOwner } from "@/lib/kanban/owner";
 import { formatValorDoNegocio, MOEDA_PADRAO } from "@/lib/money";
 import type { CustomFieldDef } from "@/components/contacts/CustomFieldsEditor";
@@ -30,6 +35,13 @@ interface Props {
   fieldDefs?: CustomFieldDef[];
   stageName: string;
   ownerNames?: Map<string, string | null>;
+  /**
+   * As etapas do funil e quem move. Presentes (o quadro passa), o cabeçalho
+   * troca o nome da etapa por um seletor — ver `EtapaNoDossie`. Ausentes (o
+   * calendário, por enquanto), fica o texto de antes.
+   */
+  etapas?: Pick<Stage, "id" | "name">[];
+  onMudarEtapa?: (stageId: string) => void;
 }
 
 function formatValor(cents: number | null, currency: string | null): string {
@@ -42,27 +54,40 @@ function formatValor(cents: number | null, currency: string | null): string {
  * O dossiê do negócio: duas colunas, lado a lado (decisão de 16/10, pedido
  * explícito de layout "com o histórico ao lado do card" — a mudança é só de
  * ESTRUTURA, nas cores e componentes que o produto já usa, sem clonar a
- * paleta escura de referência).
+ * paleta escura de referência). Decisão desta instalação, mantida na
+ * atualização para a 1.94 por cima do redesenho de colunas única (#3181) que
+ * o upstream fez no mesmo período — as DUAS mexiam na mesma tela por motivos
+ * diferentes, e o layout em colunas é o que esta operação pediu e já usa.
  *
  * Esquerda (estreita, rola sozinha): cabeçalho vivo, a aba "Principal" com
- * Contato, os campos do negócio e Propostas. Direita (larga, rola sozinha):
- * o atalho para a conversa e a linha do tempo.
+ * Contato, os campos do negócio (com a fila de revisão do documento, #3415) e
+ * Propostas. Direita (larga, rola sozinha): tarefas, a linha do tempo (com o
+ * campo de comentário manual) e o atalho para a conversa.
  *
  * SÓ "Principal" existe como aba por agora — não há tela de Estatísticas,
  * Mídia nem catálogo de Produtos por negócio ainda; uma aba vazia mentiria
  * sobre o que o produto faz. A aba fica pronta para quando (se) essas telas
  * existirem.
  *
- * A ORDEM DENTRO DA COLUNA DIREITA preserva a decisão anterior: quem abre um
- * lead quer primeiro saber O QUE ACONTECEU — a conversa e a timeline, que
- * antes vinham antes dos campos, agora moram na própria coluna que não
- * disputa espaço com o formulário.
+ * A ORDEM DENTRO DA COLUNA DIREITA preserva a decisão de 16/10: quem abre um
+ * lead quer primeiro saber O QUE ACONTECEU — tarefas e timeline, que não
+ * disputam espaço com o formulário por morarem na coluna própria.
+ *
+ * O RECOLHIMENTO DA TIMELINE (#3181, upstream) sobrevive sem o resto do
+ * redesenho dele: a seção mostra as `ENTRADAS_COM_A_LINHA_RECOLHIDA` mais
+ * recentes com "Ver tudo", usando o MESMO `useSecoesRecolhidas` (estado por
+ * navegador, em `localStorage`) — só não está dentro de um `SecaoDoDossie`
+ * genérico, porque as outras seções desta coluna não colapsam.
  *
  * SALVAR NÃO FECHA. Quem edita precisa ver a atividade que acabou de gerar
  * entrar na timeline; fechar esconderia o registro justamente de quem o
  * produziu, e a funcionalidade que prova "sua ação fica registrada" provaria
  * isso para todo mundo menos para o autor.
  */
+
+/** Quantas entradas a linha do tempo mostra com a seção recolhida (#3181). */
+const ENTRADAS_COM_A_LINHA_RECOLHIDA = 3;
+
 export function LeadDossier({
   open,
   onOpenChange,
@@ -71,11 +96,22 @@ export function LeadDossier({
   fieldDefs = [],
   stageName,
   ownerNames,
+  etapas,
+  onMudarEtapa,
 }: Props) {
   const tagDoIdioma = useTagDeIdioma();
   const t = useT();
   const campos = useRef<HTMLDivElement | null>(null);
+  const formulario = useRef<ControleDosCamposDoNegocio | null>(null);
   const timeline = useLeadTimeline(open ? lead.id : null, lead.contact_id);
+  const { fechadas, alternar } = useSecoesRecolhidas();
+  const timelineRecolhida = fechadas.has("linha-do-tempo");
+  // As três MAIS RECENTES: a rota devolve `performed_at` decrescente, então o
+  // corte é no início da lista, não no fim.
+  const itensDaTimeline = timelineRecolhida
+    ? timeline.itens.slice(0, ENTRADAS_COM_A_LINHA_RECOLHIDA)
+    : timeline.itens;
+  const temMaisNaTimeline = timeline.itens.length > ENTRADAS_COM_A_LINHA_RECOLHIDA;
   const owner = resolveLeadOwner(lead, ownerNames);
   const score = lead.score ?? null;
   // N1 — o atalho "Nova proposta" é manager+ (mesmo gate do envio, mesma
@@ -85,6 +121,36 @@ export function LeadDossier({
   const activeOrg = useActiveOrg();
   const podeCriarProposta =
     user.is_platform_admin || (activeOrg && ROLE_RANK[activeOrg.role] >= ROLE_RANK.manager) || false;
+  // A MESMA régua do arrasto e do "Mover para…" do card (`KanbanCardActions`).
+  const podeMoverCard = usePermission("pipeline.move_card");
+  // Tarefas são `agent`+, a mesma régua da tela de Tarefas e da rota — e o
+  // suporte temporário só lê, como lá (`requireSupportWrite`).
+  const podeEditarTarefas =
+    (user.is_platform_admin && !user.support) ||
+    (activeOrg ? ROLE_RANK[activeOrg.role] >= ROLE_RANK.agent : false);
+  // Confirmar o que o documento disse é EDITAR O CARD: `agent`+, a MESMA régua
+  // que a rota de decisão exige (`requireRole("agent")`). Abaixo disso a fila
+  // ainda aparece — ler o que a IA leu é informação —, mas sem os botões.
+  const podeConfirmarDoDocumento = podeEditarTarefas;
+
+  /**
+   * As props da linha do tempo, montadas UMA vez e usadas nos dois estados da
+   * seção. Duplicar o bloco seria a maneira mais fácil de os dois divergirem —
+   * e o recolhido é justamente o estado menos olhado por quem revisa.
+   *
+   * São as props, e não o elemento da linha do tempo já montado numa variável
+   * lá em cima: `tests/unit/dossie-atalho-conversa` prova que o bloco da
+   * conversa aparece ANTES da linha do tempo lendo a posição do primeiro
+   * elemento dela no arquivo, e uma variável içada para o topo do componente
+   * inverteria essa leitura sem nada ter mudado na tela — o teste passaria a
+   * medir a posição de uma variável, e não da seção.
+   */
+  const propsDaLinhaDoTempo = {
+    itens: itensDaTimeline,
+    chegouAoVivo: timeline.chegouAoVivo,
+    isLoading: timeline.isLoading,
+    isError: timeline.isError,
+  };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -111,7 +177,16 @@ export function LeadDossier({
               <span className="font-medium tabular-nums text-text">
                 {formatValor(lead.value_cents, lead.currency)}
               </span>
-              <span className="text-text-muted">{stageName}</span>
+              {etapas && onMudarEtapa ? (
+                <EtapaNoDossie
+                  etapaAtual={lead.stage_id}
+                  etapas={etapas}
+                  podeMover={podeMoverCard}
+                  onMudar={onMudarEtapa}
+                />
+              ) : (
+                <span className="text-text-muted">{stageName}</span>
+              )}
               <OwnerBadge
                 ownerKind={owner.kind}
                 ownerName={owner.name}
@@ -170,12 +245,28 @@ export function LeadDossier({
                   />
                 </section>
 
-                {/* campos do negócio */}
-                <div ref={campos} className="border-b border-border py-3">
+                {/* campos do negócio — `data-secao` é o MESMO atributo que
+                    `SecaoDoDossie` usa (#3316): quem procura "a seção dos
+                    campos" não precisa saber se ela colapsa ou não. */}
+                <div ref={campos} data-secao="dados-do-negocio" className="border-b border-border py-3">
                   <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-muted">
                     {t("Dados do negócio")}
                   </h3>
-                  <LeadFieldsForm lead={lead} pipelineId={pipelineId} fieldDefs={fieldDefs} />
+                  {/* ⚠️ A REVISÃO FICA AQUI, dentro do card — a fila existia como
+                      API e não tinha consumidor na tela (#3415). Acima do
+                      formulário porque é o histórico do que o documento disse, e
+                      o formulário é o destino do que for confirmado. */}
+                  <RevisaoDoDocumento
+                    leadId={lead.id}
+                    podeDecidir={podeConfirmarDoDocumento}
+                    aoDecidir={(confirmado) => formulario.current?.confirmarCampo(confirmado)}
+                  />
+                  <LeadFieldsForm
+                    lead={lead}
+                    pipelineId={pipelineId}
+                    fieldDefs={fieldDefs}
+                    controle={formulario}
+                  />
                 </div>
 
                 {/* N1 — seção "Propostas", depois de "Dados do negócio". Some
@@ -190,23 +281,42 @@ export function LeadDossier({
             </Tabs>
           </div>
 
-          {/* coluna direita: a timeline primeiro, a conversa depois (16/10) —
-              inverte a ordem anterior (conversa primeiro). O comentário é o
-              que se escreve o tempo todo, e precisa estar visível SEM rolar;
-              a conversa é a porta de saída para outro lugar, e cabe mais
-              abaixo, sem disputar o topo com o que se usa a cada abertura do
-              dossiê. */}
+          {/* coluna direita: tarefas, a timeline (com o comentário) e por
+              último a conversa (16/10) — inverte a ordem anterior (conversa
+              primeiro). O comentário é o que se escreve o tempo todo, e
+              precisa estar visível SEM rolar; a conversa é a porta de saída
+              para outro lugar, e cabe mais abaixo, sem disputar o topo com o
+              que se usa a cada abertura do dossiê. */}
           <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-6">
+            {/* As tarefas SEGUEM antes da linha do tempo: a timeline conta o
+                que já aconteceu, a tarefa é o que ainda falta fazer — e quem
+                abre o card para agir procura o próximo passo primeiro. */}
+            <TarefasDoNegocio
+              leadId={lead.id}
+              contactId={lead.contact_id}
+              podeEditar={podeEditarTarefas}
+              aberto={open}
+            />
+
+            {/* Linha do tempo — recolhida, mostra as três entradas mais
+                recentes e o "ver tudo" (#3181, upstream): a seção fecha sem
+                deixar a pergunta "e o que aconteceu por último?" sem
+                resposta. O comentário manual (16/10) fica logo abaixo dela,
+                sempre visível, recolhida ou não. */}
             <section className="flex-1">
               <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-muted">
                 {t("Linha do tempo")}
               </h3>
-              <LeadTimeline
-                itens={timeline.itens}
-                chegouAoVivo={timeline.chegouAoVivo}
-                isLoading={timeline.isLoading}
-                isError={timeline.isError}
-              />
+              <LeadTimeline {...propsDaLinhaDoTempo} />
+              {temMaisNaTimeline && (
+                <button
+                  type="button"
+                  onClick={() => alternar("linha-do-tempo")}
+                  className="mt-2 text-xs text-text-muted underline-offset-2 hover:text-text hover:underline"
+                >
+                  {t("Ver tudo")}
+                </button>
+              )}
               <LeadNoteComposer leadId={lead.id} />
             </section>
 

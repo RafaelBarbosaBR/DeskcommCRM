@@ -77,6 +77,7 @@ mkdir -p "$WORK/bin"
 cat > "$WORK/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$DOCKER_LOG"
+case " $* " in *" up -d --no-deps app worker "*) printf 'pull_policy=%s/%s\n' "${APP_PULL_POLICY:-}" "${WORKER_PULL_POLICY:-}" >> "$DOCKER_LOG" ;; esac
 case " $* " in
   # Healthcheck do update.sh: "docker compose ... exec -T app node -e ...".
   # O dublê responde o que o app RESPONDE DE VERDADE — capturado da instalação
@@ -191,7 +192,7 @@ export PATH="$WORK/bin:$PATH"
 # ── Instalação de mentira: repo git + kit + .env ─────────────────────────────
 PROJ="$WORK/deskcommcrm"
 mkdir -p "$PROJ/hostgator-setup-kit" "$PROJ/supabase"
-cp "$REPO_ROOT/hostgator-setup-kit/_common.sh" "$REPO_ROOT/hostgator-setup-kit/_i18n.sh" \
+cp "$REPO_ROOT/hostgator-setup-kit/_common.sh" "$REPO_ROOT/hostgator-setup-kit/_manifestos.sh" "$REPO_ROOT/hostgator-setup-kit/_i18n.sh" \
    "$REPO_ROOT/hostgator-setup-kit/update.sh" \
    "$REPO_ROOT/hostgator-setup-kit/agent.sh" "$REPO_ROOT/hostgator-setup-kit/manutencao.sh" \
    "$PROJ/hostgator-setup-kit/"
@@ -226,6 +227,11 @@ ENV
 chmod 600 "$PROJ/.env"
 
 cd "$PROJ" || exit 1
+# Como no repositório de verdade (`.gitignore`: `.env*`): o .env não é
+# versionado. Versionado, toda escrita do kit nele antes do checkout (o par
+# VAPID nasce antes da decisão de versão) virava "alteração local" e a
+# atualização recusava — um defeito do fixture, não do produto.
+printf '.env*\n' > .gitignore
 git init --quiet
 git add -A
 git commit --quiet -m "v0.9.0"
@@ -260,8 +266,16 @@ check "mesmo recusando, deixou o agente da tela instalado (com cd no diretório 
   grep -q "cd ${PROJ} && bash hostgator-setup-kit/agent.sh" "$FAKE_CRONTAB"
 
 echo "── 3. --force é a saída explícita de quem quer mesmo voltar"
+: > "$DOCKER_LOG"
 run_update --to v0.9.0 --force
 check "passou da guarda e rodou o backup" test -f "$BACKUP_MARK"
+# O pré-voo de PLATAFORMA (`preflight_plataforma_atualizacao`) é só do ARM64:
+# no AMD64 toda imagem publicada tem amd64. O preflight geral da #1955
+# (`preflight_atualizacao`) consulta o buildx em toda arquitetura, de propósito
+# e com motivo nomeado — por isso a régua aqui é a RECUSA do pré-voo ARM, não
+# o `imagetools` no log do docker. Se o AMD64 voltar a passar por ele, este
+# dublê (sem registro) faz o pré-voo recusar, e a mensagem aparece na saída.
+check "em AMD64 a atualização não passa pelo pré-voo de plataforma do ARM64" bash -c "! grep -q 'não está completa para' '$OUTFILE'"
 
 echo "── 4. Atualização de verdade grava a imagem no .env, sem duplicar a chave"
 # Estado de quem sofreu um rollback antes: o agente deixou a imagem apontando
@@ -757,8 +771,16 @@ check "caminho feliz: a saída não fala em arquitetura nem em construção loca
 # dele também. A recuperação é a MESMA função de _common.sh, exercitada acima de
 # ponta a ponta pelo update.sh; aqui se prova que o install.sh a chama — e logo
 # depois do `up -d` que pode falhar, não em outro lugar qualquer.
-check "install.sh chama a recuperação depois de um up -d que pode falhar" \
-  bash -c "grep -A1 'if ! dc up -d; then' '$REPO_ROOT/hostgator-setup-kit/install.sh' | grep -q 'construir_aqui_e_subir'"
+#
+# A janela do grep era -A1 e virou -A6 na #2631: o portão `build_local_permitido`
+# entrou EXATAMENTE entre o `if ! dc up -d; then` e a chamada da recuperação, e
+# -A1 passou a apontar para o portão. A intenção da prova não mudou (a
+# recuperação fica no bloco do `up -d`); o que se ganhou é a segunda metade da
+# mesma régua: o portão vem ANTES de construir. O comportamento dos dois lados
+# — portão aberto e portão fechado — é provado de ponta a ponta em
+# tests/shell/install-portao-do-build.test.sh.
+check "install.sh consulta o portão build_local_permitido no mesmo bloco do up -d, antes de chamar a recuperação" \
+  bash -c "b=\"\$(grep -A6 'if ! dc up -d; then' '$REPO_ROOT/hostgator-setup-kit/install.sh')\"; printf '%s\n' \"\$b\" | grep -q build_local_permitido && printf '%s\n' \"\$b\" | grep -q construir_aqui_e_subir"
 
 echo "── 12b. Worker, scheduler e voz com image: + build:; o app SEM build:, de propósito (#1060)"
 # A parte boa medida no Compose fica: com `image:` + `build:` no mesmo bloco,
@@ -854,8 +876,10 @@ echo "── 13. \"Nada a atualizar\" derruba o aviso de manutenção preso (PR 
 # que segura o apelido de rede `app` — seguia respondendo 503 por 6h30.
 cd "$PROJ" || exit 1
 : > "$DOCKER_LOG"
+rm -f "$FAKE_CRONTAB"
 IMAGEM_EM_DIA=1 AVISO_PRESO=1 run_update --to v1.1.0
 check "sai com sucesso pela saída \"nada a atualizar\"" test "$RC" -eq 0
+check "  no-op ainda instala o cron do agente" grep -q "cd ${PROJ} && bash hostgator-setup-kit/agent.sh" "$FAKE_CRONTAB"
 check "  e a saída é mesmo a antecipada" grep -q "Nada a atualizar" "$OUTFILE"
 check "  não rodou o backup (não virou atualização)" test ! -f "$BACKUP_MARK"
 check "  removeu o contêiner do aviso" grep -q "rm -f deskcomm-manutencao" "$DOCKER_LOG"
@@ -866,6 +890,37 @@ IMAGEM_EM_DIA=1 run_update --to v1.1.0
 check "sem aviso de pé: não mexe em contêiner nenhum" \
   bash -c "! grep -q 'rm -f deskcomm-manutencao' '$DOCKER_LOG'"
 check "  e não fala de aviso preso" bash -c "! grep -q 'aviso de manutenção preso' '$OUTFILE'"
+
+echo "── 14. O par VAPID nasce também quando não há versão nova (ADR-0006, D6)"
+# A tela de Notificações manda rodar a atualização SEM --force. Quem já está na
+# última versão sai pela saída "nada a atualizar", e quem segue a main sai pela
+# recusa de versão anterior: nos dois o par tem de nascer, e o app e o worker
+# têm de subir de novo para lê-lo do .env.
+sem_vapid() { { grep -v 'VAPID_' .env || true; } > .env.sem && mv .env.sem .env; }
+tamanho_da_publica() { sed -n 's/^VAPID_PUBLIC_KEY=//p' .env | tail -1 | tr -d "\"'" | awk '{print length}'; }
+cd "$PROJ" || exit 1
+sem_vapid; : > "$DOCKER_LOG"
+IMAGEM_EM_DIA=1 run_update --to v1.1.0
+check "\"nada a atualizar\" sai com sucesso" test "$RC" -eq 0
+check "  e cria o par no .env" test "$(tamanho_da_publica)" = 87
+check "  e sobe de novo o app e o worker para lerem o par" grep -q "up -d --no-deps app worker" "$DOCKER_LOG"
+check "  sem baixar imagem nova (pull_policy never no app e no worker)" grep -qx "pull_policy=never/never" "$DOCKER_LOG"
+check "  sem virar atualização (não rodou o backup)" test ! -f "$BACKUP_MARK"
+cp .env .env.com-par; : > "$DOCKER_LOG"
+IMAGEM_EM_DIA=1 run_update --to v1.1.0
+check "2ª passada: o par segue o mesmo" cmp -s .env .env.com-par
+check "  e não reinicia nada à toa" bash -c "! grep -q 'up -d --no-deps app worker' '$DOCKER_LOG'"
+rm -f .env.com-par
+sem_vapid; : > "$DOCKER_LOG"
+run_update --to v0.9.0
+check "recusa de versão anterior (quem segue a main) também cria o par" test "$(tamanho_da_publica)" = 87
+check "  e sobe de novo o app e o worker" grep -q "up -d --no-deps app worker" "$DOCKER_LOG"
+check "  sem baixar imagem nova, mesmo seguindo a main" grep -qx "pull_policy=never/never" "$DOCKER_LOG"
+check "  e a recusa diz que as chaves foram a única mudança" grep -q "Não mexi em nada além das chaves dos avisos" "$OUTFILE"
+: > "$DOCKER_LOG"
+run_update --to v0.9.0
+check "recusa com o par já presente: não reinicia nada" bash -c "! grep -q 'up -d --no-deps app worker' '$DOCKER_LOG'"
+check "  e diz só 'Não mexi em nada', sem citar as chaves" bash -c "grep -q 'Não mexi em nada: nem no banco' '$OUTFILE' && ! grep -q 'além das chaves' '$OUTFILE'"
 
 if [ "$FAILS" -eq 0 ]; then echo "OK — todas as provas passaram."; else echo "FALHOU — $FAILS prova(s)."; fi
 exit $((FAILS > 0))

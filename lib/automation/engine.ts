@@ -23,7 +23,7 @@ import type { ServiceBoundary } from "@/lib/atendimento/fronteira";
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EventRow, HandlerResult } from "@/lib/event-log/dispatcher";
-import { evaluateConditions, type RuleCondition } from "@/lib/automation/conditions";
+import { evaluateConditions, type Conditions } from "@/lib/automation/conditions";
 import { getAction } from "@/lib/automation/actions";
 import type { ActionResultDetail } from "@/lib/automation/types";
 import { audit } from "@/lib/audit";
@@ -34,6 +34,7 @@ import {
   GATILHOS_DO_TRIGGER_DE_LEAD,
 } from "@/lib/schemas/webhooks";
 import { logger } from "@/lib/logger";
+import { ocultarProvaMetaNaResposta } from "@/lib/leads/prova-meta-lead-submitted";
 
 export const AUTOMATION_CONSUMER_KEY = "automation-rules";
 
@@ -59,7 +60,7 @@ function entidadeDoEvento(row: Pick<EventRow, "event_type" | "entity_kind">): st
 interface RuleRow {
   id: string;
   name: string;
-  conditions: RuleCondition[];
+  conditions: Conditions;
   actions: Array<{ type: string; config?: Record<string, unknown> }>;
   trigger_config?: Record<string, unknown> | null;
 }
@@ -89,7 +90,7 @@ export async function buildContext(admin: SupabaseClient, row: EventRow): Promis
           .maybeSingle()
       : { data: null };
     if (lead) {
-      context.lead = lead;
+      context.lead = ocultarProvaMetaNaResposta(lead as Record<string, unknown>);
       if (lead.contact_id) {
         const { data: contact } = await admin
           .from("contacts")

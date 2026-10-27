@@ -16,7 +16,12 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { comecaComPalavraDeSaida, ehOptOutProvavel, ehPedidoDeOptOut } from "@/lib/opt-out/deteccao";
+import {
+  comecaComPalavraDeSaida,
+  ehOptOutProvavel,
+  ehPedidoDeOptOut,
+  semAssinaturaDaAtendente,
+} from "@/lib/opt-out/deteccao";
 
 /** Pedidos de descadastro que PRECISAM ser respeitados (bloqueiam o contato). */
 const PEDE_PARA_SAIR = [
@@ -155,6 +160,19 @@ const NAO_PEDE_PARA_SAIR = [
   "posso cancelar a consulta de amanhã?",
   "vocês vão parar no feriado?",
   "que horas vocês param de atender?",
+  // ─── CONTROLE NEGATIVO de `assinatura` (#2886) ────────────────────────────
+  //
+  // O corpus não tinha UMA frase negativa para `assinatura`: só o positivo, que
+  // esta fatia moveu para as ambíguas. Sem estes casos, alguém "consertaria" o
+  // falso positivo alargando o padrão de bloqueio até casar qualquer coisa com
+  // a palavra, e a suíte seguiria verde. Aqui `assinatura` é o PLANO ou a
+  // FATURA, nunca o canal de mensagens: nenhuma bloqueia — e nenhuma ESCALA
+  // (o describe do lado negativo cobre o escalar, abaixo; sem ele a frase
+  // cairia no ambíguo e desligaria a automação na pergunta de preço).
+  "quanto custa a assinatura anual?",
+  "o valor da assinatura aumentou este mês",
+  "quando vence a assinatura do meu plano?",
+  "a assinatura renova sozinha ou preciso avisar?",
   // colagem — o defeito da versão com `\b` ASCII, que já tinha sido corrigido
   "amanhã ele sairá do escritório e pararão as obras",
   "a obra pararia se chovesse",
@@ -309,7 +327,6 @@ const ESPANHOL_PEDE_PARA_SAIR = [
   "por favor no me escriban mas",
   "me desuscribo",
   "sacame de la lista",
-  "cancelar la suscripcion",
 ];
 
 const ESPANHOL_NAO_PEDE = [
@@ -354,7 +371,168 @@ const ESPANHOL_NAO_PEDE = [
   "no me interesa el seguro, quiero solo el producto",
   "la verdad no me interesa el precio, me interesa la calidad",
   "no me interesa pagar mas, hay algo mas barato?",
+  // CONTROLE NEGATIVO de `suscripcion` (#2886) — espelho do controle de
+  // `assinatura` em `NAO_PEDE_PARA_SAIR`: aqui a palavra é o PLANO ou a FATURA,
+  // nunca o canal. Nenhuma bloqueia e nenhuma escala.
+  "cuanto cuesta la suscripcion anual?",
+  "la suscripcion se renueva sola?",
+  "quiero saber el precio de la suscripcion",
 ];
+
+/**
+ * ─── PORTUGUÊS DE PORTUGAL, no MESMO detector ───────────────────────────────
+ *
+ * O seletor de país já aceita Portugal (doc 88 / PR #2339), mas o marketing
+ * português segue as regras do Brasil: a Lei n.º 41/2004, art. 13.º-A, exige
+ * consentimento prévio e um meio simples e gratuito de recusa em CADA mensagem.
+ * A fatia deste PR é o primeiro pedaço disso — o opt-out reconhecer o
+ * vocabulário de Portugal (issue #2343). O resto (exigir consentimento por
+ * contato) exige schema novo e NÃO entra aqui.
+ *
+ * Duas palavras do corpo da issue:
+ *   - "cancelar a subscrição" — `subscricao` faltava na lista de objetos;
+ *   - "remover" — já é palavra-chave sozinha, mas a FRASE em pt-PT não casava
+ *     nada, porque o pronome vem PRESO ao verbo ("remova-me"), e não solto
+ *     antes dele como no Brasil ("me remova").
+ *
+ * Os controles negativos são metade do valor: sem eles, alguém "consertaria" o
+ * positivo com um `includes("remover")` e a suíte ficaria verde bloqueando quem
+ * só avisou que vai remover o produto do carrinho.
+ */
+const PT_PT_PEDE_PARA_SAIR = [
+  // "remover" na gramática de Portugal — pronome PRESO ao verbo, depois dele.
+  "remova-me da lista",
+  "removam-me da lista",
+  "podem remover-me da lista",
+  "retirem-me da lista de contactos",
+  "eliminem-me da lista",
+  "apaguem-me da lista de contactos",
+  "excluam-me da lista de envios",
+];
+
+const PT_PT_NAO_PEDE = [
+  // "subscrição" noutro sentido: fala da fatura, não pede saída.
+  "o valor da subscrição aumentou este mês",
+  "quanto custa a subscrição anual?",
+  // "remover" em Portugal, mas o objeto NÃO é a comunicação com quem escreve —
+  // mesmo continente do controle do #1607.
+  "vou remover o produto do carrinho",
+  "remova-me a dúvida sobre o prazo de entrega",
+  "podem remover a fatura duplicada do sistema",
+  // Outra lista — quem escreve isto QUER continuar a ser contactado.
+  "removam-me da lista de espera",
+  "remova-me da lista de desejos",
+  // "contactos" sem "lista": a forma brasileira ("me remova dos contatos do
+  // fornecedor") também não bloqueia.
+  "remova-me dos contatos do fornecedor",
+];
+
+/**
+ * "cancelar a subscrição" — a frase do corpo da issue — ESCALA e não bloqueia:
+ * em Portugal a palavra também é o plano do ginásio ou da revista, e quem
+ * pergunta "posso cancelar a subscrição e voltar depois?" quer resposta.
+ */
+const PT_PT_ESCALA_SEM_BLOQUEAR = [
+  "cancelar a subscrição",
+  "quero cancelar a subscrição",
+  "podem cancelar a subscrição, por favor",
+  "cancela a subscrição",
+  "posso cancelar a subscrição e voltar depois?",
+];
+
+/**
+ * ─── "cancelar a assinatura" é o PLANO, não as mensagens (#2886) ─────────────
+ *
+ * A palavra serve às duas coisas: sair das mensagens E cancelar o plano do
+ * produto. Medido com `ehPedidoDeOptOut`/`ehOptOutProvavel` da main, antes
+ * desta fatia, as frases abaixo gravavam `is_blocked` (e escalavam), porque o
+ * padrão `cancelar a (inscricao|assinatura)` estava em `FRASES_DE_OPT_OUT`:
+ *
+ *   "posso cancelar a assinatura e voltar depois?"  bloqueia=true  escala=true
+ *   "quero cancelar a assinatura da revista"        bloqueia=true  escala=true
+ *   "cancelar la suscripcion"                       bloqueia=true  escala=true
+ *
+ * Uma academia, uma revista ou um SaaS que atende pelo WhatsApp PERDIA o cliente
+ * que só perguntava como pausar o plano: o contato ficava bloqueado e a IA parava
+ * de responder. O precedente é a #2872, que fez o mesmo com `cancelar a
+ * subscricão` (pt-PT); o custo aceito — campanhas seguem até alguém da equipe
+ * decidir o bloqueio — está escrito na #2886.
+ *
+ * Quem quer sair DAS MENSAGENS continua coberto pelas formas com objeto, que
+ * bloqueiam na hora; o `it` de baixo é a guarda disso.
+ */
+const ASSINATURA_ESCALA_SEM_BLOQUEAR = [
+  "cancelar a assinatura",
+  "quero cancelar a assinatura",
+  "posso cancelar a assinatura e voltar depois?",
+  "quero cancelar a assinatura da revista",
+  "gostaria de cancelar minha assinatura por enquanto",
+];
+
+const SUSCRIPCION_ESCALA_SEM_BLOQUEAR = [
+  "cancelar la suscripcion",
+  "quiero cancelar la suscripcion",
+  "puedo cancelar la suscripcion y volver despues?",
+  "necesito cancelar mi suscripcion, como hago?",
+];
+
+describe("cancelar o PLANO escala sem bloquear — a palavra de duas caras (#2886)", () => {
+  for (const texto of [...ASSINATURA_ESCALA_SEM_BLOQUEAR, ...SUSCRIPCION_ESCALA_SEM_BLOQUEAR]) {
+    it(`escala sem bloquear: ${texto}`, () => {
+      expect(ehPedidoDeOptOut(texto)).toBe(false);
+      expect(ehOptOutProvavel(texto)).toBe(true);
+    });
+  }
+
+  it("as formas COM objeto de comunicação continuam bloqueando na hora", () => {
+    // O outro lado do conserto: mover `assinatura` para as ambíguas não pode
+    // afrouxar quem de fato pediu para parar de receber.
+    for (const texto of [
+      "parar de me mandar",
+      "sair da lista",
+      "dar de baja la suscripcion",
+      "quiero dar de baja la suscripcion",
+      "quero cancelar a inscrição",
+    ]) {
+      expect(ehPedidoDeOptOut(texto), texto).toBe(true);
+    }
+  });
+
+  it("`cancelar` SOZINHO, sem objeto, continua bloqueando", () => {
+    expect(ehPedidoDeOptOut("cancelar")).toBe(true);
+  });
+});
+
+describe("português de Portugal — o vocabulário da issue #2343", () => {
+  for (const texto of PT_PT_PEDE_PARA_SAIR) {
+    it(`bloqueia: ${texto}`, () => {
+      expect(ehPedidoDeOptOut(texto)).toBe(true);
+    });
+  }
+
+  for (const texto of PT_PT_NAO_PEDE) {
+    it(`NÃO bloqueia: ${texto}`, () => {
+      expect(ehPedidoDeOptOut(texto)).toBe(false);
+    });
+  }
+
+  for (const texto of PT_PT_ESCALA_SEM_BLOQUEAR) {
+    it(`escala sem bloquear: ${texto}`, () => {
+      expect(ehPedidoDeOptOut(texto)).toBe(false);
+      expect(ehOptOutProvavel(texto)).toBe(true);
+    });
+  }
+
+  it("o Brasil continua a valer byte a byte — a regra daqui não muda", () => {
+    // A fatia ACRESCENTA formas; nenhuma brasileira pode sair.
+    for (const texto of PEDE_PARA_SAIR) {
+      expect(ehPedidoDeOptOut(texto), texto).toBe(true);
+    }
+    for (const texto of NAO_PEDE_PARA_SAIR) {
+      expect(ehPedidoDeOptOut(texto), texto).toBe(false);
+    }
+  });
+});
 
 describe("espanhol — a palavra que a plantilla pede", () => {
   for (const texto of ESPANHOL_PEDE_PARA_SAIR) {
@@ -389,7 +567,7 @@ describe("espanhol — a palavra que a plantilla pede", () => {
  * negativos escalam. O gate nasce verde e trava a volta.
  */
 describe("o lado negativo também não pode ESCALAR, não só não bloquear", () => {
-  for (const texto of [...ESPANHOL_NAO_PEDE, ...NAO_PEDE_PARA_SAIR]) {
+  for (const texto of [...ESPANHOL_NAO_PEDE, ...NAO_PEDE_PARA_SAIR, ...PT_PT_NAO_PEDE]) {
     it(`não escala para humano: ${texto}`, () => {
       expect(ehOptOutProvavel(texto), texto).toBe(false);
     });
@@ -546,7 +724,9 @@ describe("comecaComPalavraDeSaida — qual frase o cliente lê quando a IA sai d
     // Sem isto, "pare de mandar o pedido nesse endereco" (cliente irritado com a
     // entrega, candidato natural a `low_sentiment`) lia "Encerro os envios
     // automáticos deste canal agora mesmo".
-    const casam = [...NAO_PEDE_PARA_SAIR, ...ESPANHOL_NAO_PEDE].filter((t) => comecaComPalavraDeSaida(t));
+    const casam = [...NAO_PEDE_PARA_SAIR, ...ESPANHOL_NAO_PEDE, ...PT_PT_NAO_PEDE].filter(
+      (t) => comecaComPalavraDeSaida(t),
+    );
     expect(casam).toEqual([]);
     for (const t of [
       "Parar de tomar o remédio faz mal?",
@@ -560,5 +740,243 @@ describe("comecaComPalavraDeSaida — qual frase o cliente lê quando a IA sai d
   it("texto ausente é falso, sem lançar", () => {
     expect(comecaComPalavraDeSaida(null)).toBe(false);
     expect(comecaComPalavraDeSaida(undefined)).toBe(false);
+  });
+});
+
+/**
+ * ─── Com objeto de comunicação, `assinatura` BLOQUEIA (#2971) ───────────────
+ *
+ * O outro lado do bloco de cima. Quando a frase nomeia o que se quer parar de
+ * receber — as mensagens, as notificações, os avisos, a newsletter —, ela tem
+ * objeto de comunicação e bloqueia na hora, como na main antes do #2886. Só a
+ * frase SEM objeto (que também pode ser o plano) escala sem bloquear.
+ *
+ * "do whatsapp" e "de vocês" ficam fora DE PROPÓSITO: também podem ser o plano
+ * ("cancelar a assinatura do whatsapp" numa revenda de planos de WhatsApp), e
+ * seguem só escalando para uma pessoa. A mesma regra fecha o buraco igual da
+ * `subscricao` de Portugal (#2872).
+ */
+const ASSINATURA_COM_OBJETO_BLOQUEIA = [
+  "cancelar a assinatura das mensagens",
+  "quero cancelar a assinatura dessas mensagens",
+  "cancelar a assinatura da newsletter",
+  "cancelar a assinatura das notificações",
+  "quero cancelar a assinatura dos avisos",
+  "cancelar minha assinatura das promoções",
+  "quero cancelar a subscrição das mensagens",
+  "cancelar la suscripción a los mensajes",
+  "quiero cancelar mi suscripcion de sus promociones",
+];
+
+describe("com objeto de comunicação, `assinatura` BLOQUEIA (#2971)", () => {
+  for (const texto of ASSINATURA_COM_OBJETO_BLOQUEIA) {
+    it(`bloqueia: ${texto}`, () => {
+      expect(ehPedidoDeOptOut(texto)).toBe(true);
+    });
+  }
+
+  it("o objeto que pode ser o PLANO não bloqueia — só escala", () => {
+    for (const texto of [
+      "cancelar a assinatura do plano de mensagens",
+      "cancelar a assinatura de mensagens",
+      "cancelar a assinatura do whatsapp",
+    ]) {
+      expect(ehPedidoDeOptOut(texto), texto).toBe(false);
+      expect(ehOptOutProvavel(texto), texto).toBe(true);
+    }
+  });
+});
+
+/**
+ * ─── A ASSINATURA DA ATENDENTE NA PRIMEIRA LINHA (#3078, ajustada no #3158) ──
+ *
+ * O caso do relato: WhatsApp Business com vários atendentes prefixa a
+ * ASSINATURA ao texto, e o "PARAR" chega na SEGUNDA linha:
+ *
+ *   *Amanda Nobre:*
+ *   PARAR
+ *
+ * Com o texto cru, `ehPalavraIsolada` cola as letras ("amandanobreparar") e
+ * nenhuma frase casa — o pedido se perdia, o contato não era bloqueado e a IA
+ * respondia. O recorte tira a assinatura da FRENTE e julga o resto pela MESMA
+ * régua; nada no vocabulário nem no limiar que grava `is_blocked` se move.
+ *
+ * ─── O AJUSTE DO #3158 — as frases medidas pelo mantenedor são CONTROLE ─────
+ *
+ * A primeira versão reconhecia também o rótulo SEM asteriscos (`Nome:`, até 4
+ * palavras) e julgava só o recortado. O mantenedor passou 28 frases pelas duas
+ * versões e 18 resultados mudaram de veredito contra a `main`, nos dois
+ * sentidos. Os grupos (e) a (h) abaixo são EXATAMENTE esses casos, um `it` por
+ * grupo, para que nenhuma das 18 mudanças possa voltar em silêncio:
+ *
+ *   (e) 5 rótulos curtos que passavam a BLOQUEAR: "Consulta de amanhã:",
+ *       "Pedido 123:", "Remédio:", "Dúvida:" e "Sua mensagem:";
+ *   (f) 3 primeiras linhas que SÃO o pedido e deixavam de bloquear;
+ *   (g) os 3 controles dele — nunca bloquearam e continuam não bloqueando;
+ *   (h) o resíduo `*Remédio:*` + `parar?`: limite DECLARADO, não silêncio.
+ *
+ * A régua do ajuste: só o NEGRITO terminado em dois pontos é assinatura, e o
+ * pedido é julgado no texto ORIGINAL **ou** no recortado — basta um bloquear.
+ */
+describe("a assinatura da atendente na primeira linha não esconde o pedido (#3078)", () => {
+  it("(a) o caso do defeito: `*Amanda Nobre:*` + `PARAR` é pedido INEQUÍVOCO", () => {
+    // Este é o caso que fica VERMELHO sem o recorte (ver o PR: sabotagem).
+    expect(ehPedidoDeOptOut("*Amanda Nobre:*\nPARAR")).toBe(true);
+    // ...e também escala, pela mesma razão de sempre (inequívoco ⇒ provável).
+    expect(ehOptOutProvavel("*Amanda Nobre:*\nPARAR")).toBe(true);
+  });
+
+  it("(b) variações da assinatura em NEGRITO — todas reconhecidas", () => {
+    for (const texto of [
+      "*Nome:*\nsair", // nome curto, palavra de saída diferente
+      "*Amanda Nobre*:\nPARAR", // dois pontos FORA dos asteriscos
+      "*Amanda Nobre:*\nnao quero mais receber", // frase de opt-out, não só palavra
+      "*Dra. Amanda Nobre:*\nparar de me mandar mensagem", // ponto de abreviação no nome
+    ]) {
+      expect(ehPedidoDeOptOut(texto), `deveria reconhecer ${JSON.stringify(texto)}`).toBe(true);
+    }
+  });
+
+  it("(b) a marca da assinatura é o NEGRITO: o rótulo sem asteriscos deixa de ser assinatura (#3158)", () => {
+    // Era por aqui que "Consulta de amanhã:" e "Dúvida:" viravam assinatura (o
+    // grupo (e) mede o estrago). O texto original segue sendo julgado: quando o
+    // que vem depois é FRASE de pedido, o grupo (f) bloqueia igual. O que se
+    // perde — declarado — é a PALAVRA SOLTA depois de um rótulo sem a marca.
+    for (const texto of ["Amanda Nobre:\nPARAR", "*Amanda Nobre*\nPARAR"]) {
+      expect(semAssinaturaDaAtendente(texto), `não deve recortar ${JSON.stringify(texto)}`).toBe(texto);
+      expect(ehPedidoDeOptOut(texto), texto).toBe(false);
+      expect(ehOptOutProvavel(texto), texto).toBe(false);
+    }
+  });
+
+  it("(b) controle negativo: assinatura em mensagem que NÃO pede saída segue não sendo pedido", () => {
+    // O recorte não pode virar um "ignore o que vem antes": com a assinatura
+    // removida, o que sobra é atendimento normal — nem bloqueia, nem escala.
+    for (const texto of [
+      "*Amanda Nobre:*\nBom dia, tudo bem?",
+      "Amanda Nobre:\nvocês abrem amanhã?",
+      "*Joana:*\nvou pensar e te falo",
+    ]) {
+      expect(ehPedidoDeOptOut(texto), texto).toBe(false);
+      expect(ehOptOutProvavel(texto), texto).toBe(false);
+    }
+  });
+
+  /**
+   * (e) os 5 que passavam a BLOQUEAR: a forma sem asteriscos lia qualquer
+   * rótulo curto como assinatura, e o resto — a palavra isolada — silenciava a
+   * pessoa para sempre. Num paciente de clínica ou num cliente de loja isso é
+   * falso positivo que ninguém descobre, porque o motivo gravado
+   * (`stop_keyword`) parece legítimo.
+   */
+  it("(e) rótulo curto sem asteriscos NÃO é assinatura — os 5 falsos positivos do #3158", () => {
+    for (const texto of [
+      "Consulta de amanhã:\ncancelar",
+      "Pedido 123:\ncancelar",
+      "Remédio:\nparar?",
+      "Dúvida:\nparar?",
+      "Sua mensagem:\nPARAR",
+    ]) {
+      expect(ehPedidoDeOptOut(texto), `não pode bloquear: ${JSON.stringify(texto)}`).toBe(false);
+      expect(ehOptOutProvavel(texto), `não pode escalar: ${JSON.stringify(texto)}`).toBe(false);
+    }
+  });
+
+  /**
+   * (f) os 3 que DEIXAVAM de bloquear: a primeira linha É o pedido e era
+   * recortada como assinatura, sobrando só "obrigado"/"chato". Aqui o que
+   * decide é o texto ORIGINAL — o pedido mora na própria primeira linha.
+   */
+  it("(f) primeira linha que É o pedido volta a bloquear — os 3 falsos negativos do #3158", () => {
+    for (const texto of [
+      "*Não quero mais receber*\nobrigado",
+      "*Pare de me mandar mensagem*\nchato",
+      "Não quero mais receber:\nobrigado",
+    ]) {
+      expect(ehPedidoDeOptOut(texto), `deve bloquear: ${JSON.stringify(texto)}`).toBe(true);
+      expect(ehOptOutProvavel(texto), texto).toBe(true);
+    }
+  });
+
+  it("(f) o pedido é julgado nos DOIS textos: mesmo com o recorte inocente, o original bloqueia (#3158)", () => {
+    // `obrigado` sozinho não é pedido nenhum; sem olhar o texto ORIGINAL, o
+    // recorte apagaria o pedido que vive na primeira linha em negrito.
+    const texto = "*Não quero mais receber:*\nobrigado";
+    expect(semAssinaturaDaAtendente(texto)).toBe("obrigado");
+    expect(ehPedidoDeOptOut(texto)).toBe(true);
+  });
+
+  /**
+   * (g) Os 3 controles do mantenedor. Nenhum deles bloqueia na `main` nem
+   * antes deste ajuste — e nenhum pode passar a bloquear: o primeiro é a
+   * assinatura real seguida de pergunta de paciente, os dois últimos são
+   * conversa que só CONTÉM a palavra.
+   */
+  it("(g) os 3 controles do mantenedor seguem sem bloquear (#3158)", () => {
+    for (const texto of [
+      "*Amanda Nobre:*\ntem como parar a dor?",
+      "Ana:\nparar o tratamento?",
+      "> PARAR\nnão, quero continuar",
+    ]) {
+      expect(ehPedidoDeOptOut(texto), `não pode bloquear: ${JSON.stringify(texto)}`).toBe(false);
+      expect(ehOptOutProvavel(texto), `não pode escalar: ${JSON.stringify(texto)}`).toBe(false);
+    }
+  });
+
+  /**
+   * (h) O RESÍDUO, declarado. `*Remédio:*` é estruturalmente idêntico a um
+   * nome em negrito (`*Ana:*`): separar os dois exigiria um dicionário de nomes
+   * próprios, e o rótulo que a issue descreve é `*Nome:*`. O ajuste escolhe
+   * manter o bloqueio (perder um pedido de quem assina é o erro caro do
+   * módulo) — e este `it` existe para que a escolha não fique implícita: se
+   * alguém resolver o rótulo, é aqui que o teste muda.
+   */
+  it("(h) LIMITE DECLARADO: `*Remédio:*` + `parar?` segue bloqueando (rótulo em negrito = nome)", () => {
+    expect(ehPedidoDeOptOut("*Remédio:*\nparar?")).toBe(true);
+    // O contraste que mostra o limite: o MESMO rótulo sem os asteriscos não é
+    // assinatura nenhuma, e ali não bloqueia (grupo (e)).
+    expect(ehPedidoDeOptOut("Remédio:\nparar?")).toBe(false);
+  });
+
+  it("(c) pedido SEM assinatura continua reconhecido igual a hoje", () => {
+    for (const texto of ["PARAR", "sair", "nao quero mais receber", "parar de me mandar mensagem"]) {
+      expect(ehPedidoDeOptOut(texto), texto).toBe(true);
+    }
+  });
+
+  it("(d) mensagem legítima de duas linhas não passa a ser pedido", () => {
+    for (const texto of [
+      "Bom dia\nvamos falar amanha",
+      "oi\nqueria saber o preço",
+      "Bom dia:\nvamos falar amanha", // dois pontos no fim, mas a 2ª linha não é pedido
+    ]) {
+      expect(ehPedidoDeOptOut(texto), texto).toBe(false);
+    }
+  });
+
+  it("mensagem de UMA linha só é PRESERVADA — `*PARAR:*` sozinho continua bloqueando", () => {
+    // O limite mais delicado: a "assinatura" é a mensagem INTEIRA. Recortá-la
+    // devolveria vazio e o pedido morreria — por isso o recorte exige texto
+    // DEPOIS da primeira linha.
+    expect(semAssinaturaDaAtendente("*PARAR:*")).toBe("*PARAR:*");
+    expect(ehPedidoDeOptOut("*PARAR:*")).toBe(true);
+    expect(ehPedidoDeOptOut("PARAR:\n")).toBe(true);
+  });
+
+  it("o recorte é puro e devolve o RESTO intacto (não decide nada)", () => {
+    expect(semAssinaturaDaAtendente("*Amanda Nobre:*\nPARAR")).toBe("PARAR");
+    expect(semAssinaturaDaAtendente("*Amanda Nobre*:\nPARAR")).toBe("PARAR");
+    expect(semAssinaturaDaAtendente("*Amanda Nobre:*\nPARAR\npor favor")).toBe("PARAR\npor favor");
+    // não é assinatura (#3158): rótulo sem asteriscos / negrito sem dois pontos
+    expect(semAssinaturaDaAtendente("Amanda Nobre:\nPARAR\npor favor")).toBe(
+      "Amanda Nobre:\nPARAR\npor favor",
+    );
+    expect(semAssinaturaDaAtendente("*Amanda Nobre*\nPARAR")).toBe("*Amanda Nobre*\nPARAR");
+    expect(semAssinaturaDaAtendente("Bom dia\nvamos falar amanha")).toBe("Bom dia\nvamos falar amanha");
+    expect(semAssinaturaDaAtendente("Bom dia, tudo bem:\nsegue o pedido")).toBe(
+      "Bom dia, tudo bem:\nsegue o pedido",
+    );
+    // texto que COMEÇA com dois pontos nunca é assinatura
+    expect(semAssinaturaDaAtendente(": nota\nPARAR")).toBe(": nota\nPARAR");
   });
 });

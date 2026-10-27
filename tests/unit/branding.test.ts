@@ -248,8 +248,22 @@ const MARCA_CONGELADA: Record<string, EntradaDeMarca> = {
   "lib/mcp/servidor-externo/chamada.ts": {
     categoria: "PROTOCOLO",
     motivo:
-      "clientInfo do handshake `initialize` do MCP que este cliente manda ao servidor REMOTO: ele registra quem conectou e é comum haver regra de acesso por identificação do cliente lá do lado. Não é texto de interface — a tela nunca mostra — e renomear muda a identidade reportada no fio do protocolo",
-    marcas: ["deskcomm-crm"],
+      "clientInfo do handshake `initialize` do MCP que este cliente manda ao servidor REMOTO: ele registra quem conectou e é comum haver regra de acesso por identificação do cliente lá do lado. Não é texto de interface — a tela nunca mostra — e renomear muda a identidade reportada no fio do protocolo. E os cabeçalhos `X-Deskcomm-Contato-*`/`X-Deskcomm-Canal` (#2147): o servidor externo FILTRA os dados do cliente da conversa por esses nomes exatos; renomear faz o servidor deixar de achar a identidade e, conforme a implementação dele, responder sem filtro",
+    marcas: ["deskcomm-crm", "x-deskcomm-canal", "x-deskcomm-contato-id", "x-deskcomm-contato-telefone"],
+  },
+  "lib/mcp/servidor-externo/externo.test.ts": {
+    categoria: "PROTOCOLO",
+    motivo:
+      "é a guarda do contrato acima (#2147): o teste de não-forjamento tenta passar os nomes `X-Deskcomm-*` por argumento de ferramenta, em caixas diferentes, e confere o que chega no fio. Trocar a string aqui desarmaria a prova de que o argumento não alcança o cabeçalho",
+    marcas: [
+      "x-deskcomm-canal",
+      "x-deskcomm-contato-id",
+      "x-deskcomm-contato-id",
+      "x-deskcomm-contato-telefone",
+      "x-deskcomm-contato-telefone",
+      "x-deskcomm-extra",
+      "x-deskcomm-extra",
+    ],
   },
   "lib/supabase/admin.ts": {
     categoria: "PROTOCOLO",
@@ -328,6 +342,12 @@ const MARCA_CONGELADA: Record<string, EntradaDeMarca> = {
   },
 
   // ─── DEV — fixture de teste; não embarca. ───
+  "app/actions/settings/smtp.test.ts": {
+    categoria: "DEV",
+    motivo:
+      "o caso medido da issue #2804 usa o nome do contêiner da stack local (que carrega a marca do produto) para provar que o `_` do nome de contêiner é ACEITO e chega à escrita; é fixture de teste e não embarca na imagem",
+    marcas: ["supabase_inbucket_deskcomm-crm"],
+  },
   "lib/agent-engine/agent/draft-reply.test.ts": {
     categoria: "DEV",
     motivo: "nome de agente numa fixture de teste ('Bot Deskcomm'); não sai da suíte",
@@ -828,7 +848,16 @@ type CategoriaDeHost =
    * art. 15.º, n.º 1 do RGPD). O código não fala com ela; quem a visita é a
    * pessoa que vai reclamar. Uma por país com lei revisada — fechada por nome.
    */
-  | "AUTORIDADE";
+  | "AUTORIDADE"
+  /**
+   * Assinatura de reconhecimento: domínio de terceiro que o código COMPARA sem
+   * nunca chamar nem exibir — classificação de site de lead (agregador,
+   * construtor pronto, recurso do HTML). Viaja na imagem como dado de
+   * classificação; trocar pelo domínio do revendedor quebraria o
+   * reconhecimento sem esconder destino nenhum, porque dado nenhum vai para
+   * lá. Cresce por decisão escrita, como as demais fechadas.
+   */
+  | "RECONHECIMENTO";
 
 type EntradaDeHost = { categoria: CategoriaDeHost; motivo: string };
 
@@ -844,13 +873,29 @@ const HOSTS_DECLARADOS: Record<string, EntradaDeHost> = {
       "formato de exemplo no placeholder do campo Domínio (Configurações > Telefonia): o domínio REAL é o que o cliente digita, não vem de env nenhum — é texto fixo só para mostrar o padrão `<dominio>.api4com.com` que a api4com atribui a cada conta. Não é destino de chamada nem credencial. Fica AMOSTRA porque chega à TELA, mesma régua de wa.me/meet.jit.si (mais abaixo neste arquivo).",
   },
   "chatgpt.com": {
+    categoria: "CONSOLE",
+    motivo:
+      "é o serviço da conta ChatGPT que o operador abre para conectar a assinatura. O produto não faz requests para este host; a consulta do catálogo e a inferência SIWC usam a API pública oficial em api.openai.com.",
+  },
+  // ── Web Push: o serviço de push do navegador, destino do envio ──
+  "fcm.googleapis.com": {
     categoria: "FORNECEDOR",
     motivo:
-      "é o serviço da conta ChatGPT nos DOIS papéis deste provedor: o destino do link que leva o operador a conectar a conta por Sign in with ChatGPT E o endpoint de listagem de modelos da assinatura (`lib/ai/catalogo/modelos-da-assinatura.ts` chama `chatgpt.com/backend-api/codex/models`, medido 200 na issue #2602 — a API pública devolve 403 Missing scopes para o mesmo token). O código FALA com ele; trocar pelo domínio do revendedor faria login e listagem não chegarem a lugar nenhum.",
+      "serviço de push do Chrome, Edge Android, Opera e Samsung Internet: o servidor faz POST no endpoint da inscrição (`lib/notifications/web_push.ts`), e só hosts de `lib/notifications/servicos-de-push.ts` são aceitos. O destino é do fornecedor do navegador, não da instalação.",
+  },
+  "updates.push.services.mozilla.com": {
+    categoria: "FORNECEDOR",
+    motivo:
+      "serviço de push do Firefox: o mesmo papel do FCM para inscrições feitas no Firefox, listado em `lib/notifications/servicos-de-push.ts`. Trocar pelo domínio do revendedor faria o aviso não chegar a aparelho nenhum.",
   },
   "datamanager.googleapis.com": {
     categoria: "FORNECEDOR",
     motivo: "endpoint oficial da Google Data Manager API: recebe conversões e consulta o processamento na conta autorizada pela própria organização. O destino pertence ao fornecedor e não à instalação do CRM.",
+  },
+  "meet.googleapis.com": {
+    categoria: "FORNECEDOR",
+    motivo:
+      "endpoint oficial da Google Meet REST API (`POST /v2/spaces`, em `lib/agenda/google/transport.ts`): é o DESTINO do request que cria a sala de reunião com acesso aberto (#2063), com o token da própria organização. Diferente de `meet.google.com` — que é o LINK de convite, e por isso entra como PLATAFORMA em CONFERÊNCIA —, este é host que o produto BUSCA: trocar pelo domínio do revendedor faria a chamada não chegar a lugar nenhum, e a sala nunca seria criada.",
   },
   // ── localização compartilhada: o link que abre o pino do cliente ──
   "maps.google.com": {
@@ -886,7 +931,7 @@ const HOSTS_DECLARADOS: Record<string, EntradaDeHost> = {
   "api.openai.com": {
     categoria: "FORNECEDOR",
     motivo:
-      "endpoint da API da OpenAI (embeddings da busca e transcrição de áudio). É o destino do request: trocar pelo domínio do revendedor faria a chamada não chegar a lugar nenhum.",
+      "endpoint da API pública da OpenAI para embeddings, transcrição e os fluxos Sign in with ChatGPT (catálogo de modelos e inferência). É o destino dos requests: trocar pelo domínio do revendedor faria as chamadas não chegarem a lugar nenhum.",
   },
   "auth.openai.com": {
     categoria: "FORNECEDOR",
@@ -1016,6 +1061,11 @@ const HOSTS_DECLARADOS: Record<string, EntradaDeHost> = {
     categoria: "CONSOLE",
     motivo: "Google AI Studio — onde o usuário cria a chave do Gemini.",
   },
+  "allmylinks.com": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "agregador de bio-links: marca agregador sem fetch. Nunca chamado, nunca exibido.",
+  },
   "partners.tiendanube.com": {
     categoria: "CONSOLE",
     motivo:
@@ -1068,6 +1118,81 @@ const HOSTS_DECLARADOS: Record<string, EntradaDeHost> = {
     categoria: "PROTOCOLO",
     motivo:
       "sufixo do iCalUID gravado no Google Calendar do cliente (lib/agenda/google/evento.ts). Identificador de fio que reconhecemos meses depois — já congelado como PROTOCOLO pela catraca de marca.",
+  },
+  // ── assinaturas de reconhecimento de site (spec 24): o código COMPARA ─────
+  // Decisão escrita (spec 24, PR da auditoria de site): domínios de terceiro
+  // que `lib/prospecting/site-classify.ts` usa para classificar o site do lead
+  // (agregador, construtor pronto, recurso do HTML). O produto NUNCA chama
+  // estes hosts e NUNCA os exibe — a tela mostra rótulos traduzidos
+  // ("WhatsApp", "Redes sociais"). Trocar pelo domínio do revendedor quebraria
+  // o reconhecimento sem esconder destino nenhum, porque dado nenhum vai para
+  // lá. Categoria própria, RECONHECIMENTO, porque não é destino (FORNECEDOR),
+  // painel (CONSOLE), amostra de tela (AMOSTRA), entrada validada
+  // (PLATAFORMA), fio gravado (PROTOCOLO) nem autoridade (AUTORIDADE).
+  "api.whatsapp.com": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "substring comparada no HTML baixado para detectar botão de WhatsApp (`wa.me`, `api.whatsapp.com`, `whatsapp`) no raio-X do site; também marca agregador. Nunca chamada, nunca exibida.",
+  },
+  "automatizo.dev.br": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "assinatura de construtor detectada na amostra real da VPS (redirect de agendamento morto); URL final contendo o domínio vira `construtor-Automatizo`. Nunca chamada, nunca exibida.",
+  },
+  "beacons.ai": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "agregador de bio-links: marca agregador sem fetch. Nunca chamado, nunca exibido.",
+  },
+  "canva.site": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "assinatura de construtor (Canva): URL final contendo o domínio vira `construtor-Canva`. Nunca chamada, nunca exibida.",
+  },
+  "carrd.co": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "agregador de bio-links: marca agregador sem fetch. Nunca chamado, nunca exibido.",
+  },
+  "facebook.com": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "marca agregador e conta como link social no raio-X. Nunca chamada, nunca exibida (a tela mostra o rótulo traduzido).",
+  },
+  "google.com": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "substring `google.com/maps` comparada no HTML para detectar endereço/mapa no raio-X. Nunca chamada por causa desta regra, nunca exibida.",
+  },
+  "instagram.com": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "marca agregador e conta como link social no raio-X. Nunca chamada, nunca exibida (a tela mostra o rótulo traduzido).",
+  },
+  "linkbio.co": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "agregador de bio-links: marca agregador sem fetch. Nunca chamado, nunca exibido.",
+  },
+  "sites.google.com": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "assinatura de construtor (Google Sites): URL final contendo o domínio vira `construtor-Google Sites`. Nunca chamada, nunca exibida.",
+  },
+  "static.parastorage.com": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "assinatura de HTML do Wix no raio-X. Nunca chamada, nunca exibida.",
+  },
+  "static.wixstatic.com": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "assinatura de HTML do Wix no raio-X. Nunca chamada, nunca exibida.",
+  },
+  "wordpress.com": {
+    categoria: "RECONHECIMENTO",
+    motivo:
+      "assinatura de construtor (WordPress.com gratuito): URL final contendo o domínio vira o rótulo. Nunca chamada, nunca exibida.",
   },
 };
 
@@ -1189,6 +1314,7 @@ describe("catraca de host de terceiro no código que embarca", () => {
       "PLATAFORMA",
       "PROTOCOLO",
       "AUTORIDADE",
+      "RECONHECIMENTO",
     ];
     for (const [host, entrada] of Object.entries(HOSTS_DECLARADOS)) {
       expect(categorias, `${host}: categoria desconhecida`).toContain(entrada.categoria);
@@ -1215,18 +1341,50 @@ describe("catraca de host de terceiro no código que embarca", () => {
     ).toEqual([
       "000000000000-xxxxxxxx.apps.googleusercontent.com",
       "aistudio.google.com",
+      // Decisão escrita (spec 24, auditoria de site): agregador de bio-links,
+      // marca agregador sem fetch — nunca chamado, nunca exibido.
+      "allmylinks.com",
+      // Decisão escrita (spec 24, auditoria de site): assinatura de
+      // reconhecimento comparada no HTML baixado — nunca chamada, nunca exibida.
+      "api.whatsapp.com",
       // Decisão escrita: painel de chaves da Requesty, o mesmo caso dos outros
       // CONSOLE (o link "Onde pegar a chave" da tela de Credenciais).
       "app.requesty.ai",
-      // `chatgpt.com` saiu daqui para FORNECEDOR (#2602): o código passou a
-      // FALAR com ele (a listagem de modelos da assinatura chama o backend do
-      // Codex), e quem fala com o host é FORNECEDOR — a categoria fechada
-      // perde o host no mesmo diff em que a lista de call sites o ganha.
+      // Decisão escrita (spec 24, auditoria de site): assinatura de construtor
+      // detectada na amostra real da VPS — nunca chamada, nunca exibida.
+      "automatizo.dev.br",
+      // Decisão escrita (spec 24, auditoria de site): agregador de bio-links,
+      // marca agregador sem fetch — nunca chamado, nunca exibido.
+      "beacons.ai",
+      // Decisão escrita (spec 24, auditoria de site): assinatura de construtor
+      // (Canva) — nunca chamada, nunca exibida.
+      "canva.site",
+      // Decisão escrita (spec 24, auditoria de site): agregador de bio-links,
+      // marca agregador sem fetch — nunca chamado, nunca exibido.
+      "carrd.co",
+      // A pessoa abre o produto ChatGPT para autenticar a conta; o CRM chama
+      // apenas `api.openai.com` no fluxo SIWC.
+      "chatgpt.com",
       "console.anthropic.com",
       // Decisão escrita: é o painel de chaves do Jev, o mesmo caso dos outros
       // CONSOLE — o link "Onde pegar a chave" da tela de Credenciais.
       "console.typesafe.ai",
       "deskcomm.app",
+      // Decisão escrita (spec 24, auditoria de site): marca agregador e conta
+      // como link social no raio-X — nunca chamada, nunca exibida (a tela mostra
+      // o rótulo traduzido).
+      "facebook.com",
+      // Decisão escrita (spec 24, auditoria de site): substring `google.com/maps`
+      // comparada no HTML para detectar endereço/mapa — nunca chamada por causa
+      // desta regra, nunca exibida.
+      "google.com",
+      // Decisão escrita (spec 24, auditoria de site): marca agregador e conta
+      // como link social no raio-X — nunca chamada, nunca exibida (a tela mostra
+      // o rótulo traduzido).
+      "instagram.com",
+      // Decisão escrita (spec 24, auditoria de site): agregador de bio-links,
+      // marca agregador sem fetch — nunca chamado, nunca exibido.
+      "linkbio.co",
       // Link que abre o pino que o CLIENTE mandou (`lib/messaging/localizacao.ts`).
       // Mesma natureza do `wa.me` abaixo: o produto não fala com o host, quem
       // abre é o celular do atendente. Crescimento escrito, como a regra pede.
@@ -1255,6 +1413,15 @@ describe("catraca de host de terceiro no código que embarca", () => {
       // protocolo manda. Entrou aqui porque a régua nova do #914 passou a
       // enxergá-lo, e não porque o produto ganhou host novo.
       "s.whatsapp.net",
+      // Decisão escrita (spec 24, auditoria de site): assinatura de construtor
+      // (Google Sites) — nunca chamada, nunca exibida.
+      "sites.google.com",
+      // Decisão escrita (spec 24, auditoria de site): assinatura de HTML do
+      // Wix no raio-X — nunca chamada, nunca exibida.
+      "static.parastorage.com",
+      // Decisão escrita (spec 24, auditoria de site): assinatura de HTML do
+      // Wix no raio-X — nunca chamada, nunca exibida.
+      "static.wixstatic.com",
       // Decisão escrita: formato de exemplo no placeholder do campo Domínio
       // (Configurações > Telefonia, api4com) — `<dominio>.api4com.com` é o
       // padrão que a api4com atribui a cada conta. O produto não fala com
@@ -1267,6 +1434,9 @@ describe("catraca de host de terceiro no código que embarca", () => {
       // aqui, e não em FORNECEDOR, porque o produto NÃO fala com esse host: quem
       // abre o link é o visitante do site. Crescimento escrito, como a regra pede.
       "wa.me",
+      // Decisão escrita (spec 24, auditoria de site): assinatura de construtor
+      // (WordPress.com gratuito) — nunca chamada, nunca exibida.
+      "wordpress.com",
       // Decisão escrita (#2354): a CNPD, autoridade de controlo citada na
       // alínea f) do relatório de acesso de Portugal. Categoria própria,
       // AUTORIDADE, porque não é painel, amostra nem plataforma: é o endereço

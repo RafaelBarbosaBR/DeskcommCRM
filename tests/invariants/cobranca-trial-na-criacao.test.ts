@@ -89,11 +89,14 @@ describe("inv. 7 — teste grátis na criação da organização", () => {
     expect(assinatura(org(6))).toBe("isenta");
   });
 
-  it("sem plano do cadastro VIGENTE (só um arquivado), ou sem autor: nada nasce", () => {
+  it("sem plano do cadastro VIGENTE, cliente não cria organização; sem autor, não nasce assinatura", () => {
     chaveDeCobranca("ligado");
     trocarPadrao(PADRAO, ARQUIVADO);
     try {
-      criarOrg(org(7), "cob-trial-7", CLIENTE);
+      const erro = erroDe(`insert into public.organizations (id, slug, legal_name, display_name, created_by)
+        values ('${org(7)}', 'cob-trial-7', 'cob-trial-7', 'cob-trial-7', '${CLIENTE}')`);
+      expect(erro).toContain("plano_obrigatorio");
+      expect(numero(`select count(*) from public.organizations where id = '${org(7)}';`)).toBe(0);
     } finally {
       trocarPadrao(ARQUIVADO, PADRAO);
     }

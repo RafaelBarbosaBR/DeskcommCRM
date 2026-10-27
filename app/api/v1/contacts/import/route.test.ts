@@ -219,6 +219,8 @@ describe("POST /api/v1/contacts/import — a planilha segue o PAÍS da organiza�
     nome: "Xistão",
     // País sintético declara os SEUS rótulos de organização (#1946, item 4).
     empresa: { rotuloNomeLegal: "Razão do Xistão", rotuloNumero: "Registro do Xistão" },
+    // País sintético declara os SEUS papéis legais (#2344).
+    papel: { controlador: "Controlador do Xistão", encarregado: "Encarregado do Xistão" },
     telefoneExemplo: "+999000000000",
     documento: {
       rotulo: "Bilhete",
@@ -230,6 +232,8 @@ describe("POST /api/v1/contacts/import — a planilha segue o PAÍS da organiza�
       valida: (valor) => /^\d{9}[A-Z]{2}\d{3}$/.test(valor),
       normaliza: (valor) => valor.toUpperCase().replace(/[^0-9A-Z]/g, ""),
     },
+    idioma: "xi-XI",
+    fusoDoSugerido: "UTC",
     lei: { nome: "Lei do Xistão", numero: "Lei nº 1/2020", artigo: "Art. 5º", revisada: false },
     calendario: { feriados: [], rotulo: "feriados do Xistão" },
     padroesDePii: [],

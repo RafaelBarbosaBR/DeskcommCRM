@@ -157,11 +157,21 @@ describe("deep-link para conversa fora do filtro", () => {
     await waitFor(() =>
       expect(get.mock.calls.map((c) => c[0])).toContain(`/api/v1/conversations/${CONVERSA}`),
     );
-    // O controle: a lista continua no ar. Sem ele, este caso passaria também
-    // num mundo em que a busca única espera — bastaria a lista ter respondido.
-    expect(
-      get.mock.calls.some((c) => (c[0] ?? "").startsWith("/api/v1/conversations?")),
-    ).toBe(true);
+    // O controle: a lista continua no ar — e nunca responde (o mock a deixa em
+    // voo para sempre). Sem ele, este caso passaria também num mundo em que a
+    // busca única espera — bastaria a lista ter respondido.
+    //
+    // `waitFor` desde o #2365: a Fila (aba padrão) só PEDE a lista depois de
+    // saber se a org tem automático. É o conserto do GET duplo, e ele não toca
+    // na busca única, que sai em paralelo com a pergunta do automático. O que
+    // este controle afirma segue o mesmo: existe um GET da lista, e ele nunca
+    // volta — quem separa os dois mundos é a asserção acima, que só passa
+    // porque a conversa por id saiu SEM a lista ter respondido.
+    await waitFor(() =>
+      expect(get.mock.calls.some((c) => (c[0] ?? "").startsWith("/api/v1/conversations?"))).toBe(
+        true,
+      ),
+    );
   });
 
   it("entrega a conversa ao painel do contato com a lista ainda no ar", async () => {

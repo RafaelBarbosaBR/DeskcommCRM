@@ -910,7 +910,7 @@ Códigos de erro novos (todos pelo `ok()`/`fail()` de `lib/api/wrappers.ts`; ent
 
 Ações de `audit` novas, no fim de `lib/audit/actions.ts` (os nomes são os da lista da spec §13; **atribuir** um plano a uma empresa sem linha audita `cobranca.plano_trocado` com `de: null`): `cobranca.plano_salvo`, `cobranca.plano_arquivado`, `cobranca.plano_trocado`, `cobranca.prazo_concedido`, `cobranca.isencao_definida`, `cobranca.modulo_desligado`.
 
-**Onde a spec cala e este plano decide** (confirmar com o Rafael no PR 2b): nesta entrega a coluna `provedor` é **sempre nula** (a Stripe é do 3a), então não há dinheiro em jogo e a troca de plano de uma assinatura sem provedor vale **na hora**, em qualquer estado. A regra D-3 ("só na próxima cobrança paga") nasce junto com o provedor, no 3a; os ramos que dependem de `provedor is not null` **não** são escritos aqui (seriam código inalcançável).
+**Registro histórico da decisão de implementação:** nesta entrega a coluna `provedor` era **sempre nula** (a Stripe é do 3a), então a troca de plano de uma assinatura sem provedor valia **na hora**. A regra D-3 então vigente ("só na próxima cobrança paga") nasceu junto com o provedor; foi revisada pela decisão do dono no doc 146 (15/10/2026), registrada no adendo e na especificação canônica atual.
 
 Todas as rotas começam por: (1) `requirePlatformAdminEscrita()` (+ `falhaDaEscritaDePlatformAdmin`), (2) **404 se `fn_cobranca_ligada()` for falso** (rota de cobrança com a chave desligada não existe), (3) `requireSupportWrite(` antes do efeito, (4) Zod no corpo (`z.strictObject`, nunca campo desconhecido), (5) `audit` no sucesso, (6) `X-Request-Id`.
 

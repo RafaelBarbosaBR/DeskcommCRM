@@ -9,6 +9,9 @@ import { adiarAteAJanelaAbrir } from "@/lib/automation/janela-do-canal";
 import { sendMessageHandler } from "@/app/api/v1/messages/_handler";
 import { reportarEnvio, type MensagemEnviada } from "@/lib/automation/desfecho-do-envio";
 import { checarGuardasDeContato } from "@/lib/automation/guarda-do-contato";
+import { classificarMidiaComLegenda, type TipoDeMidiaComLegenda } from "@/lib/messaging/media/midia-com-legenda";
+import { recusaDeMidiaForaDaJanela } from "@/lib/messaging/media/recusa-de-midia-fora-da-janela";
+import { mensagemDeErro } from "@/lib/automation/actions/erro-legivel";
 
 async function postponeUntil(ctx: ActionCtx, config: Record<string, unknown>): Promise<string | null> {
   const contato = checarGuardasDeContato(ctx);
@@ -35,6 +38,22 @@ async function execute(ctx: ActionCtx, config: Record<string, unknown>): Promise
   if (!sessionId || !template) {
     return { type: "send_whatsapp_message", status: "failed", error: "missing_config" };
   }
+  // MÍDIA OPCIONAL (#2734, ampliada pelo #2972): quando vier, o texto atual é a
+  // LEGENDA, e o que sai é uma mensagem de mídia — imagem, vídeo, áudio (como
+  // nota de voz) ou documento — pelo MESMO caminho do Inbox e das campanhas
+  // (`sendMessageHandler`), nunca por um segundo envio. O que não for um arquivo
+  // identificável (sem MIME declarado e sem extensão conhecida) é recusado AQUI,
+  // antes de nascer linha nenhuma.
+  const mediaUrl =
+    typeof config.media_url === "string" && config.media_url.trim() ? config.media_url.trim() : null;
+  let midia: { type: TipoDeMidiaComLegenda; mime: string } | null = null;
+  if (mediaUrl) {
+    const classificada = classificarMidiaComLegenda(mediaUrl);
+    if (!classificada.ok) {
+      return { type: "send_whatsapp_message", status: "failed", error: classificada.motivo };
+    }
+    midia = { type: classificada.type, mime: classificada.mime };
+  }
   // Guardas compartilhadas com send_ai_message — ver guarda-do-contato.ts
   // (existe/bloqueado/telefone/consentimento, este último um gate FIXO).
   const guarda = checarGuardasDeContato(ctx);
@@ -47,6 +66,19 @@ async function execute(ctx: ActionCtx, config: Record<string, unknown>): Promise
     await assertAgendaEffectSupabase(ctx.admin, { organizationId: ctx.organizationId, contactId: contact.id });
     const boundary = await serviceForAutomation(ctx, contact.id, sessionId);
     const conversationId = boundary.conversation_id;
+    // CANAL OFICIAL, janela fechada: a mídia NÃO sai — e o texto NÃO sai sozinho
+    // no lugar dela. A recusa é explícita, com motivo, para o operador saber por
+    // que a regra não entregou. Canal de QR e parceiros sem janela passam direto
+    // (o helper consulta a matriz de capabilities). Só o caminho COM mídia passa
+    // por esta régua: o envio de texto puro segue com o contrato de antes.
+    if (midia) {
+      const recusa = await recusaDeMidiaForaDaJanela(ctx.admin, {
+        organizationId: ctx.organizationId,
+        conversationId,
+        agora: new Date(),
+      });
+      if (recusa) return { type: "send_whatsapp_message", status: "failed", error: recusa };
+    }
     await espacarEnvio(sessionId);
     const body = renderTemplate(template, ctx.context);
     const message = await sendMessageHandler(
@@ -58,7 +90,17 @@ async function execute(ctx: ActionCtx, config: Record<string, unknown>): Promise
         actor: { type: "webhook_source", id: ctx.ruleId },
         requestId: `rule:${ctx.ruleId}`,
       },
-      { conversation_id: conversationId, type: "text", body } as Parameters<typeof sendMessageHandler>[2],
+      // Com mídia: o `body` é a LEGENDA e o `type` diz ao canal o que é o arquivo.
+      // Sem mídia: comportamento de sempre (texto puro).
+      (midia
+        ? {
+            conversation_id: conversationId,
+            type: midia.type,
+            body,
+            media_url: mediaUrl,
+            media_mime: midia.mime,
+          }
+        : { conversation_id: conversationId, type: "text", body }) as Parameters<typeof sendMessageHandler>[2],
     );
     // O desfecho vem do ESTADO DA MENSAGEM, nunca da ausência de exceção:
     // `sendMessageHandler` marca `failed`/`queued` e devolve normalmente (ver
@@ -68,7 +110,7 @@ async function execute(ctx: ActionCtx, config: Record<string, unknown>): Promise
     return {
       type: "send_whatsapp_message",
       status: "failed",
-      error: err instanceof Error ? err.message : String(err),
+      error: mensagemDeErro(err),
     };
   }
 }

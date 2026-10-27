@@ -41,6 +41,7 @@ export interface ConfigDoAvisoNaTela {
   telefone: string;
   rotulo: string | null;
   ligado: boolean;
+  resposta_whatsapp_habilitada: boolean;
   atualizado_em: string;
 }
 
@@ -108,6 +109,7 @@ export interface EntradaDoSalvar {
   telefone: string;
   rotulo: string | null;
   ligado: boolean;
+  resposta_whatsapp_habilitada: boolean;
   /** `true` = "eu sei que esse número é um cliente meu, e quero mesmo assim". */
   confirma_contato?: boolean;
 }
@@ -122,6 +124,26 @@ export function useSalvarAvisoDeCaso() {
     onSuccess: (estado) => {
       // O PUT devolve o estado recalculado: escrever no cache evita o piscar de
       // uma tela que volta ao valor antigo enquanto o GET seguinte não chega.
+      qc.setQueryData(CHAVE_DO_AVISO, estado);
+    },
+  });
+}
+
+/**
+ * A REMOÇÃO do destinatário (issue #3338) — o `DELETE` que devolve o número à
+ * ingestão normal, sem exigir um número substituto.
+ *
+ * Escreve no cache com o estado que a rota devolve, como o `salvar`: é o mesmo
+ * contrato (o `DELETE` recalcula o estado inteiro) e o mesmo motivo (evitar o
+ * piscar de uma tela que volta ao valor antigo enquanto o GET não chega). O que
+ * muda é o que a tela mostra depois: sem configuração.
+ */
+export function useRemoverAvisoDeCaso() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiClient.delete<{ data: EstadoDoAviso }>("/api/v1/ai/cases/alerta").then((r) => r.data),
+    onSuccess: (estado) => {
       qc.setQueryData(CHAVE_DO_AVISO, estado);
     },
   });

@@ -504,9 +504,11 @@ echo "caso 30 — ⛔ o aviso desce no PROPRIO update.sh, antes do 'up -d' que t
 # como uma VPS de outra arquitetura se recupera sozinha (issue 1060). Uma sonda
 # presa a linha nua ficava vermelha contra um update.sh CORRETO, e o vermelho
 # nao falava de manutencao nenhuma: dizia "up=" vazio. Quem manda e o comando,
-# esteja ele nu ou sob guarda.
+# esteja ele nu ou sob guarda. Desde a #2724 o `up -d` do update.sh mora em
+# `subir_o_parque` (que deixa o Caddy de fora quando a configuração dele foi
+# recusada), e a sonda aceita os dois nomes.
 q_desce="$(printf '%s' "$UP" | grep -n "^manutencao_desce$" | head -1 | cut -d: -f1)"
-q_up="$(printf '%s' "$UP" | grep -nE "^(if ! )?dc up -d(; then)?$" | head -1 | cut -d: -f1)"
+q_up="$(printf '%s' "$UP" | grep -nE "^(if ! )?(dc up -d|subir_o_parque)(; then)?$" | head -1 | cut -d: -f1)"
 if [ -n "$q_desce" ] && [ -n "$q_up" ] && [ "$q_desce" -lt "$q_up" ]; then
   ok "desce antes do 'dc up -d' do proprio script"
 else

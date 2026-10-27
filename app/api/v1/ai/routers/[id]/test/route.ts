@@ -29,8 +29,8 @@ import { randomUUID } from "node:crypto";
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
+import { resolveAuthDual, tetoDeEscritaDoToken } from "@/lib/api/auth-dual";
 import { ok, fail } from "@/lib/api/wrappers";
-import { requireRole } from "@/lib/auth/require-role";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSkillsPool } from "@/lib/ai/skills/db";
 import { env } from "@/lib/env";
@@ -62,10 +62,20 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<Response> {
     return fail("invalid_request", "id inválido.", 400, { requestId });
   }
 
-  const authz = await requireRole("manager", { requestId, resource: "ai_routers" });
+  const authz = await resolveAuthDual(req, {
+    requestId,
+    resource: "ai_routers",
+    role: "manager",
+    // A prévia persiste custo em llm_calls e pode registrar a execução do Jev.
+    scope: "config:write",
+    tokenRole: "admin",
+  });
   if (!authz.ok) return authz.response;
-  const t = (texto: string) => traduzir(texto, authz.user.idioma);
-  const { org } = authz;
+  const t = (texto: string) => traduzir(texto, authz.idioma ?? "pt-BR");
+  const { organizationId } = authz;
+
+  const teto = await tetoDeEscritaDoToken(authz, "ai_routers_test", requestId);
+  if (teto) return teto;
 
   let rawBody: unknown;
   try {
@@ -87,7 +97,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<Response> {
     .from("ai_routers")
     .select("id, channel_session_id")
     .eq("id", id)
-    .eq("organization_id", org.orgId)
+    .eq("organization_id", organizationId)
     .maybeSingle();
   if (routerErr) {
     return fail("internal_error", "Erro ao carregar router.", 500, { requestId });
@@ -97,7 +107,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<Response> {
   }
 
   const pool = getSkillsPool();
-  const loaded = await loadActiveRouter(pool, org.orgId, router.channel_session_id);
+  const loaded = await loadActiveRouter(pool, organizationId, router.channel_session_id);
   if (!loaded || loaded.id !== id) {
     return fail(
       "state_conflict",
@@ -111,7 +121,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<Response> {
   const log = createLogger();
 
   const jev = consultarJevNoRoteador(pool, {
-    organizationId: org.orgId,
+    organizationId,
     mensagem: parsed.data.message,
     membros: loaded.members,
     contactId: null,
@@ -123,10 +133,10 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<Response> {
   // A mesma regra do turno (decisão B, doc 89): sem a IA de sempre, o Jev não
   // decide sozinho nem na prévia — vale a comparação, e a R2.
   const independente = modo === "sob_demanda" && estadoDoJev === "decidindo" &&
-    await temIaDeSempre(pool, llmCfg, org.orgId, loaded.classifierProvider);
+    await temIaDeSempre(pool, llmCfg, organizationId, loaded.classifierProvider);
   const classificar = () => classifyIntent(
     pool, llmCfg,
-    { tenantId: org.orgId, leadId: null, jobId: null, router: loaded, signal: parsed.data.message },
+    { tenantId: organizationId, leadId: null, jobId: null, router: loaded, signal: parsed.data.message },
     { log },
   );
   // Na comparação, as duas consultas seguem em paralelo. Na decisão independente,
@@ -138,7 +148,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<Response> {
   const verdict = comparacao !== null ? await comparacao : iaConsultada ? await classificar() : null;
   if (escolhaDoJev !== null) {
     await registrarRoteadorDoJev(pool, {
-      organizationId: org.orgId,
+      organizationId,
       contactId: null,
       jobId: null,
       jev: escolhaDoJev,
@@ -157,7 +167,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<Response> {
       .from("ai_agents")
       .select("name")
       .eq("id", agentId)
-      .eq("organization_id", org.orgId)
+      .eq("organization_id", organizationId)
       .maybeSingle();
     return agentRow?.name ?? null;
   };

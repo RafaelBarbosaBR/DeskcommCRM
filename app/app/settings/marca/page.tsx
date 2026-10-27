@@ -90,6 +90,10 @@ export default async function MarcaDaOrganizacaoPage() {
           // a URL pronta do servidor faria a tela ter uma segunda regra de
           // montagem, e a que divergisse seria a que ninguém abre.
           logo_path: gravada?.logo_path ?? null,
+          // O remetente da AUTOMAÇÃO (#3287, fatia 1): os dois campos que a tela
+          // grava junto da marca e lê de volta para preencher os inputs.
+          email_from_name: gravada?.email_from_name ?? null,
+          email_reply_to: gravada?.email_reply_to ?? null,
         }}
         // As DUAS camadas de baixo descem para o formulário, e não uma resolução
         // já pronta: a prévia ao vivo remonta a pilha inteira a cada tecla, pelo
@@ -115,7 +119,9 @@ export default async function MarcaDaOrganizacaoPage() {
         // atravessam a fronteira para o navegador): a dica da tela cita o campo
         // e a lei como o formulário de Configurações → Organização os mostra.
         vocabulario={{
-          lei: perfil.lei?.nome ?? "LGPD",
+          // `null` = país sem citação revisada: a dica sai sem citar lei
+          // (issue #2344) — afirmar LGPD aí seria a citação errada.
+          lei: perfil.lei?.nome ?? null,
           rotuloNomeLegal: perfil.empresa.rotuloNomeLegal,
         }}
       />

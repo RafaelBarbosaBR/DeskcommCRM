@@ -200,3 +200,25 @@ describe("DELETE /api/v1/ai/credentials/:id — a chave do Jev", () => {
     expect(acoesAuditadas()).toEqual(["ai.credential_deleted"]);
   });
 });
+
+describe("DELETE — com o Jev respondendo pela OpenRouter (#2964)", () => {
+  beforeEach(() => {
+    estado.settings = { jev: { ligado: true, modo: "decide", aceite: ACEITE, origem: "openrouter" } };
+  });
+
+  it("excluir a chave TypeSafe velha NÃO desliga o Jev que responde pela credencial OpenRouter", async () => {
+    estado.provider = "typesafe";
+    estado.restantes = [chaveDoJev({ provider: "openrouter" })];
+    const { corpo } = await excluir();
+    expect(corpo.data.jev_desligado).toBe(false);
+    expect(estado.settings.jev).toMatchObject({ ligado: true });
+  });
+
+  it("excluir a ÚLTIMA credencial OpenRouter desliga o Jev que respondia por ela", async () => {
+    estado.provider = "openrouter";
+    estado.restantes = [];
+    const { corpo } = await excluir();
+    expect(corpo.data.jev_desligado).toBe(true);
+    expect(estado.settings.jev).toMatchObject({ ligado: false });
+  });
+});

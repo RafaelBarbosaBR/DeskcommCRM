@@ -235,6 +235,9 @@ beforeEach(() => {
     model: {} as never,
     modelId: "anthropic/claude-haiku-4-5",
     origem: "padrao",
+    // O provedor EFETIVO do endereço — o resolvedor o devolve desde a #3098, e
+    // é ele que o chamador entrega ao log de invocação.
+    provider: "anthropic",
   });
   vi.mocked(haQuemAtendaAOrganizacao).mockResolvedValue(true);
 });
@@ -711,6 +714,40 @@ describe("PATCH /api/v1/ai/jev", () => {
   it("corpo sem nada a mudar é recusado", async () => {
     expect((await mudar({})).status).toBe(422);
     expect((await mudar({ aceite_lgpd: true })).status).toBe(422);
+  });
+});
+
+describe("PATCH — trocar a origem para a OpenRouter com aceite já gravado (#2964)", () => {
+  // O aceite gravado foi dado a um texto que nomeava só a TypeSafe AI. Via
+  // OpenRouter a mensagem passa por mais um operador nos EUA: sem aceite novo,
+  // ela sairia por um caminho que ninguém aceitou.
+  beforeEach(() => {
+    estado.credenciais = [credencial({ provider: "openrouter", label: "Conversa" })];
+    estado.settings = { jev: { ligado: true, modo: "observacao", aceite: ACEITE_ANTIGO } };
+  });
+
+  it("sem aceite_lgpd, a troca é recusada com jev_exige_aceite e nada é escrito", async () => {
+    const { status, corpo } = await mudar({ origem: "openrouter" });
+    expect(status).toBe(422);
+    expect(corpo.error.code).toBe("jev_exige_aceite");
+    expect(corpo.error.message).toMatch(/pela OpenRouter/);
+    expect(escritas()).toEqual([]);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("com aceite_lgpd, troca e regrava o aceite com quem e quando", async () => {
+    const { status, corpo } = await mudar({ origem: "openrouter", aceite_lgpd: true });
+    expect(status).toBe(200);
+    const jev = estado.settings.jev as Linha;
+    expect(jev.origem).toBe("openrouter");
+    expect(corpo.data.config.aceite.por).toBe(USUARIO);
+    expect(corpo.data.config.aceite.em).not.toBe(ACEITE_ANTIGO.em);
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai.jev.origem_alterada",
+        metadata: expect.objectContaining({ aceite_registrado: true }),
+      }),
+    );
   });
 });
 

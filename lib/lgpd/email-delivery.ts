@@ -121,6 +121,11 @@ export async function sendExportEmail(args: SendArgs): Promise<{ messageId: stri
 /** O texto de sempre (doc 88), mais o link do arquivo de dados (doc 103, A). */
 function mensagemDoBrasil(args: SendArgs, shortId: string): Mensagem {
   const orgName = escapeHtml(args.marca.nome);
+  // O rótulo da citação vem do PERFIL do país, como em Portugal (issue #2344):
+  // o art. 18 da LGPD é um DIREITO do titular, não uma base legal (esta fica
+  // nos arts. 7 e 11). O Brasil declara "Direito exercido"; o `??` cobre só
+  // payload construído à mão em teste — este caminho é o do perfil padrão.
+  const rotulo = args.perfil.lei?.rotuloNoDocumento ?? "Base legal";
   const expiresFmt = args.expiresAt.toLocaleString("pt-BR", {
     timeZone: "America/Sao_Paulo",
   });
@@ -135,11 +140,11 @@ function mensagemDoBrasil(args: SendArgs, shortId: string): Mensagem {
   <p>Sua solicitação de acesso aos dados pessoais (LGPD Art. 18, II) foi processada por <strong>${orgName}</strong>.</p>
   <p>O relatório completo está disponível para download no link abaixo. Por motivos de segurança, o link expira em <strong>${expiresFmt}</strong>.</p>
   <p style="margin:24px 0;">
-    <a href="${args.signedUrl}" style="background:${args.marca.accent};color:${args.marca.accentFg};padding:10px 18px;border-radius:6px;text-decoration:none;display:inline-block;">Baixar relatório LGPD</a>
+    <a href="${escapeHtml(args.signedUrl)}" style="background:${args.marca.accent};color:${args.marca.accentFg};padding:10px 18px;border-radius:6px;text-decoration:none;display:inline-block;">Baixar relatório LGPD</a>
   </p>
-  <p style="font-size:12px;color:${NEUTROS_DE_SAIDA.suave};">A cópia dos seus dados pessoais em arquivo (data.json), com o mesmo prazo, está em <a href="${args.signedUrlDados}" style="color:inherit;">${args.signedUrlDados}</a>.</p>
+  <p style="font-size:12px;color:${NEUTROS_DE_SAIDA.suave};">A cópia dos seus dados pessoais em arquivo (data.json), com o mesmo prazo, está em <a href="${escapeHtml(args.signedUrlDados)}" style="color:inherit;">${escapeHtml(args.signedUrlDados)}</a>.</p>
   <p style="font-size:12px;color:${NEUTROS_DE_SAIDA.suave};">Se você não solicitou este relatório, ignore este email — nenhum dado adicional é compartilhado.</p>
-  <p style="font-size:12px;color:${NEUTROS_DE_SAIDA.suave};">Base legal: LGPD Lei nº 13.709/2018, Art. 18, II.</p>
+  <p style="font-size:12px;color:${NEUTROS_DE_SAIDA.suave};">${rotulo}: LGPD Lei nº 13.709/2018, Art. 18, II.</p>
 </body>
 </html>`;
 
@@ -156,7 +161,7 @@ ${args.signedUrlDados}
 Os dois links expiram em ${expiresFmt}.
 
 Se você não solicitou este relatório, ignore este email.
-Base legal: LGPD Lei nº 13.709/2018, Art. 18, II.`;
+${rotulo}: LGPD Lei nº 13.709/2018, Art. 18, II.`;
 
   return { subject, html, text };
 }
@@ -181,10 +186,10 @@ function mensagemForaDoBrasil(args: SendArgs, shortId: string): Mensagem {
   <p>O seu pedido de acesso aos dados pessoais foi tratado por <strong>${orgName}</strong>.</p>
   <p>O relatório está disponível na ligação abaixo. Por razões de segurança, a ligação expira em <strong>${expiresFmt}</strong>.</p>
   <p style="margin:24px 0;">
-    <a href="${args.signedUrl}" style="background:${args.marca.accent};color:${args.marca.accentFg};padding:10px 18px;border-radius:6px;text-decoration:none;display:inline-block;">Descarregar relatório</a>
+    <a href="${escapeHtml(args.signedUrl)}" style="background:${args.marca.accent};color:${args.marca.accentFg};padding:10px 18px;border-radius:6px;text-decoration:none;display:inline-block;">Descarregar relatório</a>
   </p>${
     args.signedUrlDados
-      ? `\n  <p style="font-size:12px;color:${NEUTROS_DE_SAIDA.suave};">A cópia dos seus dados pessoais (data.json) está em <a href="${args.signedUrlDados}" style="color:inherit;">${args.signedUrlDados}</a>.</p>`
+      ? `\n  <p style="font-size:12px;color:${NEUTROS_DE_SAIDA.suave};">A cópia dos seus dados pessoais (data.json) está em <a href="${escapeHtml(args.signedUrlDados)}" style="color:inherit;">${escapeHtml(args.signedUrlDados)}</a>.</p>`
       : ""
   }
   <p style="font-size:12px;color:${NEUTROS_DE_SAIDA.suave};">Se não fez este pedido, ignore este e-mail.</p>${

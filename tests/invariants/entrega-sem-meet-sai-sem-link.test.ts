@@ -28,6 +28,7 @@ import pg from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { meetPgSupabase } from "../support/meet-pg-supabase";
+import { ehVistoAzul } from "../support/waha-visto-azul";
 import { createAdminClient } from "@/lib/supabase/admin";
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: vi.fn() }));
 import { criarOrigemDeFollowup } from "./followup-service-origin";
@@ -123,6 +124,10 @@ async function entregar(f: Awaited<ReturnType<typeof cenario>>): Promise<string[
   expect(jid, "o gatilho não enfileirou — o defeito é antes do worker").toBeTruthy();
   const textos: string[] = [];
   const receiver = createServer(async (req, res) => {
+    if (ehVistoAzul(req.url)) {
+      res.end("{}");
+      return;
+    }
     let raw = "";
     for await (const chunk of req) raw += String(chunk);
     const corpo = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};

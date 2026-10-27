@@ -194,7 +194,7 @@ export type LoseLeadInput = z.infer<typeof loseLeadSchema>;
 
 /**
  * createLeadSchema → POST /api/v1/leads
- * Status, source_metadata, custom_fields, position_in_stage are server-managed.
+ * Status, source_metadata, position_in_stage are server-managed.
  */
 export const createLeadSchema = z.object({
   pipeline_id: z.string().uuid(),
@@ -203,14 +203,6 @@ export const createLeadSchema = z.object({
   description: z.string().max(2000).nullable().optional(),
   contact_id: z.string().uuid().nullable().optional(),
   value_cents: z.coerce.number().int().nonnegative().nullable().optional(),
-  /**
-   * Os campos de `crm_pipelines.settings.fields` (estilo Kommo, #2694):
-   * ausente até aqui, então `NewLeadDialog` preenchia `CustomFieldsEditor` e o
-   * Zod descartava a chave em silêncio antes de chegar à rota — o handler
-   * (`createLeadHandler`) já sabia gravar `input.custom_fields`, só o schema
-   * compartilhado (cliente + `POST /api/v1/leads`) não o deixava passar.
-   */
-  custom_fields: z.record(z.string(), z.unknown()).optional(),
   /**
    * Sem `default`, e isso É o conserto.
    *
@@ -232,6 +224,25 @@ export const createLeadSchema = z.object({
     .optional(),
   tags: z.array(z.string()).default([]),
   source: z.string().min(1).default("manual"),
+  /**
+   * Os campos personalizados JÁ PREENCHIDOS no formulário de criação —
+   * `crm_pipelines.settings.fields` (estilo Kommo, #2694) e os exigidos pela
+   * etapa (#3038) são o MESMO campo, preenchidos por mecanismos diferentes do
+   * `NewLeadDialog` conforme o chamador.
+   *
+   * Ausente até a #2694, então `NewLeadDialog` preenchia `CustomFieldsEditor`
+   * e o Zod descartava a chave em silêncio antes de chegar à rota — o handler
+   * (`createLeadHandler`) já sabia gravar `input.custom_fields`, só o schema
+   * compartilhado (cliente + `POST /api/v1/leads`) não o deixava passar. A
+   * régua da etapa em que o negócio NASCE (#1710) lê este mesmo campo; sem
+   * ele aqui, a recusa chegava como "Preencha os campos obrigatórios antes de
+   * continuar" para um valor que o cliente tinha acabado de mandar.
+   *
+   * Espelho do `updateLeadSchema` (mesmo `Record<string, unknown>`): o formato
+   * do valor é do funil, e quem o julga é `obrigatorio_em`/`padrao` do campo,
+   * nunca o schema.
+   */
+  custom_fields: z.record(z.string(), z.unknown()).optional(),
 });
 export type CreateLeadInput = z.infer<typeof createLeadSchema>;
 

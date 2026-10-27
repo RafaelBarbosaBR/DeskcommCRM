@@ -16,7 +16,9 @@ import { AttachmentPreviewDialog } from "@/components/inbox/composer/AttachmentP
 import { ContactPickerDialog } from "@/components/inbox/composer/ContactPickerDialog";
 import { AudioRecorder } from "@/components/inbox/composer/AudioRecorder";
 import { ReplyReviewPanel } from "@/components/inbox/composer/ReplyReviewPanel";
+import { DraftReplyButton } from "@/components/inbox/composer/DraftReplyButton";
 import { EmojiButton } from "@/components/inbox/composer/EmojiButton";
+import { anexoLevaLegenda, indiceDaLegenda } from "@/components/inbox/media/legenda-do-anexo";
 import {
   MentionMenu,
   opcoesDeMencao,
@@ -26,19 +28,33 @@ import {
 import { resolveSlash, TemplateMenu } from "@/components/inbox/composer/TemplateMenu";
 import { useAssignableMembers } from "@/hooks/inbox/useAssignableMembers";
 import { useCreateNote } from "@/hooks/inbox/useCreateNote";
-import { useMessageTemplates, type MessageTemplate } from "@/hooks/inbox/useMessageTemplates";
+import { useMessageTemplates } from "@/hooks/inbox/useMessageTemplates";
 import { X } from "lucide-react";
+import { toast } from "sonner";
 import { useSendMessage } from "@/hooks/inbox/useSendMessage";
 import { useUploadMedia, type DestinoDoUpload } from "@/hooks/inbox/useUploadMedia";
+import { useRascunhoAssistido } from "@/hooks/inbox/useRascunhoAssistido";
 import { imagemDoClipboard } from "@/lib/inbox/clipboard-image";
-import { interpolateTemplate } from "@/lib/inbox/template-vars";
+import {
+  interpolateTemplate,
+  motivoDoCuringaLiteral,
+  payloadDeUso,
+  type TemplateContact,
+} from "@/lib/inbox/template-vars";
 import {
   type AvisoDeRascunho,
   type MotivoDeRecusa,
 } from "@/lib/inbox/rascunho-sugerido";
 import { apiClient } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/types";
+import { showApiError } from "@/components/feedback/ApiErrorToast";
+import { mimeDaMidia, type MidiaDeTemplate } from "@/lib/templates/midias";
 import { embutirMencoes, podarMencoes, type MencaoEscolhida } from "@/lib/notifications/mentions";
 import { cn } from "@/lib/utils";
+import { resolveSharedContact } from "@/lib/messaging/contact-card";
+import { BarraDeRecursos } from "@/components/inbox/composer/BarraDeRecursos";
+import { type Recurso } from "@/lib/inbox/recursos";
+import type { Message } from "@/lib/types/messaging";
 
 export interface ComposerHandle {
   focus: () => void;
@@ -86,17 +102,38 @@ interface Props {
    */
   janelaFechada?: string | null;
   /**
+   * A caixa travada até alguém ASSUMIR a conversa (#3012).
+   *
+   * Entra pela MESMA porta do bloqueio de canal (`isDisabled`), e não por um
+   * segundo caminho: o que trava o campo, o envio, o anexo, o emoji, o áudio e
+   * a resposta rápida é o de sempre. A diferença é a origem — não é o canal nem
+   * o contato, é uma regra da organização que já vem resolvida de fora
+   * (`composerBloqueadoAteAssumir`).
+   *
+   * Trava a caixa INTEIRA, nota interna inclusive. O corte da janela de 24h
+   * separa a nota porque aquela regra é sobre o que CHEGA ao cliente; esta é
+   * sobre começar o atendimento sem responsável, e uma nota escrita antes de
+   * assumir organiza um atendimento que ainda não é de ninguém.
+   */
+  aguardandoAssumir?: boolean;
+  /**
    * A mensagem que esta resposta CITA, quando o atendente escolheu responder
    * "em cima" de uma. `null` = envio solto, o caso comum.
    *
    * Vem de fora e não daqui porque quem escolhe é a lista de mensagens: o
    * composer só precisa mostrar o que foi escolhido e mandá-lo junto.
    */
-  respondendo?: { id: string; body: string | null; direction: string } | null;
+  respondendo?: Pick<Message, "id" | "body" | "direction" | "type" | "metadata"> | null;
   /** Desfaz a escolha — o `x` da faixa de citação. */
   onCancelarResposta?: () => void;
   /** Nome do contato da conversa, para interpolar {{nome}}/{{primeiro_nome}} do template escolhido. */
   contactName?: string | null;
+  /**
+   * Rótulo do canal (`contacts.display_name`), fallback quando `contactName`
+   * é vazio (issue #2744). Contato criado pela ingestão do canal ainda não tem
+   * `name` gravado, e o template não podia mandar `{{nome}}` literal pro cliente.
+   */
+  contactDisplayName?: string | null;
   /** Contato da conversa — excluído do seletor de cartão compartilhado. */
   currentContactId?: string | null;
   /**
@@ -105,6 +142,13 @@ interface Props {
    * `draft_id` que o consumo usa depois do clique.
    */
   rascunho?: AvisoDeRascunho | null;
+  /**
+   * O usuário logado (#3282). A barra de recursos lembra o recolhimento POR
+   * usuário, e a chave da memória precisa do id. Vem de fora (o `InboxLayout`
+   * tem o `user` do `AuthProvider`) para o compositor não ganhar uma dependência
+   * de auth só por causa de uma preferência de tela.
+   */
+  usuarioId?: string | null;
 }
 
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
@@ -117,11 +161,14 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     disabled,
     blockedReason,
     janelaFechada,
+    aguardandoAssumir = false,
     contactName,
+    contactDisplayName,
     currentContactId,
     respondendo,
     onCancelarResposta,
     rascunho = null,
+    usuarioId = null,
   },
   ref,
 ) {
@@ -130,7 +177,25 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   // O aviso some no primeiro ENVIO: depois do clique o rascunho foi usado, e
   // deixar a faixa prometendo texto que já saiu seria mentira de tela.
   const [rascunhoUsado, setRascunhoUsado] = useState(false);
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  /**
+   * A FILA de anexos (#2526): o "+" escolhe uma, a resposta rápida traz as
+   * várias que o operador carregou no template. Uma lista e não um arquivo é o
+   * que permite o preview das duas antes de qualquer byte sair.
+   *
+   * É a MESMA fila que recebe a mídia de um recurso da barra (#2833): o clique
+   * do recurso passa pelo `applyTemplate`, e imagem e áudio entram aqui — com
+   * prévia e retry — em vez de um caminho próprio que perdia a imagem.
+   */
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  /**
+   * O texto da resposta rápida escolhida, guardado como LEGENDA.
+   *
+   * `null` no caminho do "+", onde a legenda nasce vazia; com o corpo
+   * interpolado quando a escolha veio de um template com imagem — o texto não
+   * pode estar nos dois lugares (campo E legenda), senão a mensagem sairia
+   * duplicada.
+   */
+  const [legendaInicial, setLegendaInicial] = useState<string | null>(null);
   /**
    * O modo em que o arquivo foi ESCOLHIDO, congelado na escolha — e não o modo
    * em que o diálogo está aberto agora.
@@ -172,14 +237,53 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const createNote = useCreateNote();
   const templates = useMessageTemplates();
   const slash = resolveSlash(text);
+  // O Esc/escolha vale só para o `/` em curso: saiu do `/` por QUALQUER caminho
+  // (digitado ou escrito pelo `applyTemplate`, inclusive o clique da barra com o
+  // campo vazio), o próximo `/` volta a abrir o menu.
+  if (menuDismissed && !slash.open) setMenuDismissed(false);
   const menuOpen = mode === "reply" && slash.open && !menuDismissed;
+
+  /**
+   * QUAL DAS DUAS FORMAS DA ASSISTÊNCIA APARECE (issue #3027).
+   *
+   * O `ReplyReviewPanel` era montado SEMPRE em modo resposta — com borda, título
+   * "Assistência do agente" e o botão "Sugerir resposta" —, mesmo sem sugestão
+   * nenhuma, e comia 2-3 linhas do histórico da conversa em tela de notebook.
+   *
+   * O sinal de "há sugestão" é o MESMO que o painel já usava para escolher o
+   * texto (`sugestaoParaMostrar`): a consulta é uma só, com uma chave só, lida
+   * pelos dois (ver `hooks/inbox/useRascunhoAssistido.ts`). Não há um segundo
+   * estado para divergir do primeiro.
+   *
+   * `mode === "reply"`: em nota o compositor não oferece sugestão de resposta, e
+   * a consulta nem sai.
+   *
+   * `!blockedReason`: compositor bloqueado (suporte somente leitura, papel sem
+   * escrita) devolve só o aviso, lá embaixo — e antes o painel, que fazia esta
+   * consulta, nem chegava a montar. Com a consulta aqui em cima ela sairia mesmo
+   * assim, a cada 4s, e o `GET` exige papel `agent`: 403 em loop para quem só lê.
+   */
+  const { sugestao, invalidar } = useRascunhoAssistido(
+    conversationId,
+    mode === "reply" && !blockedReason,
+  );
+
+  /**
+   * O contato da conversa, do jeito que a interpolação e o gate do curinga
+   * (#2744) precisam: o `name` do CRM e o `display_name` do canal. Um objeto,
+   * um lugar — o `applyTemplate` e a trava leem da MESMA fonte.
+   */
+  const contato: TemplateContact = {
+    name: contactName ?? null,
+    displayName: contactDisplayName ?? null,
+  };
 
   // SÓ em nota: a menção é assunto interno, e uma menção no campo de resposta
   // sairia para o cliente como texto solto. A query roda enquanto a lista está
   // aberta — fechou o `@`, não há porque ir buscar os atendentes.
   const gatilho = mode === "note" && !mencaoDispensada ? resolverMencao(text, caret) : null;
   const membros = useAssignableMembers(gatilho !== null);
-  const opcoes = gatilho ? opcoesDeMencao(membros.data ?? [], gatilho.query, t("Atendente")) : [];
+  const opcoes = gatilho ? opcoesDeMencao(membros.data ?? [], gatilho.query, t) : [];
   const mencaoAberta = gatilho !== null;
   const opcaoAtual = opcoes[mencaoIndice] ?? opcoes[0];
 
@@ -189,15 +293,59 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 
   // send/createNote fora do disable: o texto some na hora do envio; travar o campo
   // até a API voltar impedia digitar a próxima mensagem com o campo ainda cheio.
-  const isDisabled = disabled || !!blockedReason || upload.isPending;
+  // `aguardandoAssumir` (#3012) entra AQUI, no mesmo lugar: um termo a mais na
+  // trava de sempre, nunca um desabilitar paralelo que pudesse divergir dela.
+  const isDisabled = disabled || !!blockedReason || upload.isPending || aguardandoAssumir;
   // A janela só alcança o que SAI. Em modo nota o composer segue liberado: a
   // nota interna nunca chega ao cliente, e é onde o atendente registra por que
   // a conversa esfriou — barrá-la tira exatamente o que ainda dá para fazer.
   const respostaBarrada = isDisabled || (mode === "reply" && !!janelaFechada);
 
+  /**
+   * O RASCUNHO QUE JÁ ESTÁ NO CAMPO (#3354).
+   *
+   * A barra de respostas rápidas entrega o recurso ao MESMO `applyTemplate` do
+   * `/` — e o `applyTemplate` SUBSTITUI o campo (`escreverNoCampo`) ou, com
+   * mídia que aceita legenda, o ZERA. Com uma frase escrita, um clique apagava
+   * o que o atendente tinha digitado, sem aviso e sem desfazer. Aqui a barra
+   * passa a ficar desligada enquanto houver rascunho, e o botão diz por quê.
+   *
+   * O `/` em curso NÃO conta: o menu só abre quando o campo inteiro é o comando
+   * (`resolveSlash`), e o que ele troca é o próprio `/consulta` — quem digitou
+   * uma frase jamais chega lá com o menu aberto. É a mesma régua do menu, e não
+   * `startsWith("/")`: um rascunho como `/ola, tudo bem?` tem espaço e continua
+   * sendo rascunho.
+   *
+   * Sem o termo `!respostaBarrada` a dica erraria a mão: com a janela de 24h
+   * fechada e um texto sugerido por integração (#1611) no campo, ela mandaria
+   * apagar um rascunho que o campo travado não deixa apagar. Ali o motivo é
+   * outro, e o `title` continua o de sempre.
+   */
+  const rascunhoNoCampo = !respostaBarrada && text.trim() !== "" && !slash.open;
+
+  /**
+   * O curinga literal (#2744, opção A) — um SINAL IRMÃO do `janelaFechada`, e
+   * não um termo a mais no `respostaBarrada`.
+   *
+   * A diferença é o CAMPO: `respostaBarrada` desabilita o `<textarea>` (a janela
+   * fechada não tem o que editar), mas o curinga literal PEDE edição — o motivo
+   * que a faixa mostra é "edite antes de enviar". Travar o campo aqui seria
+   * negar a própria instrução. Então só o ENVIO é barrado; o operador continua
+   * digitando, apaga o `{{nome}}` e manda.
+   *
+   * Só em RESPOSTA: a nota interna nunca chega ao cliente e passa — a mesma
+   * fronteira do `janelaFechada`. Contato com nome não entra (o curinga resolve);
+   * `{{codigo}}` cru também não (chave desconhecida não é problema de nome).
+   */
+  const motivoCuringa = mode === "reply" ? motivoDoCuringaLiteral(text, contato) : null;
+  // O que trava o ENVIO: o de sempre, mais o curinga. O que trava o CAMPO
+  // (`respostaBarrada`) NÃO recebe o curinga — ver acima.
+  const envioBarrado = respostaBarrada || !!motivoCuringa;
+
   /** Escolhe o arquivo e MARCA o modo da escolha (ver `pendingEm`). */
   function escolherArquivo(file: File) {
-    setPendingFile(file);
+    setPendingFiles([file]);
+    setLegendaInicial(null);
     setPendingEm(mode);
   }
 
@@ -235,14 +383,22 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 
   function handleSubmit() {
     const legivel = text.trim();
-    if (!legivel || (mode === "note" ? isDisabled : respostaBarrada)) return;
+    if (!legivel || (mode === "note" ? isDisabled : envioBarrado)) return;
 
     // A menção vira token AQUI, na saída do campo (#2372): o que fica no
     // rascunho, no `onDraftChange` e no `restoreOnError` é o nome legível, e
     // o id só viaja no corpo que sai para o banco. Em modo RESPOSTA não há
     // token nenhum — menção é assunto de nota interna, e uma menção no campo
     // de resposta sairia para o cliente.
-    const corpo = mode === "note" ? embutirMencoes(legivel, mencoes) : legivel;
+    // O curinga DIGITADO interpola como o template aplicado (#2891): quem escreve
+    // `{{primeiro_nome}}` à mão quer o nome do cliente, não o token cru — e até
+    // 14/10/2026 esse texto saía literal para o contato, sem faixa e com o
+    // Enviar habilitado. A fonte é a MESMA do `applyTemplate` e da trava: o
+    // `contato` montado uma linha acima, e a MESMA `interpolateTemplate`. Só a
+    // RESPOSTA passa por aqui: a nota interna não vai ao cliente e continua
+    // levando o texto como escrito (fronteira do `janelaFechada`, #2744).
+    const corpo =
+      mode === "note" ? embutirMencoes(legivel, mencoes) : interpolateTemplate(legivel, contato);
 
     setText("");
     requestAnimationFrame(() => autoresize());
@@ -285,7 +441,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     send.mutate(
       {
         conversation_id: conversationId,
-        body: legivel,
+        body: corpo,
         type: "text",
         ...(respondendo ? { reply_to_message_id: respondendo.id } : {}),
       },
@@ -325,17 +481,196 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       });
   }
 
-  function applyTemplate(t: MessageTemplate) {
-    const filled = interpolateTemplate(t.body, { name: contactName ?? null });
-    setText(filled);
-    setMenuDismissed(true);
+  /**
+   * Escreve no campo e poe o cursor no fim — o de sempre, isolado para reuso.
+   *
+   * `focar: false` existe para quem devolve texto com o diálogo de anexos
+   * ABERTO (#3151): o foco pertence ao diálogo, e puxá-lo para o textarea que
+   * está atrás dele tiraria do operador o Esc e o Enter da prévia.
+   */
+  function escreverNoCampo(conteudo: string, focar = true) {
+    setText(conteudo);
     const ta = taRef.current;
     if (!ta) return;
     requestAnimationFrame(() => {
-      ta.focus();
-      ta.selectionStart = ta.selectionEnd = filled.length;
+      if (focar) {
+        ta.focus();
+        ta.selectionStart = ta.selectionEnd = conteudo.length;
+      }
       autoresize();
     });
+  }
+
+  /**
+   * A escolha de um recurso na barra (#2833) — o MESMO caminho do `/`.
+   *
+   * Não existe plano próprio da barra: o recurso é entregue ao `applyTemplate`,
+   * que já separa as duas naturezas — texto cai no campo editável, e mídia
+   * (imagem OU áudio) entra na fila de anexos com o corpo como legenda. Era o
+   * caminho próprio que perdia a imagem do recurso. Nada é enviado aqui: é o
+   * critério central da issue, e o teste o cobre.
+   */
+  function escolherRecurso(recurso: Recurso) {
+    void applyTemplate(recurso);
+  }
+
+  /**
+   * Baixa os BYTES de uma imagem do template (#2526).
+   *
+   * Pela própria origem (`/midias/:indice` devolve o corpo, não um 302): o
+   * compositor precisa do `Blob` para montar o `File` que o envio de mídia
+   * consome, e um redirect cruzaria a origem dependendo do CORS do bucket —
+   * que, em self-host, é do operador e não nosso.
+   */
+  async function arquivoDaMidia(
+    templateId: string,
+    midia: MidiaDeTemplate,
+    indice: number,
+  ): Promise<File> {
+    const res = await fetch(`/api/v1/message-templates/${templateId}/midias/${indice}`);
+    if (!res.ok) throw new ApiError(res.status, "midia_indisponivel", undefined, "", "");
+    const blob = await res.blob();
+    const nome = midia.storage_path.split("/").pop() ?? `imagem-${indice + 1}`;
+    // O tipo sai do CAMINHO (que a rota de upload escolheu pelos bytes), não
+    // do `media_mime` da linha, que é texto livre gravado pelo PATCH.
+    return new File([blob], nome, { type: mimeDaMidia(midia.storage_path) });
+  }
+
+  /**
+   * Escolhe a resposta rápida (#2526) — e é o MESMO caminho da barra de recursos
+   * (#2833): o `/` e a barra entregam o recurso AQUI, um caminho só.
+   *
+   * SÓ TEXTO continua sendo o de sempre, byte por byte: o corpo interpolado
+   * vai para o campo. Com IMAGEM, o texto sai como legenda da primeira imagem
+   * e as imagens entram na fila de anexos — texto + mídia numa única mensagem
+   * editável, que é o que a issue pede e o que o envio de mídia já faz. Nada
+   * aqui cria caminho de envio novo: a saída é o `useUploadMedia` +
+   * `useSendMessage` de sempre, então canal, janela, opt-out, limite e retry
+   * continuam valendo exatamente como estão.
+   *
+   * Baixar os bytes NA ESCOLHA (e não na hora de enviar) é o que permite
+   * preview: sem o Blob não há o que mostrar, e o operador só poderia aprovar
+   * às cegas.
+   */
+  async function applyTemplate(template: Recurso) {
+    const payload = payloadDeUso(template, contato);
+    setMenuDismissed(true);
+
+    // O contato sem `name` NEM `display_name` (#2744): o `{{nome}}` sobrevive
+    // literal no corpo e iria pro cliente como `{{nome}}`. O toast é o primeiro
+    // aviso; a faixa persistente (mais abaixo) é o que fica, porque o operador
+    // precisa editar antes de mandar.
+    if (motivoDoCuringaLiteral(template.body, contato)) {
+      toast.warning(
+        t("Contato sem nome no CRM: {{nome}}/{{primeiro_nome}} ficaram literais no texto. Edite antes de enviar."),
+      );
+    }
+
+    // `respostaBarrada` cobre a resposta barrada (janela fechada, canal
+    // bloqueado) — enfileirar um upload que o dispatcher vai recusar deixaria
+    // arquivo órfão no bucket. O texto segue no campo, como sempre esteve.
+    if (!payload.midias.length || respostaBarrada) {
+      escreverNoCampo(payload.texto);
+      return;
+    }
+
+    try {
+      const arquivos = await Promise.all(
+        payload.midias.map((midia, indice) => arquivoDaMidia(template.id, midia, indice)),
+      );
+      setPendingEm("reply");
+      setPendingFiles(arquivos);
+      // Áudio NÃO leva legenda em nenhum adaptador de canal
+      // (#3151): sem anexo na fila que a
+      // leve, o corpo volta para o CAMPO em vez de virar legenda de um áudio
+      // que a descarta — o texto continua na tela, para o operador mandar como
+      // mensagem. Com anexo que a leve (imagem, vídeo, documento), o texto sai
+      // do campo e vira a legenda dele, como sempre.
+      if (arquivos.some(anexoLevaLegenda)) {
+        setLegendaInicial(payload.texto);
+        setText("");
+      } else {
+        setLegendaInicial(null);
+        // Sem foco: o diálogo de prévia está abrindo POR CIMA do campo.
+        escreverNoCampo(payload.texto, false);
+      }
+    } catch (erro) {
+      // Sem os bytes não há prévia nem envio. O caminho honesto é o de texto,
+      // com o aviso de que a imagem não veio — sumir em silêncio seria entregar
+      // metade do template sem ninguém perceber.
+      showApiError(erro);
+      escreverNoCampo(payload.texto);
+    }
+  }
+
+  /**
+   * A FILA de anexos (#2526) — e ela é um laço, não um tiro.
+   *
+   * Cada arquivo sobe pelo `useUploadMedia` e sai pelo `useSendMessage` /
+   * `useCreateNote` de sempre; só o PRIMEIRO anexo que ACEITA legenda leva o
+   * texto — o mesmo contrato de "texto + mídia numa mensagem" que o envio de
+   * mídia já pratica. Não é sempre o índice 0 (#3151): numa fila [áudio,
+   * imagem] o texto iria com o áudio e o canal o descartaria em silêncio.
+   * A recursão entra pelo `onSuccess`, então uma falha INTERROMPE a fila e o
+   * diálogo fica aberto para o retry — como já ficava no caminho de um arquivo.
+   */
+  function enviarAnexos(caption: string, indice = 0): void {
+    const arquivo = pendingFiles[indice];
+    if (!arquivo) {
+      setPendingFiles([]);
+      setLegendaInicial(null);
+      return;
+    }
+    const destino: DestinoDoUpload = pendingEm === "note" ? "nota" : "mensagem";
+    // `-1` (fila só de áudio) não casa com índice nenhum: a legenda não sai com
+    // anexo algum, em vez de sair com um áudio que a descarta.
+    const indiceLegenda = indiceDaLegenda(pendingFiles);
+    const legenda =
+      destino === "nota" ? caption : indice === indiceLegenda ? caption || undefined : undefined;
+    void upload
+      .mutateAsync({ conversationId, file: arquivo, destino })
+      .then((uploaded) => {
+        // Cada arquivo que SAIU deixa a fila, e a legenda com ele: se o
+        // próximo falhar, o retry do diálogo recomeça do que falhou, sem
+        // reenviar o que já foi nem repetir o texto (#2526, critério "falha
+        // no envio da mídia não causa duplicação do texto"). Zerar a
+        // `legendaInicial` é o que faz o diálogo repor a legenda VAZIA quando
+        // a fila encolhe.
+        const proximo = () => {
+          setPendingFiles((fila) => fila.slice(1));
+          setLegendaInicial(null);
+          enviarAnexos(caption, indice + 1);
+        };
+        if (destino === "nota") {
+          createNote.mutate(
+            {
+              conversation_id: conversationId,
+              body: legenda ?? "",
+              anexo: {
+                storage_path: uploaded.storage_path,
+                media_mime: uploaded.media_mime,
+                media_size_bytes: uploaded.media_size_bytes,
+              },
+            },
+            { onSuccess: proximo },
+          );
+          return;
+        }
+        send.mutate(
+          {
+            conversation_id: conversationId,
+            type: uploaded.kind,
+            body: legenda,
+            media_storage_path: uploaded.storage_path,
+            media_mime: uploaded.media_mime,
+            media_size_bytes: uploaded.media_size_bytes,
+          },
+          { onSuccess: proximo },
+        );
+      })
+      .catch(() => {
+        // toast já disparado pelo onError de useUploadMedia; diálogo fica aberto p/ retry
+      });
   }
 
   /**
@@ -357,7 +692,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
    * a conversa esfriou).
    */
   function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
-    if (respostaBarrada || pendingFile) return;
+    if (respostaBarrada || pendingFiles.length > 0) return;
     const imagem = imagemDoClipboard(e.clipboardData, new Date());
     if (!imagem) return; // colagem de texto segue o caminho normal do browser
     e.preventDefault();
@@ -400,8 +735,18 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       }
     }
     if (e.key === "Enter" && !e.shiftKey) {
+      if (menuOpen) {
+        e.preventDefault(); // deixa o Enter pro menu; não envia /query como mensagem
+        return;
+      }
+      // No toque, a tecla de retorno do teclado virtual QUEBRA LINHA, como no
+      // próprio WhatsApp — quem envia é o botão. Ctrl/Cmd+Enter envia sempre
+      // (iPad com teclado físico). Lido aqui, no keydown, e não no render: o
+      // servidor não sabe o ponteiro, e ler no render faria as duas pontas
+      // desenharem coisas diferentes.
+      const forcaEnvio = e.ctrlKey || e.metaKey;
+      if (!forcaEnvio && window.matchMedia?.("(pointer: coarse)").matches) return;
       e.preventDefault();
-      if (menuOpen) return; // deixa o Enter pro menu; não envia /query como mensagem
       handleSubmit();
     }
   }
@@ -422,8 +767,19 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           mode === "note" && "border-warning/40 bg-warning-bg",
         )}
       >
-        {mode === "reply" && (
-          <ReplyReviewPanel conversationId={conversationId} disabled={isDisabled} />
+        {/* O BLOCO DA ASSISTÊNCIA SÓ COM SUGESTÃO (issue #3027): sem rascunho
+            para mostrar, ele não é montado e não ocupa faixa nenhuma; o botão de
+            ícone (`DraftReplyButton`), que é o mesmo gesto, fica na linha de
+            ações do compositor (ver abaixo). Com sugestão, o bloco aparece
+            inteiro, como sempre — e sai quando ela é enviada ou descartada.
+            Com o teclado virtual aberto, a sugestão sai da frente (F2): sobram
+            ~250px de tela num iPhone, e o fio da conversa vale mais que ela. O
+            marcador é da camada da conversa (`useAlturaVisivel`), e o `max-md:`
+            mantém o computador intacto. */}
+        {mode === "reply" && sugestao && (
+          <div className="max-md:group-data-[teclado-aberto]/conversa:hidden">
+            <ReplyReviewPanel conversationId={conversationId} disabled={isDisabled} />
+          </div>
         )}
         <TemplateMenu
           open={menuOpen}
@@ -463,12 +819,42 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             </p>
           </div>
         )}
+        {/* O AVISO DO CURINGA LITERAL (#2744) — visível e PERSISTENTE, e não só
+            o toast que some. Vale para o texto DIGITADO, não só para o modelo
+            aplicado: quem escreveu `{{primeiro_nome}}` na mão precisa ver por
+            que o botão não manda, junto da borda do compositor. Só em RESPOSTA
+            (modo nota passa), e só com o literal sobrevivente — contato com
+            nome resolve o curinga e não vê aviso nenhum. */}
+        {motivoCuringa && (
+          <div
+            data-testid="aviso-curinga-literal"
+            className="mb-1.5 flex items-start gap-2 rounded-md border-l-2 border-warning bg-warning-bg px-2 py-1.5 text-xs text-warning-fg"
+          >
+            <p className="min-w-0 flex-1">
+              {t("Contato sem nome no CRM: {{nome}}/{{primeiro_nome}} ficaram literais no texto. Edite antes de enviar.")}
+            </p>
+          </div>
+        )}
+        {/* O AVISO DO BLOQUEIO ATÉ ASSUMIR (#3012) — a caixa está travada e o
+            motivo precisa estar junto dela, não só no botão lá em cima. A saída
+            da regra é o "Assumir" do cabeçalho, que continua visível em todos os
+            estados; esta faixa só diz o que fazer para voltar a escrever. */}
+        {aguardandoAssumir && (
+          <div
+            data-testid="aviso-assumir"
+            className="mb-1.5 flex items-start gap-2 rounded-md border-l-2 border-primary bg-muted/60 px-2 py-1.5 text-xs"
+          >
+            <p className="min-w-0 flex-1 text-muted-foreground">
+              {t("Assuma esta conversa para responder.")}
+            </p>
+          </div>
+        )}
         <div className="mb-1.5 flex gap-1">
           <button
             type="button"
             onClick={() => setMode("reply")}
             className={cn(
-              "rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
+              "min-h-11 rounded-full px-3 py-1 text-xs font-medium transition-colors lg:min-h-0 lg:px-2.5",
               mode === "reply"
                 ? "bg-accent text-accent-foreground"
                 : "text-muted-foreground hover:bg-muted",
@@ -480,7 +866,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             type="button"
             onClick={() => setMode("note")}
             className={cn(
-              "rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
+              "min-h-11 rounded-full px-3 py-1 text-xs font-medium transition-colors lg:min-h-0 lg:px-2.5",
               mode === "note"
                 ? "bg-warning text-warning-fg"
                 : "text-muted-foreground hover:bg-muted",
@@ -506,18 +892,39 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
                 {respondendo.direction === "outbound" ? t("Você") : t("Cliente")}
               </div>
               <div className="line-clamp-2 text-xs text-muted-foreground">
-                {respondendo.body?.trim() || t("(sem texto)")}
+                {respondendo.type === "contact"
+                  ? resolveSharedContact(respondendo)?.name || t("Contato")
+                  : respondendo.body?.trim() || t("(sem texto)")}
               </div>
             </div>
             <button
               type="button"
               onClick={onCancelarResposta}
               aria-label={t("Cancelar resposta")}
-              className="rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:size-auto lg:p-0.5"
             >
               <X className="size-4" />
             </button>
           </div>
+        )}
+        {/* A BARRA DE RECURSOS (#2833) — um botão por título cadastrado. O clique
+            NÃO envia: entrega o recurso ao MESMO `applyTemplate` que o `/` usa.
+            Texto cai no campo editável; mídia (imagem OU áudio) entra na fila de
+            anexos, com prévia e legenda — não há barra de anexo própria. */}
+        {mode === "reply" && (
+          <BarraDeRecursos
+            recursos={templates.data ?? []}
+            disabled={respostaBarrada || rascunhoNoCampo}
+            dica={
+              rascunhoNoCampo
+                ? t(
+                    "A resposta rápida substitui o texto do campo. Envie ou apague o rascunho antes.",
+                  )
+                : undefined
+            }
+            onEscolher={escolherRecurso}
+            usuarioId={usuarioId}
+          />
         )}
         <div className="flex items-end gap-2">
           {/* O "+" existe nos DOIS modos desde a F3 da #1863: em "Nota interna"
@@ -551,6 +958,30 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               });
             }}
           />
+          {/*
+            O BOTÃO DE ÍCONE DA ASSISTÊNCIA (issue #3027) — "Sugerir resposta",
+            o mesmo gesto do bloco, no lugar onde ele NÃO custa faixa nenhuma:
+            junto do "+" e do emoji, na linha do campo.
+
+            Os dois nunca aparecem juntos: com sugestão montada, o bloco traz o
+            próprio botão de texto; sem sugestão, fica só este ícone. Ninguém
+            escolhe entre dois botões iguais.
+
+            O clique gera pelo MESMO `POST /conversations/:id/draft-reply` do
+            bloco; o rascunho criado entra pelo `invalidateQueries` da chave
+            compartilhada, e é isso que monta o bloco com o texto e as ações. O
+            texto NÃO é despejado no campo: quem revisa e decide é o bloco, e ter
+            o mesmo texto nos dois lugares diria duas vezes a mesma coisa.
+          */}
+          {mode === "reply" && !sugestao && (
+            <DraftReplyButton
+              conversationId={conversationId}
+              disabled={isDisabled}
+              onDraft={() => {
+                void invalidar();
+              }}
+            />
+          )}
           <textarea
             ref={taRef}
             value={text}
@@ -568,7 +999,6 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               // retry depois de uma falha. Quem digita DURANTE o envio poda as
               // escolhas aqui — o `onError` da nota devolve as que foram enviadas.
               setMencoes((atual) => podarMencoes(e.target.value, atual));
-              if (!resolveSlash(e.target.value).open) setMenuDismissed(false);
               // Sumiu o `@` (apagou, ou o Enter escolheu): o Esc de uma vez
               // não pode travar a lista da PRÓXIMA menção.
               if (!resolverMencao(e.target.value, pos)) setMencaoDispensada(false);
@@ -601,7 +1031,10 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
                 : t("Enter envia · Shift+Enter quebra linha")
             }
             className={cn(
-              "max-h-40 min-h-9 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm",
+              // 16px abaixo do `md`: o Safari do iPhone AMPLIA a página ao focar
+              // campo com fonte menor, e a conversa sai do quadro. 44px de alvo
+              // até o `lg`, como o resto dos botões de toque.
+              "max-h-40 min-h-11 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-base md:text-sm lg:min-h-9",
               "placeholder:text-muted-foreground focus:ring-1 focus:ring-ring focus:outline-hidden",
             )}
             disabled={mode === "note" ? isDisabled : respostaBarrada}
@@ -611,9 +1044,9 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             <Button
               type="button"
               size="icon"
-              className="h-9 w-9 shrink-0"
+              className="shrink-0"
               onClick={handleSubmit}
-              disabled={(mode === "note" ? isDisabled : respostaBarrada) || !text.trim()}
+              disabled={(mode === "note" ? isDisabled : envioBarrado) || !text.trim()}
               aria-label={t("Enviar")}
             >
               <PaperPlaneTilt size={16} weight="fill" aria-hidden />
@@ -624,11 +1057,41 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
         </div>
       </div>
       <AttachmentPreviewDialog
-        file={pendingFile}
+        files={pendingFiles}
+        legendaInicial={legendaInicial}
+        notaInterna={pendingEm === "note"}
         sending={upload.isPending || send.isPending || createNote.isPending}
-        onCancel={() => setPendingFile(null)}
-        onSend={async (caption) => {
-          if (!pendingFile) return;
+        onCancel={() => {
+          const devolver = legendaInicial;
+          setPendingFiles([]);
+          setLegendaInicial(null);
+          // Cancelar a prévia DEVOLVE o texto ao campo (#2526): ele estava ali
+          // como legenda da imagem que não vai sair, e sumir com o que o
+          // operador acabou de decidir não enviar seria perder a única cópia do
+          // texto escolhido no menu.
+          if (devolver) escreverNoCampo(devolver);
+        }}
+        onRemove={(indice, caption) => {
+          const resto = pendingFiles.filter((_, i) => i !== indice);
+          // Sobra SEM anexo que leve legenda — fila vazia ou só de áudio — é
+          // nada a legendar: o texto volta para o campo, como no cancelar, para
+          // o que o operador escreveu não sumir junto com o último anexo que o
+          // levaria (#3151). Tirar a imagem de uma fila [imagem, áudio] é
+          // exatamente este caminho. Na NOTA o texto é o corpo dela e vale com
+          // áudio também: só a fila vazia o devolve.
+          if (resto.length === 0 || (pendingEm !== "note" && indiceDaLegenda(resto) === -1)) {
+            setPendingFiles(resto);
+            setLegendaInicial(null);
+            // Sem foco: o diálogo continua ABERTO com o áudio que sobrou.
+            if (caption) escreverNoCampo(caption, false);
+            return;
+          }
+          // A legenda editada sobrevive à troca da fila (o diálogo a repõe a
+          // partir de `legendaInicial` sempre que a fila muda).
+          setLegendaInicial(caption);
+          setPendingFiles(resto);
+        }}
+        onSend={(caption) => {
           // A BIFURCAÇÃO (#1863, F3) — e ela é decidida pelo modo CONGELADO NA
           // ESCOLHA (`pendingEm`), não pelo modo de agora.
           //
@@ -639,42 +1102,9 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           //            como `anexo`. Não existe passo de envio: a nota não é
           //            mensagem, não tem `type`, não tem destino no WhatsApp.
           //
-          // O `try/catch` continua cobrindo SÓ o upload (falha de gravação da
-          // nota é tratada pelo onError do próprio hook, e o diálogo fica aberto
-          // nos dois casos).
-          const destino: DestinoDoUpload = pendingEm === "note" ? "nota" : "mensagem";
-          try {
-            const uploaded = await upload.mutateAsync({ conversationId, file: pendingFile, destino });
-            if (destino === "nota") {
-              createNote.mutate(
-                {
-                  conversation_id: conversationId,
-                  body: caption,
-                  anexo: {
-                    storage_path: uploaded.storage_path,
-                    media_mime: uploaded.media_mime,
-                    media_size_bytes: uploaded.media_size_bytes,
-                  },
-                },
-                { onSuccess: () => setPendingFile(null) },
-              );
-              return;
-            }
-            send.mutate(
-              {
-                conversation_id: conversationId,
-                type: uploaded.kind,
-                body: caption || undefined,
-                media_storage_path: uploaded.storage_path,
-                media_mime: uploaded.media_mime,
-                media_size_bytes: uploaded.media_size_bytes,
-              },
-              { onSuccess: () => setPendingFile(null) },
-            );
-          } catch {
-            // toast já disparado pelo onError de useUploadMedia; dialog fica aberto p/ retry
-            return;
-          }
+          // O tratamento de erro continua o de sempre: falha de upload mostra o
+          // toast do próprio hook e o diálogo fica aberto, nos dois casos.
+          enviarAnexos(caption);
         }}
       />
       <ContactPickerDialog

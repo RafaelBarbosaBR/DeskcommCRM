@@ -65,6 +65,7 @@ const CONTATO = {
   // agendamento, com a regra "Clientes pela agenda" ligada (migration 0262), e
   // este caso é o do cadastro manual.
   first_service_at: null,
+  ai_opt_out: false,
 } satisfies Contact;
 
 /** O corpo que a rota devolve, tipado pelo retorno dela. */
@@ -80,13 +81,20 @@ function envolver(ui: ReactNode) {
 beforeEach(() => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(
-      async () =>
-        new Response(JSON.stringify(CORPO_DA_ROTA), {
-          status: 201,
+    vi.fn(async (url: unknown) => {
+      // O diálogo passou a sugerir etiquetas: a rota do vocabulário devolve a
+      // lista crua (`{ data: string[] }`) e responde ANTES do corpo do POST.
+      if (String(url).includes("/api/v1/contact-tags")) {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
           headers: { "content-type": "application/json" },
-        }),
-    ),
+        });
+      }
+      return new Response(JSON.stringify(CORPO_DA_ROTA), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    }),
   );
 });
 

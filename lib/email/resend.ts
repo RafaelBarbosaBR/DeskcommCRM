@@ -15,10 +15,13 @@
  * PIOR que nada: o domínio não está verificado na conta Resend do revendedor,
  * então TODO envio falha lá na Resend e volta como `send_failed` com mensagem
  * opaca — o operador vai caçar rede, contêiner e chave, quando o problema é uma
- * variável em branco. Tratar como não-configurado joga o fluxo no caminho que
- * JÁ existe e JÁ é bom: `EmailNotConfigured` → `pending_review` no worker de
- * LGPD (`workers/lgpd-export-worker.ts:254-289`) e o convite mostrando o
- * `accept_url` na tela (`app/api/v1/team/invite/route.ts`).
+ * variável em branco. Tratar como não-configurado joga o fluxo no caminho
+ * próprio dele: `EmailNotConfigured` → `pending_review` no worker de LGPD
+ * (`workers/lgpd-export-worker.ts`), com o PDF para o operador entregar à mão,
+ * e o convite mostrando o `accept_url` na tela (`app/api/v1/team/invite/route.ts`).
+ * Esse caminho da LGPD só passou a funcionar com a migration 0651: até ela o
+ * CHECK de `lgpd_requests.status` recusava `pending_review`, e o pedido ficava
+ * em "Processando" para sempre.
  *
  * As duas chaves saíram do `process.env` cru e entraram no Zod (`lib/env.ts`).
  * Fora dele elas ficavam fora do `.env.example` e fora do `install.sh`, e o
@@ -26,6 +29,7 @@
  */
 import { Resend } from "resend";
 
+import { remetenteComNome } from "@/lib/email/remetente";
 import { env } from "@/lib/env";
 import { valorDaInstalacao } from "@/lib/instalacao/config";
 
@@ -72,9 +76,8 @@ function criarCliente(key: string | null): Resend | null {
 /**
  * `null` = não há remetente utilizável. Nunca inventa um domínio nosso.
  *
- * O nome de exibição é sanitizado: `<`, `>`, `"` e quebra de linha dentro do
- * cabeçalho `From:` são injeção de cabeçalho SMTP, e a marca vem de um campo
- * que o operador digita numa tela.
+ * O nome de exibição vem de campo de tela; quem o formata é `remetenteComNome`
+ * (`lib/email/remetente.ts`), o mesmo do SMTP.
  */
 export function fromAddress(remetente: string | null, fromName?: string): string | null {
   const endereco = (remetente ?? "").trim();
@@ -88,8 +91,7 @@ export function fromAddress(remetente: string | null, fromName?: string): string
   // pelo mesmo, e RECUSA em vez de limpar: endereço com caractere de cabeçalho
   // não é um endereço a consertar, é um endereço a não usar. Falha fechada.
   if (/[<>"\r\n,;\s]/.test(endereco)) return null;
-  const nome = (fromName ?? "").replace(/[<>"\r\n]/g, "").trim();
-  return nome.length > 0 ? `${nome} <${endereco}>` : endereco;
+  return remetenteComNome(endereco, fromName);
 }
 
 /**
@@ -118,11 +120,9 @@ export async function sendEmail(args: SendArgs): Promise<SendResult> {
   if (!client || !from) {
     if (process.env.NODE_ENV !== "production") {
       console.warn(
-        "[email] envio desligado — falta RESEND_API_KEY ou RESEND_FROM_EMAIL. Payload:",
+        // Sem destinatário, assunto nem prévia: o log não é lugar de dado do cliente.
+        "[email] envio desligado — falta RESEND_API_KEY ou RESEND_FROM_EMAIL.",
         {
-          to: args.to,
-          subject: args.subject,
-          preview: args.text?.slice(0, 200) ?? args.html.slice(0, 200),
           tem_chave: client !== null,
           tem_remetente: from !== null,
         },

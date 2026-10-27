@@ -20,8 +20,18 @@ const ACEITE = { em: "2026-09-23T12:00:00.000Z", por: ADMIN };
 
 describe("lerConfigDoJev", () => {
   it("sem nada gravado, desligado em observação", () => {
-    expect(lerConfigDoJev({})).toEqual({ ligado: false, modo: "observacao", modo_roteador: "comparacao", aceite: null });
-    expect(lerConfigDoJev(null)).toEqual({ ligado: false, modo: "observacao", modo_roteador: "comparacao", aceite: null });
+    const desligado = { ligado: false, modo: "observacao", modo_roteador: "comparacao", origem: "typesafe", aceite: null };
+    expect(lerConfigDoJev({})).toEqual(desligado);
+    expect(lerConfigDoJev(null)).toEqual(desligado);
+  });
+
+  it("a origem ausente é o caminho de sempre (TypeSafe direto), e a gravada é lida", () => {
+    expect(lerConfigDoJev({ jev: { ligado: true, aceite: ACEITE } }).origem).toBe("typesafe");
+    expect(lerConfigDoJev({ jev: { ligado: true, aceite: ACEITE, origem: "openrouter" } }).origem).toBe("openrouter");
+    // Valor de uma versão mais nova (ou JSON torto) NÃO vira uma origem que não
+    // sabe montar URL: o `z.enum` recusa a config inteira e ela cai no desligado.
+    expect(lerConfigDoJev({ jev: { ligado: true, aceite: ACEITE, origem: "outra" } }).origem).toBe("typesafe");
+    expect(lerConfigDoJev({ jev: { ligado: true, aceite: ACEITE, origem: "outra" } }).ligado).toBe(false);
   });
 
   it("lê o que foi gravado", () => {

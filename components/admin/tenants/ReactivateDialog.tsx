@@ -30,13 +30,24 @@ interface ReactivateDialogProps {
   open: boolean;
   onClose: () => void;
   organizationId: string;
+  /**
+   * O nome do tenant, para o diálogo dizer QUEM volta a ter acesso. Mesmo
+   * motivo do SuspenderDialog (#2778): a reativação sai da listagem, em um
+   * clique, e o alvo tem de estar escrito. Opcional pela mesma razão.
+   */
+  displayName?: string;
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function ReactivateDialog({ open, onClose, organizationId }: ReactivateDialogProps) {
+export function ReactivateDialog({
+  open,
+  onClose,
+  organizationId,
+  displayName,
+}: ReactivateDialogProps) {
   const t = useT();
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +84,11 @@ export function ReactivateDialog({ open, onClose, organizationId }: ReactivateDi
     <AlertDialog open={open} onOpenChange={(open) => { if (!open) handleClose(); }}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t("Reativar tenant")}</AlertDialogTitle>
+          <AlertDialogTitle>
+            {t("Reativar tenant")}
+            {/* O alvo da reativação, escrito na linha de cima (#2778). */}
+            {displayName ? <span className="font-normal"> {displayName}</span> : null}
+          </AlertDialogTitle>
           <AlertDialogDescription>
             {t(
               "A reativação restabelece o acesso dos usuários deste tenant à plataforma. Informe o motivo da reativação para o registro de auditoria.",

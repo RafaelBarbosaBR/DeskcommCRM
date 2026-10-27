@@ -73,6 +73,38 @@ describe("isPublicPath", () => {
   });
 
   /**
+   * `GET /api/v1/contacts/{id}/avatar` aceita Bearer (auth-dual, #3420) — mas
+   * só o avatar. Os mesmos cuidados do bloco de `/api/v1/leads/` acima: forma
+   * de UUID no id e âncora `$`, porque `/api/v1/contacts/` tem irmãos LITERAIS
+   * (`bulk`, `duplicates`, `export`, `import`, `merge`) e nenhum deles com
+   * suporte a Bearer.
+   */
+  it("libera só o avatar do contato (bearer, forma de UUID, âncora $)", () => {
+    const contato = "11111111-1111-4111-8111-111111111111";
+    expect(isPublicPath(`/api/v1/contacts/${contato}/avatar`)).toBe(true);
+    expect(isPublicPath(`/api/v1/contacts/${contato}/avatar/extra`)).toBe(false);
+    expect(isPublicPath("/api/v1/contacts/qualquer-id/avatar")).toBe(false);
+    expect(isPublicPath(`/api/v1/contacts/${contato}/person`)).toBe(false);
+    expect(isPublicPath("/api/v1/contacts/bulk/avatar")).toBe(false);
+  });
+
+  it("libera somente as portas de routers que autenticam sessão ou Bearer no handler", () => {
+    const router = "11111111-1111-4111-8111-111111111111";
+    expect(isPublicPath("/api/v1/ai/routers")).toBe(true);
+    expect(isPublicPath(`/api/v1/ai/routers/${router}`)).toBe(true);
+    expect(isPublicPath(`/api/v1/ai/routers/${router}/members`)).toBe(true);
+    expect(isPublicPath(`/api/v1/ai/routers/${router}/test`)).toBe(true);
+  });
+
+  it("não dá carona a ids inválidos nem a sub-paths futuros de routers", () => {
+    const router = "11111111-1111-4111-8111-111111111111";
+    expect(isPublicPath("/api/v1/ai/routers/qualquer")).toBe(false);
+    expect(isPublicPath(`/api/v1/ai/routers/${router}/members/extra`)).toBe(false);
+    expect(isPublicPath(`/api/v1/ai/routers/${router}/test/extra`)).toBe(false);
+    expect(isPublicPath(`/api/v1/ai/routers/${router}/publish`)).toBe(false);
+  });
+
+  /**
    * `/account-suspended` NÃO é mais rota pública (issue #2016). Quem cai nela
    * vem do redirect do layout de `/app` quando a organização está suspensa —
    * já com sessão. Ser pública fazia o `proxy` sair ANTES do `getUser()`, que é

@@ -262,7 +262,7 @@ describe("busca de contatos: o termo é normalizado pela régua do repo (#1835, 
     // aninharia, e cada vírgula restante tem de ser a que o handler pôs.
     expect(filtro).not.toMatch(/[()]/);
     const colunas = filtro.split(",").map((cond) => cond.split(".")[0]);
-    expect(colunas).toEqual(["name", "display_name", "email", "phone_number"]);
+    expect(colunas).toEqual(["name", "display_name", "address_book_name", "email", "phone_number"]);
     // O recorte por organização é parâmetro PRÓPRIO da query (E com o `or=`):
     // é ele que segura o caminho de service role (Bearer e MCP).
     expect(igualdades).toContainEqual(["organization_id", ORG]);
@@ -451,7 +451,7 @@ describe("busca de contatos: escape, colapso de * e acento fora da tabela (#2310
       expect(execucoes, JSON.stringify(ch)).toBe(1);
       expect(filtro, JSON.stringify(ch)).not.toMatch(/[()]/);
       const colunas = filtro.split(",").map((cond) => cond.split(".")[0]);
-      expect(colunas, JSON.stringify(ch)).toEqual(["name", "display_name", "email", "phone_number"]);
+      expect(colunas, JSON.stringify(ch)).toEqual(["name", "display_name", "address_book_name", "email", "phone_number"]);
     }
   });
 });

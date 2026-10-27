@@ -211,6 +211,33 @@ describe("controle: fluxo que só manda mensagem continua idêntico", () => {
   });
 });
 
+/**
+ * #2734 — a mídia do passo de texto fixo só chega ao envio se o motor a repassar
+ * no payload do turno. Sem o repasse, os dois caminhos de envio recebem só o
+ * `fixed_body` e o passo manda a legenda sozinha, de uma imagem que não vem.
+ * Sabotagem prevista: apagar o spread `fixed_media_url` de `turnPayloadExtras`
+ * em `lib/followup/engine.ts` deixa este caso vermelho.
+ */
+describe("mídia do passo de texto fixo chega ao turno (#2734)", () => {
+  it("nó action/text com media_url enfileira o turno com fixed_media_url; sem ela, a chave nem aparece", async () => {
+    const URL_DA_MIDIA = "https://cdn.exemplo.com/oferta.png";
+    const comMidia = cenario(
+      grafo(NO_TRIGGER, { id: "n2", type: "action", config: { mode: "text", body: "Olha a oferta", media_url: URL_DA_MIDIA } }, NO_FIM),
+      [enrollment("n2", { steps_taken: 1 })],
+    );
+    await runFollowupTick(comMidia.deps);
+    expect(comMidia.jobs).toHaveLength(1);
+    expect(comMidia.jobs[0]?.payload).toMatchObject({ fixed_body: "Olha a oferta", fixed_media_url: URL_DA_MIDIA });
+
+    const semMidia = cenario(
+      grafo(NO_TRIGGER, { id: "n2", type: "action", config: { mode: "text", body: "Olá!" } }, NO_FIM),
+      [enrollment("n2", { steps_taken: 1 })],
+    );
+    await runFollowupTick(semMidia.deps);
+    expect(semMidia.jobs[0]?.payload).not.toHaveProperty("fixed_media_url");
+  });
+});
+
 describe("controle: nó de tipo desconhecido não quebra o fluxo", () => {
   it("cai no comportamento já medido: failed com backoff, sem crash e sem dead", async () => {
     const c = cenario(

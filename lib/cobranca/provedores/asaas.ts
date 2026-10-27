@@ -113,6 +113,8 @@ const assinaturaDoAsaas = z.object({
   deleted: z.boolean().nullish(),
   cycle: z.string(),
   dateCreated: z.string(),
+  /** Valor por ciclo, em reais — é o que `trocarPlano` grava (`precoCents / 100`). */
+  value: z.number().nullish(),
 });
 type AssinaturaDoAsaas = z.infer<typeof assinaturaDoAsaas>;
 /** Removida (`deleted`), INACTIVE ou EXPIRED. */
@@ -508,7 +510,57 @@ export function criarAdaptadorAsaas(dep: DependenciasDoAsaas): AdaptadorDeCobran
     if (primeira === undefined) throw new ErroDoProvedor(null, "cobranca_ainda_nao_gerada", true);
     const url = linkSeguro(primeira.invoiceUrl);
     if (url === null) throw new ErroDoProvedor(200, "resposta_invalida", false);
-    return { url, expiraEm: null, assinaturaRef };
+    // A cobrança é a "sessão" do Asaas: é a id que a troca de plano expira no
+    // provedor (#2609) — guardada junto com o link em `checkout_sessao_id`.
+    return { url, expiraEm: null, assinaturaRef, sessaoId: primeira.id };
+  }
+
+  async function iniciarAjusteProporcional(p: Parameters<AdaptadorDeCobranca["iniciarAjusteProporcional"]>[0]) {
+    const externalReference = `upgrade:${uuidDaOrg(p.orgId)}:${p.chaveIdempotencia}`;
+    const consulta = new URLSearchParams({ customer: p.clienteRef, externalReference, limit: "10" });
+    const existentes = ler(listaDoAsaas(cobrancaDoAsaas), await chamar("GET", `/payments?${consulta}`)).data;
+    let pagamento = existentes.find((c) => c.status === "PENDING" || c.status === "OVERDUE");
+    if (!pagamento) {
+      pagamento = ler(cobrancaDoAsaas, await chamar("POST", "/payments", {
+        customer: p.clienteRef,
+        billingType: "UNDEFINED",
+        value: p.valorCents / 100,
+        dueDate: dataCivilEmSaoPaulo(agora()),
+        description: `Ajuste proporcional — ${p.plano.nome}`,
+        externalReference,
+      }));
+    }
+    const url = linkSeguro(pagamento.invoiceUrl);
+    if (url === null) throw new ErroDoProvedor(200, "resposta_invalida", false);
+    return { pagamentoRef: pagamento.id, url };
+  }
+
+  async function lerPagamentoProporcional(pagamentoRef: string): Promise<"pendente" | "pago" | "encerrado"> {
+    const pagamento = ler(cobrancaDoAsaas, await chamar("GET", `/payments/${encodeURIComponent(pagamentoRef)}`));
+    if (PAGO.has(pagamento.status)) return "pago";
+    // Cartão em análise de risco ainda pode ser aprovado: encerrá-lo esqueceria um pagamento que vai chegar.
+    if (pagamento.status === "PENDING" || pagamento.status === "OVERDUE" || pagamento.status === "AWAITING_RISK_ANALYSIS") return "pendente";
+    return "encerrado";
+  }
+
+  /**
+   * `DELETE /v3/payments/{id}` (#2609): a cobrança pendente some e o link dela
+   * (`invoiceUrl`) para de aceitar pagamento — é o que deixa a troca de plano
+   * valer na hora sem deixar link vivo com o preço antigo. 404 é cobrança já
+   * apagada: o efeito desejado, não falha. Id que não é de cobrança do Asaas (id
+   * de OUTRO provedor na mesma linha) não apaga nada aqui, então recusa em vez
+   * de deixar quem chama limpar o link achando que ele morreu.
+   */
+  async function expirarSessao(sessaoId: string): Promise<void> {
+    if (!sessaoId.startsWith("pay_")) throw new ErroDoProvedor(422, "sessao_de_outro_provedor", false);
+    try {
+      await chamar("DELETE", `/payments/${encodeURIComponent(sessaoId)}`);
+    } catch (e) {
+      // 2xx sem corpo (204/200 vazio) também é apagado: o `chamar` só sabe que o
+      // DELETE foi aceito pelo status, e não há corpo que ler.
+      if (e instanceof ErroDoProvedor && (e.status === 404 || (e.codigo === "resposta_invalida" && (e.status ?? 0) < 300))) return;
+      throw e;
+    }
   }
 
   /**
@@ -542,6 +594,7 @@ export function criarAdaptadorAsaas(dep: DependenciasDoAsaas): AdaptadorDeCobran
     const daPrincipal = principal ? await cobrancasDaAssinatura(principal.id) : [];
     const hoje = dataCivilEmSaoPaulo(agora());
     const existe = daPrincipal.some((c) => PAGO.has(c.status));
+    const ultimaPagaDaPrincipal = daPrincipal.filter((c) => PAGO.has(c.status)).sort((a, b) => b.dueDate.localeCompare(a.dueDate))[0];
     const corrente = daPrincipal.filter((c) => c.dueDate <= hoje).at(-1);
     const devidas = daPrincipal.filter((c) => c.status === "OVERDUE");
     if (corrente !== undefined && ESTORNADO.has(corrente.status)) devidas.push(corrente);
@@ -563,10 +616,15 @@ export function criarAdaptadorAsaas(dep: DependenciasDoAsaas): AdaptadorDeCobran
       emAtraso,
       vencidaDesde: maisAntiga === undefined ? null : fimDoDiaEmSaoPaulo(maisAntiga),
       proximoVencimento: fins.length > 0 ? new Date(Math.max(...fins)) : null,
+      periodoPagoDesde: ultimaPagaDaPrincipal
+        ? new Date(fimDoDiaEmSaoPaulo(ultimaPagaDaPrincipal.dueDate).getTime() - 24 * 60 * 60 * 1000 + 1000)
+        : null,
       jaPagou: pagas.length > 0,
       emTesteNoProvedorAte: null,
       pagamentoSemAssinaturaViva: false,
       linkDePagamento: linkSeguro(aberta?.invoiceUrl),
+      // O preço do PLANO gravado contra este (#2609): o valor por ciclo da principal, em centavos.
+      precoCents: principal?.value === null || principal?.value === undefined ? null : Math.round(principal.value * 100),
       statusBruto: principal
         ? [principal.status, existe ? null : "sem_pagamento", emAtraso ? "em_atraso" : null].filter(Boolean).join(":")
         : referencia
@@ -576,7 +634,7 @@ export function criarAdaptadorAsaas(dep: DependenciasDoAsaas): AdaptadorDeCobran
   }
 
   /**
-   * Chamado no AGENDAMENTO (§7e). Guarda: cobrança OVERDUE, ou PENDING que vence
+   * Chamado após pagamento proporcional ou agendamento de downgrade (§7e). Guarda: cobrança OVERDUE, ou PENDING que vence
    * até hoje em São Paulo, é o período em uso ainda não pago — mudar o valor
    * agora mexeria no boleto que o cliente já tem. Nunca comparar com
    * `nextDueDate`: é a próxima cobrança AINDA NÃO gerada, toda cobrança
@@ -620,6 +678,9 @@ export function criarAdaptadorAsaas(dep: DependenciasDoAsaas): AdaptadorDeCobran
     removerWebhooks,
     garantirCliente,
     iniciarAssinatura,
+    iniciarAjusteProporcional,
+    lerPagamentoProporcional,
+    expirarSessao,
     lerSituacao,
     trocarPlano,
     cancelarNoFim,

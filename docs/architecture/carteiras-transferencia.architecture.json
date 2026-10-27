@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Transferência respeita carteira",
+    "subtitle": "Autorização sobre a linha atual, antes de atualizar/devolver",
+    "output": "carteiras-transferencia.html",
+    "quality_profile": "standard"
+  },
+  "lanes": [
+    {
+      "id": "ui",
+      "label": "Operação"
+    },
+    {
+      "id": "core",
+      "label": "Núcleo"
+    },
+    {
+      "id": "data",
+      "label": "Banco"
+    }
+  ],
+  "mainPath": [
+    "sessao",
+    "rpc",
+    "escopo",
+    "atribuicao"
+  ],
+  "nodes": [
+    {
+      "id": "sessao",
+      "lane": "ui",
+      "col": 1,
+      "type": "service",
+      "label": "Transferir pelo Inbox, sessão e organização validadas"
+    },
+    {
+      "id": "rpc",
+      "lane": "core",
+      "col": 2,
+      "type": "service",
+      "label": "fn_conversation_assign: membro, destino e lock da conversa"
+    },
+    {
+      "id": "config",
+      "lane": "data",
+      "col": 2,
+      "type": "service",
+      "label": "visibility_mode: own / own_and_unassigned / all"
+    },
+    {
+      "id": "escopo",
+      "lane": "core",
+      "col": 3,
+      "type": "service",
+      "label": "fn_can_view_conversation com responsável da linha bloqueada"
+    },
+    {
+      "id": "atribuicao",
+      "lane": "data",
+      "col": 4,
+      "type": "service",
+      "label": "UPDATE + evento + silêncio + nome na mesma transação"
+    },
+    {
+      "id": "negativa",
+      "lane": "ui",
+      "col": 4,
+      "type": "service",
+      "label": "Fora da carteira: responde como inexistente (404) e nenhuma transferência anunciada"
+    }
+  ],
+  "edges": [
+    {
+      "id": "0",
+      "from": "sessao",
+      "to": "rpc",
+      "label": "pedido"
+    },
+    {
+      "id": "1",
+      "from": "rpc",
+      "to": "escopo",
+      "label": "dono atual"
+    },
+    {
+      "id": "2",
+      "from": "config",
+      "to": "escopo",
+      "label": "régua"
+    },
+    {
+      "id": "3",
+      "from": "escopo",
+      "to": "atribuicao",
+      "label": "permitido"
+    },
+    {
+      "id": "4",
+      "from": "escopo",
+      "to": "negativa",
+      "label": "negado"
+    },
+    {
+      "id": "5",
+      "from": "atribuicao",
+      "to": "sessao",
+      "label": "recibo"
+    },
+    {
+      "id": "6",
+      "from": "negativa",
+      "to": "sessao",
+      "label": "erro visível"
+    },
+    {
+      "id": "7",
+      "from": "config",
+      "to": "sessao",
+      "label": "visibilidade no Inbox"
+    }
+  ]
+}

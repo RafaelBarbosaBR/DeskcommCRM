@@ -136,13 +136,14 @@ describe("CommandPalette", () => {
     expect(screen.queryByRole("option", { name: /Contatos/ })).toBeNull();
   });
 
-  it("no catálogo, abre em Atendimento e a seta segue a ordem da tela", async () => {
+  it("no catálogo, abre no primeiro grupo da tela e a seta segue a ordem da tela", async () => {
     const user = userEvent.setup();
     abrir();
-    // O catálogo começa por Prospecção (CRM): agrupar pela 1ª aparição punha
-    // CRM no topo, e a seta andava pela lista plana, pulando de seção.
+    // CRM é o primeiro grupo do menu (decisão de 15/10: Pipeline é o destino
+    // mais usado) — o catálogo também começa por ele, então agrupar pela 1ª
+    // aparição já bate com a ordem da tela sem reordenar nada.
     const opcoes = screen.getAllByRole("option");
-    expect(opcoes[0]?.getAttribute("data-href")).toBe("/app/inbox");
+    expect(opcoes[0]?.getAttribute("data-href")).toBe("/app/prospecting");
     await user.keyboard("{ArrowDown}{Enter}");
     expect(push).toHaveBeenCalledWith(opcoes[1]?.getAttribute("data-href"));
   });

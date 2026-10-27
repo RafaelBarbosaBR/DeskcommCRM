@@ -2,10 +2,12 @@
 
 import { headers } from "next/headers";
 
+import { ipDoCliente } from "@/lib/http/ip-do-cliente";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit, isServiceRoleConfigured } from "@/lib/audit";
 import { generateRecoveryCodes, hashRecoveryCode } from "@/lib/auth/recovery-codes";
+import { sessionAal } from "@/lib/auth/server";
 
 export type RegenerateRecoveryCodesResult =
   | { ok: true; recovery_codes: string[] }
@@ -19,7 +21,7 @@ export async function regenerateRecoveryCodes(): Promise<RegenerateRecoveryCodes
   const supabase = await createClient();
   const hdrs = await headers();
   const requestId = hdrs.get("x-request-id");
-  const ip = hdrs.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const ip = ipDoCliente(hdrs);
   const userAgent = hdrs.get("user-agent") ?? null;
 
   const {
@@ -32,28 +34,25 @@ export async function regenerateRecoveryCodes(): Promise<RegenerateRecoveryCodes
   const hasFactor = factors?.totp?.some((f) => f.status === "verified");
   if (!hasFactor) return { ok: false, error: "mfa_not_enrolled" };
 
+  // Exige o código provado NESTA sessão (`aal2`), como desligar a verificação:
+  // códigos novos desligam o fator pela porta da recuperação, então uma sessão
+  // só com a senha — ou de um dispositivo confiável — não pode emiti-los.
+  if ((await sessionAal()) !== "aal2") return { ok: false, error: "mfa_required" };
+
+  // A tabela só aceita escrita do client de serviço (migration 0755): sem ele a
+  // instalação não tem como gravar os códigos, e a resposta diz isso em vez de
+  // tentar pelo client do usuário.
+  if (!isServiceRoleConfigured()) return { ok: false, error: "service_unavailable" };
+
   const codes = generateRecoveryCodes();
   const rows = codes.map((c) => ({ user_id: user.id, code_hash: hashRecoveryCode(c) }));
-
-  // Delete + insert. Use admin client when available (RLS for delete may be
-  // tighter than insert). Fall back to user-scoped.
-  let delErr: unknown = null;
+  const admin = createAdminClient();
+  const d = await admin.from("user_recovery_codes").delete().eq("user_id", user.id);
+  const delErr: unknown = d.error;
   let insErr: unknown = null;
-  if (isServiceRoleConfigured()) {
-    const admin = createAdminClient();
-    const d = await admin.from("user_recovery_codes").delete().eq("user_id", user.id);
-    delErr = d.error;
-    if (!delErr) {
-      const ins = await admin.from("user_recovery_codes").insert(rows);
-      insErr = ins.error;
-    }
-  } else {
-    const d = await supabase.from("user_recovery_codes").delete().eq("user_id", user.id);
-    delErr = d.error;
-    if (!delErr) {
-      const ins = await supabase.from("user_recovery_codes").insert(rows);
-      insErr = ins.error;
-    }
+  if (!delErr) {
+    const ins = await admin.from("user_recovery_codes").insert(rows);
+    insErr = ins.error;
   }
   if (delErr) {
     const msg = (delErr as { message?: string }).message ?? "delete_failed";

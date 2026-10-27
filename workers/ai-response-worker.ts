@@ -302,6 +302,11 @@ export async function processMessageReceived(row: EventRow): Promise<ProcessResu
         conversation_id: ctx.conversation_id,
         message_id: persisted.outbound_message_id,
         invocation_kind: "bot_respond",
+        // O provedor EFETIVO do binding (issue #3098) — o comentário acima já
+        // dizia que o modelo RESOLVIDO é o que vai para o provedor; o provedor
+        // dele vai junto, senão o palpite por barra carimbaria `openrouter` num
+        // id de modelo de provedor personalizado.
+        provider: resolvido.provider,
         model: resolvido.modelId,
         prompt_tokens: response.prompt_tokens,
         completion_tokens: response.completion_tokens,
@@ -328,6 +333,8 @@ export async function processMessageReceived(row: EventRow): Promise<ProcessResu
       conversation_id: ctx.conversation_id,
       message_id: persisted.outbound_message_id,
       invocation_kind: "bot_respond",
+      // O provedor EFETIVO do binding (issue #3098) — ver o G3 acima.
+      provider: resolvido.provider,
       model: resolvido.modelId,
       prompt_tokens: response.prompt_tokens,
       completion_tokens: response.completion_tokens,
@@ -354,6 +361,9 @@ export async function processMessageReceived(row: EventRow): Promise<ProcessResu
       conversation_id: ctx.conversation_id,
       message_id: ctx.message_id,
       invocation_kind: "bot_respond",
+      // A linha de ERRO também diz de quem era a chamada (issue #3098): o id do
+      // modelo tem barra nos dois casos e o palpite diria `openrouter`.
+      provider: resolvido.provider,
       model: resolvido.modelId,
       prompt_tokens: 0,
       completion_tokens: 0,
@@ -770,7 +780,7 @@ async function buildContext(input: BuildContextInput): Promise<GuardDecision> {
   const { data: conv, error: convErr } = await admin
     .from("conversations")
     .select(
-      "id, organization_id, contact_id, channel_session_id, last_inbound_at, bot_silenced_until, last_handoff_at, assignee_kind, contacts:contact_id(id, name, display_name, locale, is_blocked, is_personal, force_human)",
+      "id, organization_id, contact_id, channel_session_id, last_inbound_at, bot_silenced_until, last_handoff_at, assignee_kind, contacts:contact_id(id, name, display_name, locale, is_blocked, is_personal, force_human, ai_opt_out)",
     )
     .eq("id", input.conversationId)
     .eq("organization_id", input.organizationId)
@@ -797,6 +807,8 @@ async function buildContext(input: BuildContextInput): Promise<GuardDecision> {
       /** Spec 21: contato pessoal nunca recebe turno (mesma família de guard do bloqueio). */
       is_personal: boolean;
       force_human: boolean;
+      /** A marca permanente "sempre atendimento humano" (issue 2379). */
+      ai_opt_out: boolean;
     } | null;
   };
   const c = conv as unknown as ConvRow;
@@ -804,6 +816,10 @@ async function buildContext(input: BuildContextInput): Promise<GuardDecision> {
   if (c.contacts.is_blocked) return skip("contact_blocked");
   if (c.contacts.is_personal === true) return skip("contact_personal");
   if (c.contacts.force_human) return skip("force_human");
+  // A marca PERMANENTE (issue 2379): devolução manual ou automática não a
+  // desfaz, então este guard é a última linha que impede o worker legado de
+  // responder um contato trancado — mesmo que `force_human` chegue limpo.
+  if (c.contacts.ai_opt_out) return skip("ai_opt_out");
   // G3-02 — assignee de 1ª classe: humano atendendo (kind='user') veta o bot
   // deterministicamente, mesma família de guard de force_human/bot_silenced_until.
   if (c.assignee_kind === "user") return skip("assigned_to_human");

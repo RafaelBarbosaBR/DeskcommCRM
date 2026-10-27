@@ -2,16 +2,16 @@ import { requireSupportWrite } from "@/lib/impersonate/support";
 /**
  * PUT /api/v1/ai/routers/:id/members — substitui a lista INTEIRA de membros
  * do router (admin), audit `ai.router_members_updated`. `position` = índice
- * do array recebido. organization_id sempre de requireRole.
+ * do array recebido. organization_id sempre da sessão/token.
  */
 import { randomUUID } from "node:crypto";
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 import type { PoolClient } from "pg";
 
+import { resolveAuthDual, tetoDeEscritaDoToken } from "@/lib/api/auth-dual";
 import { ok, fail } from "@/lib/api/wrappers";
 import { audit } from "@/lib/audit";
-import { requireRole } from "@/lib/auth/require-role";
 import { getRequestPool } from "@/lib/agent-engine/db/request-pool";
 import { writeRouterMembers } from "@/lib/ai/agents/router-members";
 import { replaceRouterMembersHttp } from "@/lib/ai/agents/router-members-http";
@@ -55,10 +55,20 @@ export async function PUT(req: NextRequest, ctx: RouteCtx): Promise<Response> {
     return fail("invalid_request", "id inválido.", 400, { requestId });
   }
 
-  const authz = await requireRole("admin", { requestId, resource: "ai_routers" });
+  const authz = await resolveAuthDual(req, {
+    requestId,
+    resource: "ai_routers",
+    role: "admin",
+    scope: "config:write",
+    tokenRole: "admin",
+  });
   if (!authz.ok) return authz.response;
-  const t = (texto: string) => traduzir(texto, authz.user.idioma);
-  const { user: authUser, org } = authz;
+  const t = (texto: string) => traduzir(texto, authz.idioma ?? "pt-BR");
+  const { organizationId, actor } = authz;
+
+  const teto = await tetoDeEscritaDoToken(authz, "ai_routers", requestId);
+  if (teto) return teto;
+  const authUserId = actor.type === "user" ? actor.id : null;
 
   let rawBody: unknown;
   try {
@@ -86,10 +96,10 @@ export async function PUT(req: NextRequest, ctx: RouteCtx): Promise<Response> {
     if (process.env.SUPABASE_DB_URL) {
       db = await getRequestPool().connect();
       await db.query("begin");
-      await writeRouterMembers(db, org.orgId, id, members, "replace");
+      await writeRouterMembers(db, organizationId, id, members, "replace");
       await db.query("commit");
     } else {
-      await replaceRouterMembersHttp(createAdminClient(), org.orgId, id, members);
+      await replaceRouterMembersHttp(createAdminClient(), organizationId, id, members);
     }
   } catch (error) {
     // Marcado ANTES do rollback: se o próprio rollback estourar, o cliente ainda
@@ -135,8 +145,9 @@ export async function PUT(req: NextRequest, ctx: RouteCtx): Promise<Response> {
 
   void audit({
     action: "ai.router_members_updated",
-    actorUserId: authUser.id,
-    organizationId: org.orgId,
+    actorUserId: authUserId,
+    actorApiTokenId: authz.apiTokenId ?? null,
+    organizationId,
     resourceType: "ai_router",
     resourceId: id,
     requestId,

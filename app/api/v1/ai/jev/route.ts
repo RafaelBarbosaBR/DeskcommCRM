@@ -54,6 +54,11 @@ import {
 } from "@/lib/ai/decisao/config";
 import { CHAVES_DO_CLIMA, type MotorDoClima } from "@/lib/ai/decisao/metadados-do-clima";
 import {
+  ORIGENS_DO_JEV,
+  provedorDaCredencial,
+  type OrigemDoJev,
+} from "@/lib/ai/decisao/origem";
+import {
   estadoAoLigar,
   estadoEfetivoDaTarefa,
   estadoGravadoDaTarefa,
@@ -76,7 +81,7 @@ import { CODIGOS_SEM_REDE } from "@/lib/ai/decisao/textos";
 import { DEFAULT_CLASSIFIER_MODEL } from "@/lib/ai/gateway";
 import { resolverModeloDoPonto } from "@/lib/ai/gateway-binding";
 import { REFERENCIAS_DE_AVISO } from "@/lib/ai/inbox-destino";
-import { PROVEDORES_DE_DECISAO } from "@/lib/ai/pontos/provedores";
+import { PROVEDOR_POR_ID, PROVEDORES_DE_DECISAO } from "@/lib/ai/pontos/provedores";
 import { DEFAULT_SENTIMENT_THRESHOLD } from "@/lib/ai/prompts/sentiment";
 import { fail, ok } from "@/lib/api/wrappers";
 import { audit } from "@/lib/audit";
@@ -315,6 +320,22 @@ function configPublica(c: ConfigDoJev) {
   return { ligado: c.ligado, modo: c.modo, modo_roteador: c.modo_roteador, aceite: c.aceite };
 }
 
+/**
+ * O bloco do PROVEDOR que o cartão mostra. Na origem OpenRouter ele troca pelo
+ * cadastro da OpenRouter — rótulo, link e prefixo da chave (`PROVEDOR_POR_ID`) —
+ * porque a chave que o Jev reaproveita é a DE LÁ: mandar o link da TypeSafe a
+ * quem escolheu OpenRouter pediria a chave errada, que o caminho recusaria.
+ */
+function provedorPublico(origem: OrigemDoJev) {
+  const p = origem === "openrouter" ? (PROVEDOR_POR_ID.get("openrouter") ?? JEV) : JEV;
+  return {
+    rotulo: p.rotulo,
+    quandoUsar: p.quandoUsar,
+    ondePegarAChave: p.ondePegarAChave,
+    prefixoDaChave: p.prefixoDaChave,
+  };
+}
+
 function diasAtras(dias: number): string {
   return new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
 }
@@ -446,7 +467,11 @@ export async function GET(): Promise<Response> {
       .from("ai_provider_credentials")
       .select("id, label, provider, is_active, validated_at, validation_error, created_at")
       .eq("organization_id", org.orgId)
-      .eq("provider", PROVEDOR_DO_JEV)
+      // Sem filtro por provedor DE PROPÓSITO: a origem escolhida decide qual
+      // provedor conta como "a chave do Jev", e o cartão também oferece
+      // reaproveitar a credencial OpenRouter da empresa — as duas se leem aqui,
+      // e a separação por provedor é feita em memória (evita uma segunda ida ao
+      // banco só para saber se a OpenRouter já tem chave).
       .eq("is_active", true),
     lerSemana(),
     // ponytail: `messages` não tem índice por (organização, data) — o plano lê
@@ -533,17 +558,28 @@ export async function GET(): Promise<Response> {
     versoesEmCursoRes.error?.message;
   if (erro) return fail("query_failed", erro, 500, { requestId });
 
+  const config = lerConfigDoJev(orgRes.data?.settings);
+  const { numeros, ultima_falha } = numerosDaSemana(semana.linhas);
+  // A ORIGEM é a primeira coisa que se resolve: ela escolhe qual credencial é
+  // "a chave do Jev" e qual bloco de provedor o cartão mostra.
+  const origem = config.origem;
   const credenciais = credsRes.data ?? [];
-  const emUso = credencialEmUsoPeloJev(credenciais);
+  const doProvedorDaOrigem = credenciais.filter((c) => c.provider === provedorDaCredencial(origem));
+  const emUso = credencialEmUsoPeloJev(doProvedorDaOrigem, origem);
   // Sem nenhuma validada, o cartão mostra a mais recente — é ela que tem o
   // motivo da recusa para explicar.
   const mostrada =
     emUso ??
-    [...credenciais].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0] ??
+    [...doProvedorDaOrigem].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0] ??
     null;
-
-  const { numeros, ultima_falha } = numerosDaSemana(semana.linhas);
-  const config = lerConfigDoJev(orgRes.data?.settings);
+  // A credencial OpenRouter da empresa, se houver uma validada: é o que o cartão
+  // oferece REAPROVEITAR em vez de exigir uma chave TypeSafe separada (issue
+  // #2947). Vale mesmo com a origem de hoje sendo a TypeSafe — é justamente o
+  // convite para trocar sem cadastrar nada.
+  const credencialOpenRouter = credencialEmUsoPeloJev(
+    credenciais.filter((c) => c.provider === provedorDaCredencial("openrouter")),
+    "openrouter",
+  );
   // O dreno descarta o turno do modo externo antes de tudo (spec 14), e o
   // worker não pergunta os pedidos ali — o mesmo `aiDispatchModeSchema`.
   const externo =
@@ -558,11 +594,18 @@ export async function GET(): Promise<Response> {
 
   return ok(
     {
-      provedor: {
-        rotulo: JEV.rotulo,
-        quandoUsar: JEV.quandoUsar,
-        ondePegarAChave: JEV.ondePegarAChave,
-        prefixoDaChave: JEV.prefixoDaChave,
+      provedor: provedorPublico(origem),
+      /**
+       * DE ONDE O JEV RESPONDE HOJE (`./origem`) e o que a empresa já tem para
+       * reaproveitar. `origem` é o valor gravado; `openrouter` diz se a
+       * credencial OpenRouter da empresa está validada — o cartão oferece
+       * trocar a origem sem cadastrar chave nova quando ela existe, e manda
+       * cadastrar quando não (issue #2947).
+       */
+      origem,
+      openrouter: {
+        disponivel: credencialOpenRouter !== null,
+        rotulo: credencialOpenRouter?.label ?? null,
       },
       chave: {
         existe: mostrada !== null,
@@ -607,7 +650,14 @@ const corpoDoPatch = z
     /** O estado do clima, no nome da onda 1 — a imagem anterior também o entende. */
     modo: z.enum(["observacao", "decide"]).optional(),
     modo_roteador: z.enum(["comparacao", "sob_demanda"]).optional(),
-    /** A caixa marcada na tela. Só pesa ao ligar pela primeira vez. */
+    /**
+     * DE ONDE O JEV RESPONDE (`./origem`): `typesafe` (o caminho de sempre) ou
+     * `openrouter` (a mesma chave da conversa). Trocar de origem troca a
+     * CREDENCIAL e o nome do modelo — o PATCH só aceita a troca com a
+     * credencial da origem nova já validada.
+     */
+    origem: z.enum(ORIGENS_DO_JEV).optional(),
+    /** A caixa marcada na tela. Pesa ao ligar pela primeira vez e ao trocar a origem para a OpenRouter. */
     aceite_lgpd: z.literal(true).optional(),
     tarefa: idDaTarefaSchema.optional(),
     estado: z.enum(ESTADOS_DA_TAREFA).optional(),
@@ -619,9 +669,17 @@ const corpoDoPatch = z
   .refine((c) => c.modo === undefined || c.tarefa === undefined, {
     message: "informe `modo` ou `tarefa`, não os dois",
   })
-  .refine((c) => c.ligado !== undefined || c.modo !== undefined || c.modo_roteador !== undefined || c.tarefa !== undefined, {
-    message: "informe `ligado`, `modo`, `modo_roteador` ou `tarefa`",
-  });
+  .refine(
+    (c) =>
+      c.ligado !== undefined ||
+      c.modo !== undefined ||
+      c.modo_roteador !== undefined ||
+      c.origem !== undefined ||
+      c.tarefa !== undefined,
+    {
+      message: "informe `ligado`, `modo`, `modo_roteador`, `origem` ou `tarefa`",
+    },
+  );
 
 export async function PATCH(req: NextRequest): Promise<Response> {
   const supportDenied = await requireSupportWrite();
@@ -652,6 +710,52 @@ export async function PATCH(req: NextRequest): Promise<Response> {
   const atual = lerConfigDoJev(orgAtual?.settings);
 
   const mudanca: MudancaDaConfig = {};
+  if (corpo.origem !== undefined && corpo.origem !== atual.origem) {
+    // Trocar a origem troca a CREDENCIAL: a TypeSafe direto usa a chave do Jev;
+    // via OpenRouter, a credencial OpenRouter que a empresa já tem. Sem uma
+    // validada para a origem escolhida, o Jev pararia de responder — e a tela
+    // ficaria "ligada" sem chave. A troca é recusada com o caminho do conserto
+    // (o mesmo portão de `ligado: true`), em vez de gravar um estado que não
+    // funciona. Trocar para a origem que JÁ vale não é mutação (cai no
+    // `Object.keys(mudanca).length === 0` abaixo).
+    const { data: creds, error: credsErr } = await admin
+      .from("ai_provider_credentials")
+      .select("provider, is_active, validated_at, created_at")
+      .eq("organization_id", org.orgId)
+      .eq("provider", provedorDaCredencial(corpo.origem))
+      .eq("is_active", true);
+    if (credsErr) return fail("query_failed", credsErr.message, 500, { requestId });
+    if (credencialEmUsoPeloJev(creds ?? [], corpo.origem) === null) {
+      return fail(
+        "jev_exige_chave_validada",
+        corpo.origem === "openrouter"
+          ? t(
+              "Para o Jev responder pela OpenRouter, a chave da OpenRouter precisa estar cadastrada e conferida em Credenciais. É a mesma chave que a sua IA de conversa usa.",
+            )
+          : t("Para o Jev responder pela TypeSafe, cole a chave dele em Credenciais e espere o teste da chave passar."),
+        422,
+        { requestId },
+      );
+    }
+    // LGPD: o aceite gravado foi dado a um texto que nomeava só a TypeSafe AI.
+    // Pela OpenRouter a mensagem passa por mais um operador nos EUA, então a
+    // troca pede o aceite de novo — mesmo com o Jev desligado, porque religar
+    // não pergunta (D6). Sem aceite gravado, quem pergunta é o `ligado: true`.
+    if (corpo.origem === "openrouter" && atual.aceite !== null) {
+      if (corpo.aceite_lgpd !== true) {
+        return fail(
+          "jev_exige_aceite",
+          t(
+            "Pela OpenRouter, cada mensagem dos clientes vai, uma de cada vez e sem o resto da conversa, para a TypeSafe AI, pela OpenRouter, nos Estados Unidos. Para trocar, confirme que você está de acordo.",
+          ),
+          422,
+          { requestId },
+        );
+      }
+      mudanca.aceite = { ...atual.aceite, em: new Date().toISOString(), por: user.id };
+    }
+    mudanca.origem = corpo.origem;
+  }
   if (corpo.modo_roteador !== undefined && corpo.modo_roteador !== atual.modo_roteador) {
     // Decisão B (doc 89): sem a IA de sempre, o Jev não roteia sozinho. O turno
     // confere de novo a cada mensagem; aqui a recusa é para a tela não gravar um
@@ -683,10 +787,12 @@ export async function PATCH(req: NextRequest): Promise<Response> {
       .from("ai_provider_credentials")
       .select("provider, is_active, validated_at, created_at")
       .eq("organization_id", org.orgId)
-      .eq("provider", PROVEDOR_DO_JEV)
+      // A credencial da ORIGEM escolhida: TypeSafe direto, ou a OpenRouter que a
+      // empresa já tem (issue #2947).
+      .eq("provider", provedorDaCredencial(atual.origem))
       .eq("is_active", true);
     if (credsErr) return fail("query_failed", credsErr.message, 500, { requestId });
-    if (credencialEmUsoPeloJev(creds ?? []) === null) {
+    if (credencialEmUsoPeloJev(creds ?? [], atual.origem) === null) {
       return fail(
         "jev_exige_chave_validada",
         t("Para ligar o Jev, cole a chave dele em Credenciais e espere o teste da chave passar."),
@@ -735,7 +841,9 @@ export async function PATCH(req: NextRequest): Promise<Response> {
             ? "ai.jev.modo_alterado"
             : mudanca.modo_roteador !== undefined
               ? "ai.jev.modo_roteador_alterado"
-              : "ai.jev.tarefa_alterada",
+              : mudanca.origem !== undefined
+                ? "ai.jev.origem_alterada"
+                : "ai.jev.tarefa_alterada",
     organizationId: org.orgId,
     actorUserId: user.id,
     resourceType: "organization",
@@ -743,6 +851,10 @@ export async function PATCH(req: NextRequest): Promise<Response> {
     requestId,
     metadata: {
       modo: gravado.config.modo,
+      ...(mudanca.origem !== undefined ? {
+        origem: mudanca.origem,
+        origem_anterior: atual.origem,
+      } : {}),
       ...(mudanca.modo_roteador !== undefined ? {
         modo_roteador: mudanca.modo_roteador,
         modo_roteador_anterior: atual.modo_roteador,

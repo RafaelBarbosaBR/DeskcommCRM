@@ -13,10 +13,17 @@
  * ele vem embutido na própria mensagem. Procure por `extrairAtribuicao` para
  * achar os dois; citar o caminho aqui é justamente o que o invariante proíbe.
  *
- * Não há extrator de Google Ads: não existe mecanismo nativo equivalente para
- * WhatsApp. Aquele caminho depende de uma landing page que capture o `gclid` e
- * embuta um código de rastreio na mensagem pré-preenchida, e essa LP ainda não
- * existe.
+ * O TERCEIRO caminho é o formulário (issue #2317): quem anuncia para uma landing
+ * page com formulário manda o clique no próprio envio, e o extrator do webhook
+ * de entrada o lê para estampar a MESMA atribuição — `lib/conversoes` passa a
+ * saber de que clique veio a venda, sem depender do `referral` do
+ * clique-pro-WhatsApp.
+ *
+ * Não há extrator de Google Ads a partir do TEXTO da mensagem: não existe
+ * mecanismo nativo equivalente para WhatsApp. Aquele caminho depende de uma
+ * landing page que capture o `gclid` e o mande — ou embutido num código de
+ * rastreio na mensagem pré-preenchida (`lib/leads/origem-do-site.ts`), ou no
+ * payload do formulário (o terceiro caminho acima).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -26,7 +33,11 @@ export type PlataformaDeAnuncio = "meta_ads" | "google_ads";
 
 export interface AtribuicaoDeAnuncio {
   plataforma: PlataformaDeAnuncio;
-  /** `ctwa_clid` — identifica o clique específico que abriu a conversa. */
+  /**
+   * O CLIQUE que abriu a conversa — `ctwa_clid` no clique-pro-WhatsApp, e
+   * `fbclid`/`gclid` no lead que chega por formulário (#2317). É ele que liga a
+   * venda ao anúncio; sem clique não há atribuição utilizável.
+   */
   sourceId: string | null;
   /**
    * O ANÚNCIO, que não é o clique.
@@ -44,8 +55,27 @@ export interface AtribuicaoDeAnuncio {
   titulo: string | null;
   corpo: string | null;
   sourceUrl: string | null;
+  /**
+   * A imagem do anúncio, quando o payload a traz. Opcional porque nem todo
+   * extrator a conhece; quem não traz fica sem miniatura, nunca sem atribuição.
+   */
+  miniatura?: string | null;
   /** Payload de onde isto foi extraído — nunca descartado, é a prova. */
   bruto: Record<string, unknown>;
+  /**
+   * A identidade do NAVEGADOR, presente quando o clique foi capturado na
+   * PÁGINA (formulário) e não no `referral` de uma conversa (#2317).
+   *
+   * A PRESENÇA deste campo é o que diz "esta captura foi na página": quem
+   * carimba lê isso para não tratar o clique como `ctwa_clid`, que é o formato
+   * do anúncio clique-pro-WhatsApp. `fbc`/`fbp` são os dois identificadores que
+   * a plataforma casa para venda vinda de página; quando a página manda só o
+   * `fbclid`, o `fbc` é remontado a partir dele no extrator.
+   */
+  identidadeDoNavegador?: {
+    fbc: string | null;
+    fbp: string | null;
+  };
 }
 
 export type Bruto = Record<string, unknown>;
@@ -53,6 +83,128 @@ export const obj = (v: unknown): Bruto | null =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Bruto) : null;
 export const str = (v: unknown): string | null =>
   typeof v === "string" && v.trim() !== "" ? v : null;
+
+/**
+ * Só `https:`. O endereço vem de fora (o payload do anúncio) e vai parar num
+ * `href` e num `src` da inbox: `javascript:` ou `data:` ali seriam código ou
+ * conteúdo arbitrário dentro da tela de quem atende.
+ */
+export function urlSegura(v: unknown): string | null {
+  const s = str(v);
+  if (!s) return null;
+  try {
+    return new URL(s).protocol === "https:" ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * O anúncio de UMA mensagem — o que fica em `messages.metadata.anuncio`.
+ *
+ * ─── Por que a mensagem também guarda, se o contato já guarda ──────────────
+ *
+ * O contato guarda só o PRIMEIRO anúncio (ver `estamparAtribuicaoDoContato`, e
+ * isso não muda). Numa loja com dois produtos, cada um com o seu anúncio, a
+ * pessoa que veio pelo anúncio A e semanas depois clica no anúncio B chega com
+ * o texto pré-preenchido genérico ("Qual é o preço?") — e quem atende, olhando
+ * só o anúncio A, responde sobre o produto errado. O clique novo precisa deixar
+ * rastro em algum lugar, e o lugar natural é a mensagem que ele gerou.
+ *
+ * Resumo COMPACTO de propósito: título, texto e id do anúncio, mais os dois
+ * endereços que a inbox precisa para MOSTRAR o anúncio na conversa (o link e a
+ * miniatura). O clique (`ctwa_clid`) e o payload cru ficam de fora — o cru já
+ * mora no contato, e repeti-lo em toda mensagem de anúncio só engordaria a
+ * tabela mais quente do banco. O id serve à comparação (`mesmoAnuncio`); os
+ * endereços, à tela.
+ */
+export interface AnuncioDaMensagem {
+  titulo: string | null;
+  texto: string | null;
+  ad_id: string | null;
+  /** Link do anúncio (o `source_url` do clique), só `https:`. */
+  url?: string | null;
+  /** Imagem do anúncio, só `https:`. A da Meta expira dias depois. */
+  miniatura?: string | null;
+}
+
+/**
+ * O pedaço de `metadata` que a ingestão espalha no INSERT da mensagem —
+ * `{ anuncio }` quando a mensagem veio de um anúncio reconhecido, `{}` quando
+ * não. Cada transporte chama o SEU extrator e passa o resultado aqui: quem lê o
+ * payload é o canal; o formato gravado é um só.
+ */
+export function metadataDoAnuncio(
+  atribuicao: AtribuicaoDeAnuncio | null,
+): { anuncio?: AnuncioDaMensagem } {
+  if (!atribuicao) return {};
+  const anuncio: AnuncioDaMensagem = { titulo: atribuicao.titulo, texto: atribuicao.corpo, ad_id: atribuicao.adId };
+  // Sem título, texto nem id não há o que comparar nem o que mostrar: o clique
+  // sozinho identifica uma pessoa, não um produto.
+  if (!anuncio.titulo && !anuncio.texto && !anuncio.ad_id) return {};
+  const url = urlSegura(atribuicao.sourceUrl);
+  const miniatura = urlSegura(atribuicao.miniatura);
+  if (url) anuncio.url = url;
+  if (miniatura) anuncio.miniatura = miniatura;
+  return { anuncio };
+}
+
+/**
+ * Lê `metadata.anuncio` de volta — sem confiar na forma.
+ *
+ * `metadata` é jsonb aberto: linha antiga, escrita à mão ou de outra versão
+ * pode trazer qualquer coisa ali. Quem lê (a bolha da conversa, o painel) não
+ * pode lançar por causa disso; o que não tem a forma esperada vira `null`.
+ */
+export function lerAnuncioDaMensagem(v: unknown): AnuncioDaMensagem | null {
+  const a = obj(v);
+  if (!a) return null;
+  const anuncio = { titulo: str(a.titulo), texto: str(a.texto), ad_id: str(a.ad_id) };
+  if (!anuncio.titulo && !anuncio.texto && !anuncio.ad_id) return null;
+  return { ...anuncio, url: urlSegura(a.url), miniatura: urlSegura(a.miniatura) };
+}
+
+/**
+ * O mesmo anúncio: o mesmo `ad_id`, ou — sem id comparável — o mesmo título e
+ * texto. Ids diferentes com o MESMO texto também contam como iguais: é o
+ * anúncio duplicado em outro conjunto, e quem lê na inbox veria duas vezes a
+ * mesma coisa.
+ */
+export function mesmoAnuncio(a: AnuncioDaMensagem, b: AnuncioDaMensagem): boolean {
+  if (a.ad_id && b.ad_id && a.ad_id === b.ad_id) return true;
+  const igual = (x: string | null, y: string | null) => (x?.trim() || null) === (y?.trim() || null);
+  return igual(a.titulo, b.titulo) && igual(a.texto, b.texto);
+}
+
+/** O anúncio de PRIMEIRO TOQUE do contato, como a inbox o mostra. */
+export interface AnuncioDoContato extends AnuncioDaMensagem {
+  /** Quando o clique foi gravado no contato (ISO). */
+  capturado_em: string | null;
+}
+
+/**
+ * Lê o anúncio gravado em `contacts.source_metadata` por
+ * `estamparAtribuicaoDoContato` — sem confiar na forma, como a irmã acima.
+ *
+ * A miniatura vem de `ad_thumbnail_url`, que só existe a partir desta versão;
+ * contato carimbado antes a tem apenas dentro do payload cru (`ad_raw`), nos
+ * dois formatos em que os transportes a entregam. Ler o cru aqui é a única
+ * forma de mostrar o anúncio de quem já chegou — e a leitura é só de
+ * `thumbnail_url`/`thumbnailUrl`, nunca do payload inteiro.
+ */
+export function lerAnuncioDoContato(sourceMetadata: unknown): AnuncioDoContato | null {
+  const m = obj(sourceMetadata);
+  if (!m || !str(m.ad_platform)) return null;
+  const titulo = str(m.ad_title);
+  const texto = str(m.ad_body);
+  const ad_id = str(m.ad_id);
+  const url = urlSegura(m.ad_source_url);
+  if (!titulo && !texto && !ad_id && !url) return null;
+  const cru = obj(m.ad_raw);
+  const miniatura =
+    urlSegura(m.ad_thumbnail_url) ?? urlSegura(cru?.thumbnail_url) ?? urlSegura(cru?.thumbnailUrl);
+  return { titulo, texto, ad_id, url, miniatura, capturado_em: str(m.ad_captured_at) };
+}
 
 /**
  * Grava a atribuição no CONTATO — só na primeira vez.
@@ -85,10 +237,35 @@ export async function estamparAtribuicaoDoContato(
     p_metadata: {
       ad_platform: atribuicao.plataforma,
       ad_source_id: atribuicao.sourceId,
+      // ─── Captura na PÁGINA, não no `referral` da conversa (#2317) ─────────
+      //
+      // O formulário grava o clique que a landing page capturou. Sem esta
+      // marca, `lib/conversoes` leria o `ad_source_id` como `ctwa_clid` e a
+      // venda sairia com a identidade do anúncio clique-pro-WhatsApp — formato
+      // que não é deste lead. A marca é `ad_click_source: "site"` porque é a
+      // MESMA ideia que a origem de site já usa (`ad_platform: "site"`): o
+      // clique veio da página. `ad_platform` segue sendo a PLATAFORMA, que é
+      // o que o card e o livro-razão mostram.
+      //
+      // `fbc`/`fbp` só entram quando existem: `source_metadata || p_metadata`
+      // aceita nulo, mas chave nula em metadata vira consulta de `typeof
+      // "string"` que falha do mesmo jeito e suja a prova com um campo vazio.
+      ...(atribuicao.identidadeDoNavegador
+        ? {
+            ad_click_source: "site",
+            ...(atribuicao.identidadeDoNavegador.fbc
+              ? { fbc: atribuicao.identidadeDoNavegador.fbc }
+              : {}),
+            ...(atribuicao.identidadeDoNavegador.fbp
+              ? { fbp: atribuicao.identidadeDoNavegador.fbp }
+              : {}),
+          }
+        : {}),
       ad_id: atribuicao.adId,
       ad_title: atribuicao.titulo,
       ad_body: atribuicao.corpo,
       ad_source_url: atribuicao.sourceUrl,
+      ad_thumbnail_url: atribuicao.miniatura ?? null,
       ad_raw: atribuicao.bruto,
       ad_captured_at: new Date().toISOString(),
     },

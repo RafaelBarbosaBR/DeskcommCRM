@@ -64,16 +64,16 @@ describe("a cadência das rodadas da agenda do Google", () => {
     expect(intervalo!).toBeLessThan(janelaEmMinutos);
   });
 
-  it("renovação e sync NÃO compartilham cadência — os custos são diferentes", () => {
-    // Renovar é uma requisição por conexão que está VENCENDO; sincronizar é uma
-    // por calendário, SEMPRE. Colar as duas obriga a escolher entre renovar raro
-    // demais (a agenda morre) ou sincronizar caro demais (gasta cota do
-    // cliente).
+  it("o sync retoma paginação mais rápido que a renovação de credenciais", () => {
+    // Renovar é uma requisição por conexão que está VENCENDO. O cron de sync
+    // precisa retomar cursores pendentes logo; o banco mantém leituras concluídas
+    // espaçadas em 15 min, então o tick frequente não lê calendários ociosos.
     const renovacao = intervaloEmMinutos("agenda-google-refresh");
     const sync = intervaloEmMinutos("agenda-google-sync");
     expect(renovacao).not.toBeNull();
     expect(sync).not.toBeNull();
-    expect(sync).not.toBe(renovacao);
+    expect(sync).toBe(1);
+    expect(sync).toBeLessThan(renovacao!);
   });
 
   it("o sync tem prazo maior que o padrão — ele percorre paginação", () => {

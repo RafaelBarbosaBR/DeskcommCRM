@@ -33,6 +33,9 @@ vi.mock("@/lib/branding/saida", () => ({ marcaDaSaida }));
 // próprio layout) e por isso chama `createClient()`, que lê cookies — algo que
 // só existe dentro de uma requisição real. Fora do login quase nunca há
 // sessão, e o mock reflete exatamente isso: nenhum usuário.
+// Sem sessão, o idioma da casca vem do navegador (Accept-Language), como nas páginas: fora de uma requisição
+// real, `headers()` precisa de um dublê. Sem cabeçalho, o padrão.
+vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(async () => ({
     auth: { getUser: vi.fn(async () => ({ data: { user: null } })) },

@@ -50,8 +50,9 @@ interface FaturaDoDuble {
 }
 interface SessaoDoDuble {
   id: string; customer: string; client_reference_id: string | null; success_url: string; cancel_url: string;
-  product: string; unit_amount: number; interval: Intervalo; trial_end: number | null;
-  metadata: Record<string, string>; status: "open" | "complete"; subscription: string | null; expires_at: number;
+  product: string; unit_amount: number; interval: Intervalo | null; trial_end: number | null;
+  metadata: Record<string, string>; mode: "subscription" | "payment"; payment_status: "unpaid" | "paid" | null;
+  status: "open" | "complete"; subscription: string | null; expires_at: number;
 }
 interface ClienteDoDuble { id: string; email: string; name: string; organizacao: string | null }
 interface EndpointDoDuble { id: string; url: string; secret: string; eventos: string[]; marca: string }
@@ -170,7 +171,7 @@ export async function subirProvedorDeCobranca(opcoes: { porta: number }): Promis
     parent: { type: "subscription_details", subscription_details: { subscription: f.subscription, metadata: {} } },
   });
   const objSessao = (s: SessaoDoDuble) => ({
-    id: s.id, object: "checkout.session", mode: "subscription", status: s.status, customer: s.customer,
+    id: s.id, object: "checkout.session", mode: s.mode, status: s.status, payment_status: s.payment_status, customer: s.customer,
     client_reference_id: s.client_reference_id, subscription: s.subscription, livemode: false, metadata: s.metadata,
     url: s.status === "open" ? `${base}/checkout/${s.id}` : null, expires_at: s.expires_at,
   });
@@ -221,13 +222,21 @@ export async function subirProvedorDeCobranca(opcoes: { porta: number }): Promis
 
   async function concluirCheckout(s: SessaoDoDuble): Promise<void> {
     if (s.status === "complete") return;
+    if (s.mode === "payment") {
+      s.status = "complete";
+      s.payment_status = "paid";
+      await enviar("checkout.session.completed", objSessao(s));
+      return;
+    }
+    const intervalo = s.interval;
+    if (!intervalo) throw new Error("checkout de assinatura sem intervalo");
     const agora = criadoEm();
     const fimDoTeste = s.trial_end !== null && s.trial_end > agoraS() ? s.trial_end : null;
     const a: AssinaturaDoDuble = {
       id: novoId("sub"), customer: s.customer, status: fimDoTeste ? "trialing" : "active", created: agora,
       cancel_at_period_end: false, trial_end: fimDoTeste, ended_at: null, current_period_start: agora,
-      current_period_end: fimDoTeste ?? agora + periodo(s.interval), product: s.product, unit_amount: s.unit_amount,
-      interval: s.interval, metadata: s.metadata, proration_behavior: null,
+      current_period_end: fimDoTeste ?? agora + periodo(intervalo), product: s.product, unit_amount: s.unit_amount,
+      interval: intervalo, metadata: s.metadata, proration_behavior: null,
     };
     assinaturas.set(a.id, a);
     // Com teste grátis, a Stripe emite fatura de R$ 0 paga — ela NÃO conta como pagamento (§6.1 passo 5).
@@ -326,23 +335,36 @@ export async function subirProvedorDeCobranca(opcoes: { porta: number }): Promis
       const produto = corpo["line_items[0][price_data][product]"] ?? "";
       const sucesso = corpo.success_url ?? "";
       const cancela = corpo.cancel_url ?? "";
-      if (corpo.mode !== "subscription" || !clientes.has(cliente) || corpo["line_items[0][price_data][currency]"] !== "brl"
-        || !Number.isInteger(valor) || valor < 500 || (intervalo !== "month" && intervalo !== "year")
+      const modo = corpo.mode;
+      const recorrenciaValida = modo === "subscription"
+        ? intervalo === "month" || intervalo === "year"
+        : modo === "payment" && intervalo === undefined;
+      if ((modo !== "subscription" && modo !== "payment") || !clientes.has(cliente) || corpo["line_items[0][price_data][currency]"] !== "brl"
+        // ≥ R$ 5,00 nos dois modos: é o piso que o app respeita (AJUSTE_MINIMO_CENTS), e o dublê o cobra.
+        || !Number.isInteger(valor) || valor < 500 || !recorrenciaValida
         || !produtos.has(produto) || sucesso === "" || cancela === "") {
-        return erroDaApi(res, 400, "sessão fora do contrato de §6.1 (mode, customer, price_data brl ≥ 500, recurring, product, success_url, cancel_url)");
+        return erroDaApi(res, 400, "sessão fora do contrato (mode, customer, price_data brl ≥ 500, recurring para assinatura, product, success_url, cancel_url)");
       }
       const fim = corpo["subscription_data[trial_end]"];
       const fimDoTeste = fim === undefined ? null : Number(fim);
-      if (fimDoTeste !== null && fimDoTeste - agoraS() < 48 * 3600) return erroDaApi(res, 400, "trial_end com menos de 48 h");
-      const prefixo = "subscription_data[metadata][";
+      if (modo === "subscription" && fimDoTeste !== null && fimDoTeste - agoraS() < 48 * 3600) return erroDaApi(res, 400, "trial_end com menos de 48 h");
+      const prefixo = modo === "subscription" ? "subscription_data[metadata][" : "metadata[";
       const metadata = Object.fromEntries(pares.filter(([k]) => k.startsWith(prefixo)).map(([k, v]) => [k.slice(prefixo.length, -1), v]));
       const s: SessaoDoDuble = {
         id: novoId("cs"), customer: cliente, client_reference_id: corpo.client_reference_id ?? null, success_url: sucesso,
-        cancel_url: cancela, product: produto, unit_amount: valor, interval: intervalo, trial_end: fimDoTeste, metadata,
+        cancel_url: cancela, product: produto, unit_amount: valor,
+        interval: modo === "subscription" ? intervalo as Intervalo : null,
+        trial_end: modo === "subscription" ? fimDoTeste : null, metadata, mode: modo,
+        payment_status: modo === "payment" ? "unpaid" : null,
         status: "open", subscription: null, expires_at: agoraS() + DIA_EM_S,
       };
       sessoes.set(s.id, s);
       return json(res, 200, objSessao(s));
+    }
+    const checkoutSessao = /^\/v1\/checkout\/sessions\/([^/]+)$/.exec(p);
+    if (metodo === "GET" && checkoutSessao) {
+      const sessao = sessoes.get(checkoutSessao[1] ?? "");
+      return sessao ? json(res, 200, objSessao(sessao)) : erroDaApi(res, 404, "No such checkout session", "resource_missing");
     }
     if (metodo === "GET" && p === "/v1/subscriptions") {
       const status = query.status ?? "active";
@@ -395,7 +417,7 @@ export async function subirProvedorDeCobranca(opcoes: { porta: number }): Promis
         return void res.end();
       }
       return pagina(res, 200, "Checkout de teste",
-        `<p>${escapar(produtos.get(s.product) ?? s.product)}</p><p>${reais(s.unit_amount)} por ${s.interval === "year" ? "ano" : "mês"}</p>`
+        `<p>${escapar(produtos.get(s.product) ?? s.product)}</p><p>${reais(s.unit_amount)} ${s.mode === "payment" ? "(pagamento único)" : `por ${s.interval === "year" ? "ano" : "mês"}`}</p>`
         + `<form method="post" action="/checkout/${s.id}/pagar"><button type="submit">Pagar com cartão de teste</button></form>`
         + `<p><a href="${escapar(s.cancel_url)}">Voltar sem pagar</a></p>`);
     }

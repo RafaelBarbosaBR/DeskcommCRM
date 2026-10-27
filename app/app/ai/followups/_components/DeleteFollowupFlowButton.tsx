@@ -65,7 +65,7 @@ export function DeleteFollowupFlowButton({
         <AlertDialogContent onClick={(e) => e.stopPropagation()}>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {t("Excluir")} &ldquo;{flowName}&rdquo;?
+              {t("Excluir “{nome}”?").replace("{nome}", flowName)}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {t("Inscrições e versões deste fluxo são apagadas junto. Não é possível desfazer.")}
@@ -85,7 +85,7 @@ export function DeleteFollowupFlowButton({
                 });
               }}
             >
-              {del.isPending ? "Excluindo…" : "Excluir"}
+              {del.isPending ? t("Excluindo…") : t("Excluir")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

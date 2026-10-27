@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm, useWatch, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useTransition, useState } from "react";
+import { useState } from "react";
 
 import { useT } from "@/hooks/i18n/useT";
 import {
@@ -19,6 +19,8 @@ import { Label } from "@/components/ui/label";
 import { signUp } from "@/app/actions/auth/signUp";
 import { Eye, EyeSlash } from "@/lib/ui/icons";
 import { PasswordStrength } from "@/components/auth/PasswordStrength";
+import { AvisoSemResposta, useEnvioComTeto } from "@/components/auth/teto-da-espera";
+import type { PlanoDoCadastro } from "@/lib/cobranca/cadastro";
 
 /**
  * Convite em curso: a conta está sendo criada para ACEITAR um convite, não para
@@ -31,10 +33,19 @@ export interface ConviteDoSignup {
   email: string;
 }
 
-export function SignupForm({ convite }: { convite?: ConviteDoSignup }) {
+export function SignupForm({
+  convite,
+  planos = [],
+  planoInicial,
+}: {
+  convite?: ConviteDoSignup;
+  planos?: readonly PlanoDoCadastro[];
+  /** O plano padrão quando ele é oferecido — "sem mexer, vale o padrão" —, senão o primeiro. */
+  planoInicial?: string;
+}) {
   const t = useT();
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const { pendente: isPending, semResposta, enviar } = useEnvioComTeto();
   const [serverError, setServerError] = useState<string | null>(null);
   const [contaExistente, setContaExistente] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
@@ -60,6 +71,7 @@ export function SignupForm({ convite }: { convite?: ConviteDoSignup }) {
     defaultValues: {
       full_name: "",
       org_name: "",
+      cobranca_plan_id: planoInicial,
       email: convite?.email ?? "",
       password: "",
       password_confirm: "",
@@ -69,18 +81,17 @@ export function SignupForm({ convite }: { convite?: ConviteDoSignup }) {
 
   const onSubmit = (values: SignupInput & { full_name: string }) => {
     setServerError(null);
-    startTransition(async () => {
-      // No modo convite o e-mail do formulário é readonly, e readonly no
-      // cliente não vale nada: quem confere de novo é o servidor.
-      const entrada: SignupInput | SignupComConviteInput = convite
-        ? {
-            full_name: values.full_name,
-            email: convite.email,
-            password: values.password,
-            password_confirm: values.password_confirm,
-          }
-        : values;
-      const res = await signUp(entrada, convite?.token);
+    // No modo convite o e-mail do formulário é readonly, e readonly no
+    // cliente não vale nada: quem confere de novo é o servidor.
+    const entrada: SignupInput | SignupComConviteInput = convite
+      ? {
+          full_name: values.full_name,
+          email: convite.email,
+          password: values.password,
+          password_confirm: values.password_confirm,
+        }
+      : values;
+    void enviar(() => signUp(entrada, convite?.token), (res) => {
       if (res.ok) {
         /**
          * ⚠️ O PROVEDOR JÁ DEIXOU A PESSOA ENTRAR — não existe e-mail para ela
@@ -110,7 +121,17 @@ export function SignupForm({ convite }: { convite?: ConviteDoSignup }) {
       if (res.error === "rate_limited") {
         setServerError(t("Muitas tentativas. Aguarde alguns minutos."));
       } else if (res.error === "validation_error") {
-        setServerError(t("Dados inválidos. Confira os campos."));
+        // As recusas do plano dizem o que fazer: "confira os campos" não diz.
+        const recusaDoPlano = (res.details?.cobranca_plan_id as string[] | undefined)?.[0];
+        setServerError(
+          t(
+            recusaDoPlano === "plano_indisponivel"
+              ? "Esse plano não está mais disponível. Recarregue a página e escolha outro."
+              : recusaDoPlano === "plano_obrigatorio"
+                ? "Não foi possível carregar os planos agora. Recarregue a página e escolha um plano."
+                : "Dados inválidos. Confira os campos.",
+          ),
+        );
       } else if (res.error === "conta_ja_existe" && convite) {
         // Ramo próprio porque o `else` mandava "Tente novamente" — e tentar de
         // novo nunca funciona quando a conta já existe. Em vez da mensagem,
@@ -124,6 +145,16 @@ export function SignupForm({ convite }: { convite?: ConviteDoSignup }) {
         setServerError(
           t(
             "Esta instalação aceita cadastro apenas por convite. Se você foi convidado, use o link que chegou no seu e-mail.",
+          ),
+        );
+      } else if (res.error === "email_indisponivel") {
+        // Sem "Tente novamente": o e-mail de confirmação não sai enquanto a
+        // instalação não tiver e-mail configurado, e só quem administra resolve.
+        setServerError(
+          t(
+            convite
+              ? "Não conseguimos enviar o e-mail de confirmação, porque o envio de e-mails desta instalação não está configurado. Tentar de novo não resolve: avise quem convidou você."
+              : "Não conseguimos enviar o e-mail de confirmação, porque o envio de e-mails desta instalação não está configurado. Tentar de novo não resolve: avise quem administra o sistema.",
           ),
         );
       } else {
@@ -199,8 +230,21 @@ export function SignupForm({ convite }: { convite?: ConviteDoSignup }) {
           )}
         </div>
       )}
+      {!convite && planos.length > 0 && (
+        <div className="space-y-1.5">
+          <Label htmlFor="cobranca_plan_id">{t("Plano")}</Label>
+          <select id="cobranca_plan_id" className="h-10 w-full rounded-md border bg-background px-3 text-sm" {...register("cobranca_plan_id")}>
+            {planos.map((plano) => (
+              <option key={plano.id} value={plano.id}>
+                {plano.nome} — {new Intl.NumberFormat(undefined, { style: "currency", currency: "BRL" }).format(plano.preco_cents / 100)} / {plano.intervalo === "ano" ? t("ano") : t("mês")}
+                {plano.trial_dias > 0 ? ` · ${plano.trial_dias} ${t("dias de teste")}` : ` · ${t("sem período de teste")}`}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="space-y-1.5">
-        <Label htmlFor="email">Email</Label>
+        <Label htmlFor="email">{t("Email")}</Label>
         <Input
           id="email"
           type="email"
@@ -285,6 +329,7 @@ export function SignupForm({ convite }: { convite?: ConviteDoSignup }) {
           {serverError}
         </div>
       )}
+      {semResposta && <AvisoSemResposta />}
       <Button type="submit" className="w-full" disabled={isPending}>
         {isPending ? t("Criando conta...") : t("Criar conta")}
       </Button>

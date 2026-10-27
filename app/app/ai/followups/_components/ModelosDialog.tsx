@@ -57,12 +57,15 @@ interface Props {
 
 const DIA_MS = 86_400_000;
 
-/** "10 dias", "2 meses" — o horizonte na régua de quem opera, não em ms. */
-function horizonteLegivel(ms: number): string {
+/**
+ * "10 dias", "2 meses" — o horizonte na régua de quem opera, não em ms.
+ * A unidade passa por t(): escrita aqui, saía « da seguimiento durante 12 dias » em espanhol.
+ */
+function horizonteLegivel(ms: number, t: (texto: string) => string): string {
   const dias = Math.round(ms / DIA_MS);
-  if (dias < 31) return dias <= 1 ? "1 dia" : `${dias} dias`;
+  if (dias < 31) return dias <= 1 ? `1 ${t("dia")}` : `${dias} ${t("dias")}`;
   const meses = Math.round(dias / 30);
-  return meses <= 1 ? "1 mês" : `${meses} meses`;
+  return meses <= 1 ? `1 ${t("mês")}` : `${meses} ${t("meses")}`;
 }
 
 export function ModelosDialog({ open, onOpenChange, nomesExistentes }: Props) {
@@ -141,7 +144,7 @@ export function ModelosDialog({ open, onOpenChange, nomesExistentes }: Props) {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="neutral">{modelo.jornada}</Badge>
+                      <Badge variant="neutral">{t(modelo.jornada)}</Badge>
                       <h3 className="font-medium">{modelo.nome}</h3>
                     </div>
                     <p className="mt-1 text-sm text-text-muted">{t(modelo.resumo)}</p>
@@ -161,7 +164,7 @@ export function ModelosDialog({ open, onOpenChange, nomesExistentes }: Props) {
                     <Clock size={13} aria-hidden />
                     <dt className="sr-only">{t("Duração")}</dt>
                     <dd>
-                      {t("acompanha por")} {horizonteLegivel(horizonteDoModeloMs(modelo.grafo))}
+                      {t("acompanha por")} {horizonteLegivel(horizonteDoModeloMs(modelo.grafo), t)}
                     </dd>
                   </div>
                 </dl>

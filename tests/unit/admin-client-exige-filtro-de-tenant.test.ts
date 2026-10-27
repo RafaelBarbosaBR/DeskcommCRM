@@ -146,15 +146,6 @@ const SEM_FILTRO_LIBERADO: readonly { arquivo: string; tabela: string; motivo: s
       "carrega `organization_id` e volta a ser leitura de dado de inquilino, que " +
       "precisa de decisão própria sobre o que o dono da instalação pode ver.",
   },
-  {
-    arquivo: "lib/notifications/web_push.ts",
-    tabela: "push_subscriptions",
-    motivo:
-      "`store(admin)` devolve o BUILDER (`admin.from(\"push_subscriptions\")`); quem " +
-      "filtra é cada chamador — `enviarPushDaOrg`/`removerPush` filtram por " +
-      "`organization_id` e, na remoção, por `endpoint`. A cadeia sem filtro não " +
-      "consulta nada: ela não foi aguardada.",
-  },
 ];
 
 /**
@@ -174,12 +165,6 @@ const ESTEIRAS: readonly { caminho: string; motivo: string }[] = [
     motivo:
       "O Asterisk entrega só o id do canal. A linha de voice_calls é achada por " +
       "ele, e as escritas seguintes usam o id que essa leitura devolveu.",
-  },
-  {
-    caminho: "lib/ai/dispatcher/",
-    motivo:
-      "Claim de event_log pelo id do evento. O evento carrega a organização, e o " +
-      "handler que o consome filtra por ela.",
   },
   {
     caminho: "lib/lgpd/storage-redaction-queue.ts",

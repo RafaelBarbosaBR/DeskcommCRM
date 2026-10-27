@@ -29,6 +29,7 @@ import { AntiBanSheet } from "./AntiBanSheet";
 import { GruposSheet } from "./GruposSheet";
 import { PairingOptions } from "./PairingOptions";
 import { ChannelAcervo } from "./ChannelAcervo";
+import { ChannelHistorico } from "./ChannelHistorico";
 import { ChannelAiAccess } from "./ChannelAiAccess";
 import { ParaIntegrar } from "./ParaIntegrar";
 import { Badge } from "@/components/ui/badge";
@@ -59,6 +60,7 @@ import { lerEstadoDoCanal } from "@/lib/channels/estado";
 import { fonteDeTemplates } from "@/lib/channels/templates-fonte";
 import { useT } from "@/hooks/i18n/useT";
 import { AgendaDePausa } from "@/components/connections/AgendaDePausa";
+import { RenomearConexao } from "./RenomearConexao";
 
 type Variant = "success" | "warning" | "error" | "neutral";
 
@@ -393,7 +395,7 @@ export function ConnectionsClient({ wahaConfigured }: { wahaConfigured: boolean 
               ? t("Nenhum número conectado ainda.")
               : `${list.length} ${list.length === 1 ? t("número conectado") : t("números conectados")}.`}
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {list.length > 0 && (
             <Button
               variant="outline"
@@ -496,7 +498,7 @@ export function ConnectionsClient({ wahaConfigured }: { wahaConfigured: boolean 
         if (await copyToClipboard(connectionDetail)) toast.success(t("Copiado!"));
         else toast.error(t("Não foi possível copiar. Selecione e copie manualmente."));
       }}>{t("Copiar detalhes")}</Button></details>}
-      <Link href="/app/settings/atendimento" className="text-sm underline">{t("Configurar responsáveis por número")}</Link>
+      <Link href="/app/settings/atendimento" className="text-sm underline max-md:flex max-md:min-h-11 max-md:items-center">{t("Configurar responsáveis por número")}</Link>
       {!wahaConfigured && (
         <div className="rounded-md border border-warning bg-warning-bg p-4 text-sm text-warning-fg">
           <p className="font-medium">{t("O serviço do WhatsApp não está configurado.")}</p>
@@ -596,8 +598,14 @@ export function ConnectionsClient({ wahaConfigured }: { wahaConfigured: boolean 
                 </p>
                 <ChannelAiAccess channelId={c.id} />
                 {dependeDoTransporte(c) && <ChannelAcervo channelId={c.id} />}
+                {dependeDoTransporte(c) && <ChannelHistorico channelId={c.id} />}
                 <p className="text-xs text-muted-foreground">{t(!policy ? "Consulte os responsáveis em Atendimento." : policy.mode === "legacy_unconfigured" ? "Usa todos os atendentes elegíveis da organização." : policy.mode === "restricted_empty" ? "Ninguém configurado — as conversas ficarão na fila." : "Somente as pessoas selecionadas recebem este número.")}</p>
                 <div className="mt-auto flex flex-wrap gap-2">
+                  <RenomearConexao
+                    channelId={c.id}
+                    currentName={c.display_name}
+                    onSaved={() => qc.invalidateQueries({ queryKey: ["channel-sessions"] })}
+                  />
                   {/* Some no canal oficial em vez de aparecer desabilitado: não é
                       indisponibilidade passageira (como o Excluir sem o serviço no
                       ar), é uma ação que não existe para esse canal — e o clique
@@ -917,7 +925,15 @@ function QrDialog({
       }
     };
     void poll();
-    const iv = setInterval(poll, 3000);
+    const iv = setInterval(() => {
+      // ABA OCULTA NÃO PERGUNTA (refs #2821, a convenção da casa): o pareamento
+      // é uma tela de espera — com a aba escondida ninguém está escaneando QR
+      // nenhum, e cada tick de 3 s custa uma consulta ao transporte. A guarda é
+      // a mesma do refetch de segurança (hooks/realtime/useRefetchDeSeguranca.ts):
+      // quem volta para a aba vê o estado no tick seguinte, em no máximo 3 s.
+      if (document.visibilityState !== "visible") return;
+      void poll();
+    }, 3000);
     return () => {
       cancelled = true;
       clearInterval(iv);

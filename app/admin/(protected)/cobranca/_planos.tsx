@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useT } from "@/hooks/i18n/useT";
 import { apiClient } from "@/lib/api/client";
+import { cadastroExigeEscolhaDePlano } from "@/lib/cobranca/cadastro";
 import type { Intervalo } from "@/lib/cobranca/vocabulario";
 import { useIdioma } from "@/lib/i18n/IdiomaProvider";
 import { novoPlanoSchema } from "@/lib/schemas/cobranca-plano";
@@ -152,7 +153,10 @@ export function PlanosDaInstalacao({ planos }: { planos: readonly PlanoDaTela[] 
         </div>
         <div className="space-y-1">
           <Label htmlFor="plano-trial">{t("Dias de teste grátis")}</Label>
-          <Input id="plano-trial" inputMode="numeric" {...campo("trial_dias")} />
+          <Input id="plano-trial" inputMode="numeric" aria-describedby="plano-trial-dica" {...campo("trial_dias")} />
+          <p id="plano-trial-dica" className="text-xs text-muted-foreground">
+            {t("0 = entrada paga: a empresa que entra neste plano fica suspensa até o primeiro pagamento.")}
+          </p>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
@@ -182,6 +186,15 @@ export function PlanosDaInstalacao({ planos }: { planos: readonly PlanoDaTela[] 
       </form>
 
       <div className="space-y-2">
+        {/* O critério do gatilho da 0679 (doc 146): com plano oferecido e sem padrão, quem se cadastra é obrigado a escolher. */}
+        {cadastroExigeEscolhaDePlano({
+          padraoId: planos.find((p) => p.padrao_no_cadastro && !p.arquivado_em)?.id ?? null,
+          oferecidos: planos.filter((p) => p.oferecido_ao_cliente && !p.arquivado_em),
+        }) && (
+          <p role="status" className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm dark:border-amber-500/30 dark:bg-amber-950/20">
+            {t("Nenhum plano está marcado para o cadastro. Quem se cadastra precisa escolher um plano, o “Entrar com Google” some da tela de cadastro e empresas criadas sem plano pela integração são recusadas. Use “Usar no cadastro” em um plano.")}
+          </p>
+        )}
         <p className="text-xs text-muted-foreground">
           {t("O preço e o intervalo de um plano travam quando alguém o assina: para mudar, arquive e crie outro.")}
         </p>

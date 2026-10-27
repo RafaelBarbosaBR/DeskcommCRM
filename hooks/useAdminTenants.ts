@@ -15,6 +15,8 @@ export interface AdminTenantRow {
   status: string;
   onboarded_at: string | null;
   suspended_at: string | null;
+  /** `administrativa` | `cobranca` — a de cobrança não sai pela rota /reactivate. */
+  suspended_kind: string | null;
   created_at: string;
   user_count: Array<{ count: number }> | null;
   conversations_count: Array<{ count: number }> | null;

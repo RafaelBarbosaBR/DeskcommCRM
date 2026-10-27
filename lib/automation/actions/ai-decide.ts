@@ -35,6 +35,7 @@ import type { OpcaoDeDecisao } from "@/lib/automation/decider";
 import { aiDecideLigado } from "@/lib/automation/ai-decide-da-org";
 import { decidirAcao } from "@/lib/agent-engine/agent/decisao-de-acao";
 import { logger } from "@/lib/logger";
+import { mensagemDeErro } from "@/lib/automation/actions/erro-legivel";
 
 const TIPO = "ai_decide";
 
@@ -147,7 +148,7 @@ async function execute(ctx: ActionCtx, config: Record<string, unknown>): Promise
       contexto: ctx.context,
     });
   } catch (err) {
-    const causa = err instanceof Error ? err.message : String(err);
+    const causa = mensagemDeErro(err);
     logger.error("[automation.ai_decide] a IA não conseguiu decidir", {
       organizationId: ctx.organizationId,
       ruleId: ctx.ruleId,
@@ -187,7 +188,7 @@ async function execute(ctx: ActionCtx, config: Record<string, unknown>): Promise
     return {
       type: TIPO,
       status: "failed",
-      error: err instanceof Error ? err.message : String(err),
+      error: mensagemDeErro(err),
       detail: { escolha: opcao.id, acao_alvo: opcao.acao.type },
     };
   }

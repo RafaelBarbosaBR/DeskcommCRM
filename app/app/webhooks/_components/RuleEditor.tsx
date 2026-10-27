@@ -36,7 +36,13 @@ import {
   type DirecaoDoSilencio,
 } from "@/lib/automation/gatilhos-de-tempo";
 import { configAoSalvarDaTela } from "@/lib/automation/config-ao-salvar";
-import { camposDoFunil } from "@/lib/leads/campos-do-funil";
+import {
+  OPERADORES_SEM_VALOR,
+  type ConditionNode,
+  type ConditionOp,
+  type Conditions,
+} from "@/lib/automation/conditions";
+import { camposDeDataDoNegocio } from "@/lib/leads/campos-do-funil";
 import {
   useCreateAutomationRule,
   useUpdateAutomationRule,
@@ -45,6 +51,7 @@ import {
 import { usePipelines, usePipelineStages, useWebhookSources } from "@/hooks/webhooks/useWebhookSources";
 import { TRIGGER_LABELS, ACTION_LABELS, type TriggerEvent, type ActionType } from "./labels";
 import { ActionConfigForm, defaultActionConfig, type ActionItem } from "./ActionConfigForm";
+import { EtapaDeQualquerFunil } from "./EtapaDeQualquerFunil";
 import { useT } from "@/hooks/i18n/useT";
 
 interface Props {
@@ -53,7 +60,7 @@ interface Props {
   rule: AutomationRuleRow | null;
 }
 
-type Op = "eq" | "neq" | "contains";
+export type Op = ConditionOp;
 
 interface ConditionRow {
   field: string;
@@ -61,7 +68,16 @@ interface ConditionRow {
   value: string;
 }
 
-interface CuratedField {
+/**
+ * Como o grupo do TOPO combina as condições (#2727). O motor guarda a lista
+ * simples ou um grupo `{all:…}`/`{any:…}` do TOPO (a porta recusa aninhamento;
+ * ver `conditionGroupSchema`); a tela expõe esse grupo e serializa
+ * `todas` como a lista simples (o formato antigo, ≡ `all`) e `qualquer` como
+ * `{any:[…]}`. Grupos ANINHADOS são do modelo/avaliador, não desta tela.
+ */
+type ModoDoGrupo = "todas" | "qualquer";
+
+export interface CuratedField {
   value: string;
   label: string;
   op: Op;
@@ -125,10 +141,9 @@ const AGENDAMENTO_FIELDS: CuratedField[] = [
   { value: "contact.tags", label: "Tags do contato", op: "contains", lista: true },
 ];
 
-// ponytail: etapa de destino usa o funil default (cobre o caso comum de 1
-// funil); se o produto ganhar múltiplos funis relevantes aqui, trocar por um
-// seletor de funil antes do de etapa.
-const CURATED_FIELDS: Record<TriggerEvent, CuratedField[]> = {
+// A etapa de destino lista as etapas de todos os funis, agrupadas
+// (`EtapaDeQualquerFunil`); antes, só as do funil padrão.
+export const CURATED_FIELDS: Record<TriggerEvent, CuratedField[]> = {
   "lead.created": LEAD_FIELDS,
   "lead.stage_changed": [...LEAD_FIELDS, STAGE_FIELD],
   // #1528 — os quatro do encerramento/reabertura/atribuição: as condições são
@@ -150,6 +165,10 @@ const CURATED_FIELDS: Record<TriggerEvent, CuratedField[]> = {
   ],
   "lead.tag_added": [...LEAD_FIELDS, TAG_ADDED_FIELD],
   "contact.tag_added": [TAG_ADDED_FIELD],
+  // #2812 — quem filtra "o contato ganhou telefone" filtra por QUEM é o contato
+  // (tags), como o irmão `contact.birthday`: o telefone em si é o gatilho, e
+  // virar condição seria uma regra sempre-verdadeira disfarçada de filtro.
+  "contact.phone_added": CONTACT_FIELDS,
   "appointment.created": AGENDAMENTO_FIELDS,
   "appointment.confirmed": AGENDAMENTO_FIELDS,
   "appointment.rescheduled": AGENDAMENTO_FIELDS,
@@ -177,7 +196,31 @@ const CURATED_FIELDS: Record<TriggerEvent, CuratedField[]> = {
   "lead.stage_stale": [...LEAD_FIELDS, STAGE_FIELD],
 };
 
-const OP_LABELS: Record<Op, string> = { eq: "é", neq: "não é", contains: "contém" };
+export const OP_LABELS: Record<Op, string> = {
+  eq: "é",
+  neq: "não é",
+  contains: "contém",
+  not_contains: "não contém",
+  is_empty: "está vazio",
+  is_not_empty: "está preenchido",
+  gt: "maior que",
+  gte: "maior ou igual a",
+  lt: "menor que",
+  lte: "menor ou igual a",
+};
+
+/**
+ * Operadores que NÃO pedem valor: "está vazio" e "está preenchido" perguntam
+ * pelo campo, não por um texto. A lista é a MESMA do desenho e do avaliador
+ * (`OPERADORES_SEM_VALOR`, #2727) — enquanto cada tela tinha a sua cópia, o
+ * desenho descartava a condição `is_empty` no save e a regra ia vazia.
+ */
+const OPS_SEM_VALOR = OPERADORES_SEM_VALOR;
+
+/** Um nó de linha é uma condição de campo (tem `field`), não um grupo. */
+function ehLinha(no: ConditionNode): no is { field: string; op: Op; value: string } {
+  return typeof no === "object" && no !== null && "field" in no;
+}
 
 function emptyCondition(): ConditionRow {
   return { field: "", op: "eq", value: "" };
@@ -235,6 +278,7 @@ export function RuleEditor({ open, onOpenChange, rule }: Props) {
   const [name, setName] = React.useState("");
   const [triggerEvent, setTriggerEvent] = React.useState<TriggerEvent | "">("");
   const [conditions, setConditions] = React.useState<ConditionRow[]>([]);
+  const [modoDasCondicoes, setModoDasCondicoes] = React.useState<ModoDoGrupo>("todas");
   const [advancedRows, setAdvancedRows] = React.useState<Record<number, boolean>>({});
   const [actions, setActions] = React.useState<ActionItem[]>([]);
   const [configDaData, setConfigDaData] = React.useState<ConfigDaData>({
@@ -258,10 +302,6 @@ export function RuleEditor({ open, onOpenChange, rule }: Props) {
   const { data: pipelinesRes } = usePipelines();
   const { data: sourcesRes } = useWebhookSources();
   const webhookSources = sourcesRes?.data ?? [];
-  const defaultPipeline =
-    pipelinesRes?.data?.find((p) => p.is_default) ?? pipelinesRes?.data?.[0] ?? null;
-  const { data: boardRes } = usePipelineStages(defaultPipeline?.id ?? null);
-  const stages = boardRes?.data?.stages ?? [];
   // As etapas do funil escolhido no bloco de TEMPO (#2483): segundo consumidor
   // do MESMO hook, com o funil do formulário em vez do padrão.
   const { data: boardDoTempo } = usePipelineStages(configDoTempo.pipeline_id || null);
@@ -271,8 +311,16 @@ export function RuleEditor({ open, onOpenChange, rule }: Props) {
     if (!open) return;
     setName(rule?.name ?? "");
     setTriggerEvent((rule?.trigger_event as TriggerEvent) ?? "");
+    // O guardado é a lista simples (formato antigo, ≡ "todas") ou um grupo
+    // `{all|any}` (§#2727). A tela lê o grupo do TOPO; um grupo aninhado dentro
+    // dele é do modelo, não desta tela, e não é desenhado aqui.
+    const guardadas: Conditions = rule?.conditions ?? [];
+    const listaDoTopo = Array.isArray(guardadas) ? guardadas : (guardadas.any ?? guardadas.all ?? []);
+    setModoDasCondicoes(!Array.isArray(guardadas) && Array.isArray(guardadas.any) ? "qualquer" : "todas");
     setConditions(
-      rule?.conditions.map((c) => ({ field: c.field, op: c.op, value: c.value })) ?? [],
+      listaDoTopo
+        .filter(ehLinha)
+        .map((c) => ({ field: c.field, op: c.op as Op, value: c.value })),
     );
     setAdvancedRows({});
     setActions((rule?.actions as ActionItem[] | undefined) ?? []);
@@ -310,9 +358,9 @@ export function RuleEditor({ open, onOpenChange, rule }: Props) {
   const ehGatilhoDeTempo =
     triggerEvent === GATILHO_SILENCIO || triggerEvent === GATILHO_ETAPA_PARADA;
   const ehGatilhoDeNovoContato = triggerEvent === "lead.created";
-  const camposDeData = camposDoFunil(
+  const camposDeData = camposDeDataDoNegocio(
     (pipelinesRes?.data ?? []).find((p) => p.id === configDaData.pipeline_id)?.settings ?? null,
-  ).filter((campo) => campo.type === "date");
+  );
 
   const updateCondition = (idx: number, patch: Partial<ConditionRow>) => {
     setConditions((prev) => prev.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
@@ -352,9 +400,21 @@ export function RuleEditor({ open, onOpenChange, rule }: Props) {
     const payload = {
       name,
       trigger_event: triggerEvent,
-      conditions: conditions
-        .filter((c) => c.field.trim() && c.value.trim())
-        .map((c) => ({ field: c.field.trim(), op: c.op, value: c.value.trim() })),
+      // Serializa o grupo do topo: "todas" ⇒ a lista simples (formato antigo,
+      // compatível) e "qualquer" ⇒ `{any:[…]}`. Operador sem valor não exige o
+      // campo de valor. Regra sem condição nenhuma vai como `[]` nos dois modos.
+      conditions: (() => {
+        const linhas = conditions
+          .filter((c) => c.field.trim() && (OPS_SEM_VALOR.has(c.op) || c.value.trim()))
+          .map((c) => ({
+            field: c.field.trim(),
+            op: c.op,
+            value: OPS_SEM_VALOR.has(c.op) ? "" : c.value.trim(),
+          }));
+        const resultado: Conditions =
+          linhas.length === 0 || modoDasCondicoes === "todas" ? linhas : { any: linhas };
+        return resultado;
+      })(),
       actions,
       // `Number("")` é 0 — o que gravaria "avisar no dia" para quem não
       // digitou nada. O campo vazio vira `NaN`, que o schema recusa com a
@@ -455,6 +515,7 @@ export function RuleEditor({ open, onOpenChange, rule }: Props) {
               onValueChange={(v) => {
                 setTriggerEvent(v as TriggerEvent);
                 setConditions([]);
+                setModoDasCondicoes("todas");
                 setAdvancedRows({});
                 if (v !== "lead.created") setWebhookSourceId(QUALQUER_FONTE);
               }}
@@ -720,6 +781,27 @@ export function RuleEditor({ open, onOpenChange, rule }: Props) {
 
           <section className="space-y-3">
             <h3 className="text-lg font-semibold text-text">{t("SE (opcional)")}</h3>
+            {/* #2727 — o grupo do TOPO: "todas" combina por E (a lista simples,
+                o formato de sempre) e "qualquer uma" grava `{any:[…]}`. */}
+            {conditions.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <Label className="text-sm text-muted-foreground">
+                  {t("Combinar as condições por")}
+                </Label>
+                <Select
+                  value={modoDasCondicoes}
+                  onValueChange={(v) => setModoDasCondicoes(v as ModoDoGrupo)}
+                >
+                  <SelectTrigger className="w-56">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todas">{t("Todas as condições")}</SelectItem>
+                    <SelectItem value="qualquer">{t("Qualquer uma das condições")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
             {conditions.map((cond, idx) => {
               // Linha nova (campo vazio) começa no modo curado — o avançado é
               // escape p/ quem sabe o path; só cai nele sozinho ao EDITAR uma
@@ -762,7 +844,7 @@ export function RuleEditor({ open, onOpenChange, rule }: Props) {
                       value={cond.op}
                       onValueChange={(v) => updateCondition(idx, { op: v as Op })}
                     >
-                      <SelectTrigger className="w-28">
+                      <SelectTrigger className="w-40">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -777,22 +859,11 @@ export function RuleEditor({ open, onOpenChange, rule }: Props) {
                         ))}
                       </SelectContent>
                     </Select>
-                    {curated?.kind === "stage" ? (
-                      <Select
+                    {OPS_SEM_VALOR.has(cond.op) ? null : curated?.kind === "stage" ? (
+                      <EtapaDeQualquerFunil
                         value={cond.value}
-                        onValueChange={(v) => updateCondition(idx, { value: v })}
-                      >
-                        <SelectTrigger className="flex-1 basis-40">
-                          <SelectValue placeholder={t("Etapa")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {stages.map((s) => (
-                            <SelectItem key={s.id} value={s.id}>
-                              {s.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        onChange={(v) => updateCondition(idx, { value: v })}
+                      />
                     ) : (
                       <Input
                         className="flex-1 basis-40"

@@ -6,7 +6,7 @@ import { traduzir } from "@/lib/i18n/dicionario";
 import type { Idioma } from "@/lib/i18n/idiomas";
 
 /**
- * O painel da assinatura da empresa (spec da cobrança §9), só leitura na PR 2.
+ * O resumo de assinatura da empresa (spec da cobrança §9).
  * Sem hooks: é desenhado pelo servidor, no idioma de quem abriu.
  */
 export function PainelDaAssinatura({ dados, idioma }: { dados: DadosDoPainel; idioma: Idioma }) {
@@ -81,6 +81,7 @@ function situacaoDaAssinatura(
   t: (texto: string) => string,
   dia: (v: string | null) => string,
 ): string {
+  if (a.pagamento_inicial_pendente) return t("Aguardando o primeiro pagamento. O acesso será liberado após a confirmação.");
   switch (a.estado) {
     case "trial":
       if (!a.trial_ate) return t(ROTULO_DO_ESTADO.trial);

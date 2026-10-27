@@ -167,11 +167,36 @@ export interface LeiCitada {
    */
   revisadaPorIa?: true;
   /**
-   * Como o documento de acesso rotula a citação. Ausente = "Base legal", o
-   * rótulo de sempre — o Brasil não declara este campo, e por isso o
-   * `data.json` brasileiro não ganha chave nova.
+   * Como o documento de acesso rotula a citação.
+   *
+   * O Brasil DECLARA desde a issue #2344: "Base legal" era impreciso ali — o
+   * art. 18 da LGPD é um DIREITO do titular, e a base legal fica nos arts. 7 e
+   * 11. Portugal já usava "Direito exercido" (doc 88), e o rótulo brasileiro
+   * passa a ser o mesmo. Ausente = o renderizador cai no rótulo do perfil
+   * padrão, e país sem lei revisada não chega aqui (a citação é `null`).
    */
   rotuloNoDocumento?: string;
+}
+
+/**
+ * Os papéis legais como o PAÍS os chama — o rótulo do rodapé do relatório e do
+ * documento de acesso.
+ *
+ * "Controlador" e "Encarregado (DPO)" são os termos da LGPD brasileira. No
+ * RGPD em português de Portugal os mesmos papéis são "Responsável pelo
+ * tratamento" (art. 4.º, n.º 7) e "Encarregado da proteção de dados" (art.
+ * 37.º) — e uma organização portuguesa lia os dois termos brasileiros no PDF
+ * que o próprio sistema gerava para o titular dela (issue #2344).
+ *
+ * Mesma razão de `empresa` e `documento`: o vocabulário legal é propriedade do
+ * país, e não do componente. Os valores brasileiros são o PADRÃO do produto —
+ * quem renderiza sem perfil (payload de teste, país sem registro) usa os dele.
+ */
+export interface PapeisDoPais {
+  /** O responsável pelos dados: "Controlador" (BR), "Responsável pelo tratamento" (PT). */
+  controlador: string;
+  /** O contato do titular: "Encarregado (DPO)" (BR), "Encarregado da proteção de dados" (PT). */
+  encarregado: string;
 }
 
 /**
@@ -219,8 +244,37 @@ export interface PerfilDoPais {
    * brasileiro a quem cadastra cliente em Lisboa. País novo declara o seu.
    */
   telefoneExemplo: string;
+  /**
+   * A LÍNGUA dos destinatários deste país, em BCP-47 (`pt-BR`, `pt-PT`).
+   *
+   * Decide o `lang` do HTML e a língua dos textos que saem do produto para quem
+   * está no país — o alarme ao encarregado (`lib/lgpd/sla-alarm.ts`) é o
+   * primeiro consumidor (issue #2347, item 2). NÃO é a língua da INTERFACE
+   * (`lib/i18n/idiomas`): a interface segue quem opera, e um país pode falar uma
+   * variante que o seletor de idioma não oferece (`pt-PT`). Obrigatória de
+   * propósito, pela mesma razão de `empresa`: país novo declara a sua, e o
+   * esquecimento vira erro de tipo em vez de texto em português calado.
+   */
+  idioma: string;
+  /**
+   * O FUSO SUGERIDO ao escolher este país no seletor (issue #2347, item 4).
+   *
+   * Não é o fuso GRAVADO nem o `FUSO_PADRAO` do produto: uma organização de
+   * Portugal que nunca trocou o fuso continua com `America/Sao_Paulo` (o
+   * DEFAULT da coluna) e mandava ao titular datas em GMT-3. O seletor de país
+   * oferece este valor, e quem escolhe ainda pode recusá-lo trocando o fuso.
+   */
+  fusoDoSugerido: string;
   /** `null` quando o país ainda não tem lei revisada para citar. */
   lei: LeiCitada | null;
+  /**
+   * Os papéis do documento, no vocabulário do país (issue #2344).
+   *
+   * Vêm do perfil junto com `lei`, porque a mesma troca de país troca os dois:
+   * o rodapé do relatório que o titular recebe num país não pode chamar o
+   * responsável pelos dados por um nome que a lei daquele país não usa.
+   */
+  papel: PapeisDoPais;
   /**
    * A autoridade a quem o titular reclama (art. 15.º, n.º 1, al. f)). Ausente
    * em países cuja citação não foi revisada — e o Brasil, cujo documento segue
@@ -296,11 +350,25 @@ const PERFIL_BR: PerfilDoPais = {
     rotuloNumero: "CNPJ",
   },
   telefoneExemplo: "+5511999998888",
+  idioma: "pt-BR",
+  fusoDoSugerido: "America/Sao_Paulo",
   lei: {
     nome: "LGPD",
     numero: "Lei nº 13.709/2018",
     artigo: "Art. 18, II",
     revisada: true,
+    // O art. 18 da LGPD é um DIREITO do titular (o art. 18, II, o de acesso),
+    // e não uma base legal — esta fica nos arts. 7 e 11. Portugal já rotulava
+    // "Direito exercido" (doc 88); o Brasil passa a rotular igual (issue #2344).
+    // O `data.json` brasileiro NÃO ganha chave nova: `foraDoBrasil` continua
+    // devolvendo `{}` para o padrão, e o rótulo sai do PERFIL no renderizador.
+    rotuloNoDocumento: "Direito exercido",
+  },
+  // Os papéis como a LGPD os chama — e o padrão do produto: quem renderiza
+  // sem perfil usa estes (issue #2344).
+  papel: {
+    controlador: "Controlador",
+    encarregado: "Encarregado (DPO)",
   },
   calendario: {
     feriados: HOLIDAYS_BR_ISO,
@@ -346,6 +414,8 @@ const PERFIL_PT: PerfilDoPais = {
     rotuloNumero: "NIPC",
   },
   telefoneExemplo: "+351912345678",
+  idioma: "pt-PT",
+  fusoDoSugerido: "Europe/Lisbon",
   lei: {
     nome: "RGPD",
     numero: "Regulamento (UE) 2016/679",
@@ -355,6 +425,15 @@ const PERFIL_PT: PerfilDoPais = {
     revisada: true,
     revisadaPorIa: true,
     rotuloNoDocumento: "Direito exercido",
+  },
+  // Os papéis como o RGPD em pt-PT os chama: "responsável pelo tratamento"
+  // (art. 4.º, n.º 7) e "encarregado da proteção de dados" (art. 37.º) — as
+  // fontes são as mesmas da revisão do doc 88 (JO L 119), com a mesma ressalva
+  // de revisão por IA. Enquanto o rodapé dizia "Controlador" e "Encarregado
+  // (DPO)", o titular português lia o vocabulário da lei brasileira.
+  papel: {
+    controlador: "Responsável pelo tratamento",
+    encarregado: "Encarregado da proteção de dados",
   },
   // Alínea f) do art. 15.º, n.º 1: a autoridade portuguesa. Conferida em
   // 2026-10-05 na fonte primária (site oficial da CNPD) junto com o resto da

@@ -193,6 +193,8 @@ export default async function CredentialsPage() {
   // A mesma pergunta que o worker faz: sem a chave do Jev, há IA principal para medir?
   const jev = jevLigado
     ? {
+        // De onde o Jev responde: decide QUAL credencial a lista marca como dele.
+        origem: configDoJev.origem,
         // Só as tarefas que a chave de fato serve agora.
         tarefas: TAREFAS_DO_JEV.filter(
           (t) =>

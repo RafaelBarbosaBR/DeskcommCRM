@@ -162,6 +162,22 @@ describe("crm_start_conversation_and_send", () => {
     expect(mockedSend).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["texto sem corpo", { type: "text" }],
+    ["contato compartilhado sem o contato", { type: "contact", body: "Oi" }],
+  ])("mensagem inválida (%s) é recusada ANTES de abrir a conversa", async (_nome, mensagem) => {
+    await expect(
+      crmStartConversationAndSend.handler(
+        { channel_session_id: SESSION_ID, phone_number: "+5511999990000", ...mensagem } as never,
+        makeCtx({ cached: null, inserts: [] }),
+      ),
+    ).rejects.toThrow(/body, media_url/);
+
+    expect(mockedSegurar).not.toHaveBeenCalled();
+    expect(mockedOpen).not.toHaveBeenCalled();
+    expect(mockedSend).not.toHaveBeenCalled();
+  });
+
   it("abre a conversa no canal escolhido e envia usando o conversation_id devolvido", async () => {
     const state: IdemState = { cached: null, inserts: [] };
     mockedOpen.mockResolvedValue({ conversation_id: CONVERSATION_ID, contact_id: CONTACT_ID });

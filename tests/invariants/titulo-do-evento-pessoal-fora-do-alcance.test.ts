@@ -332,11 +332,11 @@ const VARREDURA_DE_LEITORES_DO_TITULO = `
        and corpo ~* '(\\mtitle\\M|\\m[a-z_][a-z0-9_]*\\.\\*|select\\s+\\*|to_jsonb?\\s*\\(|jsonb?_agg\\s*\\(\\s*[a-z_][a-z0-9_]*\\s*\\))'
   )
   select linha from (
-    select 1 as ordem, '${MARCA}' || 'citam=' || coalesce(string_agg(objeto, ',' order by objeto), '(nenhum)') as linha
+    select 1 as ordem, '${MARCA}' || 'citam=' || coalesce(string_agg(objeto, ',' order by objeto collate "C"), '(nenhum)') as linha
       from leitores
     union all
     select 2, '${MARCA}' || 'alcancaveis=' ||
-              coalesce(string_agg(objeto, ',' order by objeto) filter (where alcancavel), '(nenhum)')
+              coalesce(string_agg(objeto, ',' order by objeto collate "C") filter (where alcancavel), '(nenhum)')
       from leitores
   ) as sondas
   order by ordem;
@@ -827,8 +827,15 @@ describe("o banco instalado pelo baseline inteiro — sem reaplicar o bloco da 0
     );
     expect(
       citam,
-      "a varredura não enxerga mais só fn_google_calendar, a única função que cita o título (para gravá-lo nulo) — ou apareceu outra que só o service_role executa, ou a sonda ficou cega",
-    ).toBe("citam=função fn_google_calendar(uuid,uuid,text,jsonb)");
+      "a varredura não enxerga mais só as duas funções do sincronizador que citam o espelho — ou apareceu outra que só o service_role executa, ou a sonda ficou cega",
+    ).toBe(
+      // `fn_google_calendar` cita o `title` para gravá-lo nulo.
+      // `fn_google_calendar_page_batch` (0668) entra pelo `select * into c` da
+      // linha do CALENDÁRIO, não do espelho: no espelho ela só apaga, e cada item
+      // é repassado ao `fn_google_calendar`, que grava `title` nulo. Só o
+      // `service_role` a executa — por isso ela não aparece em `alcancaveis`.
+      "citam=função fn_google_calendar(uuid,uuid,text,jsonb),função fn_google_calendar_page_batch(uuid,uuid,jsonb)",
+    );
 
     // Controle: a varredura pega o que precisa pegar, e só isso — três leitores
     // alcançáveis que entregam o título (um deles lido de fato pelo colega), um
@@ -868,7 +875,8 @@ describe("o banco instalado pelo baseline inteiro — sem reaplicar o bloco da 0
       `colega=${TITULO}`,
     );
     expect(citamComSondas).toBe(
-      "citam=função fn_google_calendar(uuid,uuid,text,jsonb),função fn_sonda_0261_linha_inteira(uuid)," +
+      "citam=função fn_google_calendar(uuid,uuid,text,jsonb),função fn_google_calendar_page_batch(uuid,uuid,jsonb)," +
+        "função fn_sonda_0261_linha_inteira(uuid)," +
         "função fn_sonda_0261_titulo_do_servico(uuid),função fn_sonda_0261_titulo_do_titular(uuid),view v_sonda_0261_espelho",
     );
     expect(alcancaveisComSondas, "a varredura não pega um leitor alcançável do título, ou pega quem só lê ocupação").toBe(

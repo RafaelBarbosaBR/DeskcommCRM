@@ -36,6 +36,7 @@ de menor precedência e registre.
 | [`AGENTS.md`](../AGENTS.md) | Contrato para agentes de código (qualquer ferramenta) |
 | [`CLAUDE.md`](../CLAUDE.md) | **Doutrina não-negociável.** Convenções, anti-patterns, Definition of Done |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Como contribuir |
+| [`docs/apostila-contribuidor.md`](apostila-contribuidor.md) | **Apostila passo a passo para leigos (e para a IA deles):** instalar as ferramentas, subir o ambiente local, desenvolver, testar com Playwright e abrir o PR |
 | [`CHANGELOG.md`](../CHANGELOG.md) | Mudanças por versão (SemVer). **Quem roda VPS lê antes de `update.sh`** — mudança que exige ação manual aparece sob "⚠️ Requer atenção" |
 | [`docs/current-state.md`](current-state.md) | **O que está pronto, incompleto e quebrado hoje** |
 | [`.agents/skills/`](../.agents/skills/deskcomm-instalar/SKILL.md) | **Guias do assistente** — instalar, montar cliente por nicho, métricas, prompt, contribuir. Skills lidas por Claude Code, Codex, Cursor, OpenCode e Antigravity (não confundir com as *Skills* do agente de IA, na tela IA › Skills) |
@@ -52,6 +53,7 @@ de menor precedência e registre.
 | [`prd/05-prd-ai-rag-handoff.md`](prd/05-prd-ai-rag-handoff.md) | IA conversacional, RAG por tenant, sentiment |
 | [`prd/06-prd-nuvemshop-lgpd.md`](prd/06-prd-nuvemshop-lgpd.md) | Integração Nuvemshop + webhooks LGPD |
 | [`business-rules/00-business-rules-catalog.md`](business-rules/00-business-rules-catalog.md) | **Catálogo de regras de negócio** — fonte da verdade fora do código |
+| [`features/feature-a-leadsubmitted-ctwa.md`](features/feature-a-leadsubmitted-ctwa.md) | Feature A portada: LeadSubmitted por clique CTWA recebido, evidência do fork e validações pendentes do upstream |
 | [`presentation/pitch-deck.md`](presentation/pitch-deck.md) | Pitch |
 
 ## 3. Contrato técnico (specs)
@@ -100,8 +102,11 @@ Detalham schema SQL e payloads exatos. **Consulte antes de modelar qualquer cois
 | [`adr/0002-tabelas-de-modulo-num-banco-so.md`](adr/0002-tabelas-de-modulo-num-banco-so.md) | **Aceita em 17/09/2026.** Tabelas de módulo opcional: um banco só, `public`, criadas por função provisionadora fixa quando o módulo é instalado |
 | [`adr/0003-perfil-declarativo-v2-portas-nomeadas-e-vitrine.md`](adr/0003-perfil-declarativo-v2-portas-nomeadas-e-vitrine.md) | **Aceita em 17/09/2026.** Perfil declarativo v2 das extensões: portas nomeadas e o metadado de loja no catálogo |
 | [`adr/0004-cobranca-do-revendedor.md`](adr/0004-cobranca-do-revendedor.md) | **Aceita em 29/09/2026.** Cobrança do revendedor: o terceiro eixo de dinheiro — o dono da instalação cobra as empresas que atende; capacidade do núcleo com chave, desligada por padrão; revisa a condição 2 da ADR-0002 só para este caso |
+| [`adr/0005-plataforma-de-modulos-de-terceiro.md`](adr/0005-plataforma-de-modulos-de-terceiro.md) | **Aceita em 14/10/2026** (escolhas 1–4 pela recomendação, delegadas pelo dono; a 5 segue aberta). Plataforma de módulos de terceiro: o host compila o schema declarado, código de terceiro nunca entra no processo. Onda 1a construída no #2334 (migration 0611); o que falta, na seção *Estado da construção*. Spec: [`specs/modulos-dados-declarados-v1.md`](specs/modulos-dados-declarados-v1.md); caso de prova: [`research/modulos/pagamentos-e-fiscal.md`](research/modulos/pagamentos-e-fiscal.md) |
+| [`adr/0006-app-no-celular-e-a-pwa-do-mesmo-next.md`](adr/0006-app-no-celular-e-a-pwa-do-mesmo-next.md) | **Aceita em 20/10/2026.** O app no celular é a PWA instalada a partir do mesmo Next.js e das mesmas rotas `/app`: sem nativo, sem `/m/*`, sem gerador de SW, sem dados no aparelho. Decisões do dono (a)…(e) e as fases F0–F4; muda a premissa de foco de [`design-system/screen-flow/07-responsive-strategy.md`](design-system/screen-flow/07-responsive-strategy.md) |
 | [`architecture/agent-turn.html`](architecture/agent-turn.html) | Diagrama do turno do agente (inbound → guardrails → outbound) |
 | [`architecture/agenda-no-turno.md`](architecture/agenda-no-turno.md) | Fonte de horários locais de reservas, releitura após ações e registros do próximo turno |
+| [`architecture/remetente-do-lembrete.md`](architecture/remetente-do-lembrete.md) | Canal dos lembretes por serviço, origem da reserva, ambiguidade e ciclo dos avisos |
 | [`specs/pre-go-live-whatsapp.md`](specs/pre-go-live-whatsapp.md) | Modo de teste do WhatsApp por canal: lista de telefones, abertura ao público e compatibilidade com autorização por origem |
 | [`specs/19`](specs/19-spec-console-de-agencia.md) | **Console de Agência** — operar N organizações clientes; unidade de cobrança decidida (retainer por cliente operado). Lei em [`doctrine/operacao-de-agentes.md`](doctrine/operacao-de-agentes.md) |
 | [`architecture/pre-go-live-whatsapp.architecture.json`](architecture/pre-go-live-whatsapp.architecture.json) | Mapa do pré-go-live, configuração administrativa e gate compartilhado |
@@ -134,11 +139,16 @@ acessibilidade).
 | [`DEPLOY-CHECKLIST.md`](DEPLOY-CHECKLIST.md) | Checklist de deploy |
 | [`ATUALIZANDO.md`](ATUALIZANDO.md) | `update.sh`, `restore.sh`, `healthcheck.sh` |
 | [`runbooks/deploy.md`](runbooks/deploy.md) | **Deploy em produção — os dois `-f` do compose, verificação pós-deploy** |
+| [`runbooks/oracle-arm64.md`](runbooks/oracle-arm64.md) | **Oracle Ampere A1/Ubuntu** — VM ARM64, rede, instalação, atualização, backup e aceite real |
 | [`runbooks/remediar-worker-congelado.md`](runbooks/remediar-worker-congelado.md) | **Incidente: o worker congelado** — diagnóstico (`diagnostico.sh`), impacto medido e as duas rotas de remediação. **Ainda não ensaiado** |
 | [`runbooks/ativar-packaging.md`](runbooks/ativar-packaging.md) | **Ativação da doutrina de packaging** — os 3 passos que não cabem num PR (pacote público, check obrigatório, primeira release) |
 | [`runbooks/custo-e-cota-do-supabase.md`](runbooks/custo-e-cota-do-supabase.md) | **“Meu Supabase estourou a cota”** — como medir a origem do consumo, os dois intervalos da fila e as duas tabelas que só crescem |
 | [`runbooks/waha-hostgator.md`](runbooks/waha-hostgator.md) | Runbook do WAHA em produção |
 | [`runbooks/cloudpanel.md`](runbooks/cloudpanel.md) | **VPS que já tem CloudPanel/Nginx nas portas 80/443** — o modo proxy externo do kit, o endereço fixo para o Nginx do host e o 403 do webhook global |
+| [`saas/README.md`](saas/README.md) | **Revender como SaaS** — a jornada do dono da instalação, do servidor ao primeiro cliente pagando; modelo, painel do dono, primeiro cliente, custo por cliente |
+| [`saas/cobranca.md`](saas/cobranca.md) | **Cobrar os clientes** — Stripe × Asaas, planos, teste e publicação, régua de atraso, troca de plano, nota fiscal, caminho manual |
+| [`saas/contrato-e-lgpd.md`](saas/contrato-e-lgpd.md) | **Contrato e LGPD com o cliente final** — controlador × operador, cláusulas para o advogado revisar, transferência internacional pela IA |
+| [`saas/aulas/README.md`](saas/aulas/README.md) | **Roteiros de aula** do caminho SaaS — cinco aulas que apontam para os guias acima |
 | [`saas/coolify.md`](saas/coolify.md) | **VPS com Coolify** — CRM e banco (Supabase self-hosted) na mesma VPS, atrás do proxy do Coolify; painel fechado e acessado por túnel; consumo medido |
 | [`runbooks/ai-credentials-rotation.md`](runbooks/ai-credentials-rotation.md) | Rotação de credenciais de IA |
 | [`runbooks/css-personalizado.md`](runbooks/css-personalizado.md) | **CSS personalizado que trancou a tela** — `?sem_css=1` e o `delete` em `platform_config` |

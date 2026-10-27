@@ -13,7 +13,7 @@
 - **Storage (Supabase Storage)**: bucket `whatsapp-media` privado, URLs assinadas.
 - **WhatsApp (WAHA Plus / engine NOWEB)**: HMAC-SHA512 webhooks; throttle anti-banimento; STOP detection.
 - **Filas (event sourcing leve)**: `event_log` table + workers via cron. Trigger Postgres NUNCA faz HTTP.
-- **Rate limit (Upstash Redis)**: contador de **janela fixa** (`INCR` + `EXPIRE`) em `lib/ai/dispatcher/rate-limit.ts`, com fallback in-memory quando Redis falta. ⚠️ Aplicado hoje em apenas 2 pontos (webhook de captação e dispatcher de IA) — o surface público de auth está sem. Ver [`docs/threat-model.md`](docs/threat-model.md) §T1.
+- **Rate limit (Upstash Redis)**: contador de **janela fixa** (`INCR` + `EXPIRE`) em `lib/ai/dispatcher/rate-limit.ts`, com fallback in-memory quando Redis falta. Quem o chama hoje — reconte, não cite: `grep -rln 'checkRateLimit(' app lib --include='*.ts' | grep -v '\.test\.'`. Ver [`docs/threat-model.md`](docs/threat-model.md) §T1.
 - **AI (Vercel AI Gateway)**: Anthropic primário, OpenAI backup pra embeddings.
 - **Observability (Sentry)**: `beforeSend` scrubs PII (CPF/email/phone) e headers sensíveis.
 
@@ -49,7 +49,7 @@ request → proxy.ts (X-Request-Id, x-pathname; isPublicPath? → bypass;
 ```
 
 **Superfícies não-cookie:** `/api/v1/cron/*` (Bearer `INTERNAL_CRON_SECRET`, fail-closed),
-`/api/internal/*` (`x-internal-secret`), `/api/mcp` (Bearer `tok_...` contra `api_tokens`),
+`/api/mcp` (Bearer `tok_...` contra `api_tokens`),
 `/api/v1/webhooks/*` (HMAC + path token). Inventário completo em
 [`docs/threat-model.md`](docs/threat-model.md) §1.
 

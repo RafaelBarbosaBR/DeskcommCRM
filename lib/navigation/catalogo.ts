@@ -1,4 +1,5 @@
 import type { Role } from "@/lib/auth/types";
+import { PAPEL_MINIMO_DA_CENTRAL } from "@/lib/ai/inbox-destino";
 import type { ModuloOpcional } from "@/lib/instalacao/modulos";
 import type { CapacidadeDaOrganizacao } from "@/lib/organizacao/capacidades";
 
@@ -419,6 +420,22 @@ export const NAV_CATALOG = [
     // na navegação" — a porta existia, era outra.
   },
   {
+    // O aviso de agendamento no WhatsApp do dono (migration 0753). Fica junto
+    // dos tipos de agendamento porque é configuração da agenda do NEGÓCIO, não
+    // do dia de quem atende. "Aviso de agendamento", nunca "Aviso no WhatsApp":
+    // esse já é o nome do aviso de CASO, e dois destinos com o mesmo rótulo na
+    // busca não dizem qual é qual.
+    href: "/app/agenda/avisos",
+    label: "Aviso de agendamento",
+    description: "Receber no WhatsApp cada horário marcado, remarcado ou cancelado, e o resumo das 7h.",
+    icon: "PaperPlaneTilt",
+    group: "organizacao",
+    section: "Sua empresa",
+    // `admin`: escolhe um número conectado e manda nome de cliente para um
+    // celular — o mesmo gate da rota e da RLS de `config_aviso_de_agendamento`.
+    minRole: "admin",
+  },
+  {
     href: "/app/settings/tenant/proposals",
     label: "Propostas",
     description: "Configure a validade padrão e condições para propostas comerciais.",
@@ -653,6 +670,26 @@ export const NAV_CATALOG = [
     icon: "Flag",
     group: "ia",
     section: "Acompanhar o agente",
+    // ⚠️ ESTA ENTRADA NÃO TINHA PISO, E POR ISSO OFERECIA UMA PORTA FECHADA.
+    //
+    // Ela não decide só o item do menu: é DELA que
+    // `components/shell/AlertsBell.tsx` e `AvisoDePropostaEmDestaque.tsx` leem
+    // para se mostrar — os dois perguntam se `/app/ai/inbox` está entre os
+    // destinos da interface. Sem `minRole`, a resposta era "sim" para o
+    // `viewer`, e o sino aparecia para quem não alcança a Central. O contador,
+    // então, ficava em ZERO PARA SEMPRE: `useAgentInbox` só consulta quando o
+    // papel alcança a tela (`ai.inbox.view` = `agent`, em
+    // `hooks/auth/AuthProvider.tsx`), e as rotas de `/api/v1/ai/inbox` exigem
+    // `PAPEL_MINIMO_DA_CENTRAL` — recusam o `viewer`. Nada quebrava e nada
+    // avisava: a pessoa via um sino que nunca ia contar nada.
+    //
+    // A régua é a CONSTANTE, nunca o literal "agent": ela é o mesmo piso que
+    // `requireRole(PAPEL_MINIMO_DA_CENTRAL, …)` aplica nas três rotas da
+    // Central e o mesmo que `lib/notifications/push-dos-avisos.ts` usa para o
+    // push. Com o literal aqui, subir (ou descer) o piso da Central reabriria a
+    // porta em silêncio, para todo mundo, sem nenhum teste ficando vermelho.
+    // Quem guarda isso é `components/shell/sino-so-para-quem-alcanca-a-central.test.tsx`.
+    minRole: PAPEL_MINIMO_DA_CENTRAL,
   },
   {
     // "Aviso no WhatsApp", NUNCA "Avisos": a vizinha de cima chama-se "Alertas"
@@ -818,6 +855,32 @@ export const NAV_CATALOG = [
     sidebar: true,
   },
   {
+    // ── A porta do ALVO (#3025, fatia 1) ────────────────────────────────────
+    //
+    // Mora aqui, ao lado de Desempenho, porque é a metade que faltava da MESMA
+    // tela: lá se lê o progresso contra a meta, e sem esta porta o alvo não
+    // teria onde ser cadastrado — o painel novo diria "nenhuma meta" para
+    // sempre. O `group` é `organizacao` (é Configurações, como as vizinhas de
+    // /app/settings), e é ele — não a posição nesta lista — que a coloca no
+    // hub certo.
+    //
+    // SEM `sidebar`: definir o alvo é decisão de uma vez por mês, não uso
+    // diário. O painel de Desempenho é a porta que se usa todo dia, e é ele
+    // que linka para cá quando não há meta.
+    href: "/app/settings/metas",
+    label: "Meta de vendas",
+    description: "Quanto a empresa quer vender no mês, para o Desempenho medir o progresso.",
+    // `Gauge` (já exportado por lib/ui/icons.ts) e não um gráfico novo: aqui se
+    // AJUSTA o medidor, não se lê o resultado — os gráficos ficam para as telas
+    // de leitura, ao lado.
+    icon: "Gauge",
+    group: "organizacao",
+    section: "Sua empresa",
+    // `manager`, a MESMA régua da action: o alvo é o número pelo qual a
+    // empresa cobra o próprio time, e quem o define não é quem o persegue.
+    minRole: "manager",
+  },
+  {
     // Logo abaixo de Desempenho porque responde a metade da MESMA pergunta: lá
     // está o que aconteceu depois que a pessoa chegou; aqui, quanto custou
     // trazê-la. Ler as duas juntas é o que fecha a conta do custo por cliente.
@@ -890,6 +953,14 @@ export const NAV_CATALOG = [
     label: "Notificações",
     description: "Por onde e sobre o quê você quer ser avisado.",
     icon: "Bell",
+    group: "organizacao",
+    section: "Sua conta",
+  },
+  {
+    href: "/app/settings/aplicativo",
+    label: "App no celular",
+    description: "Instale o sistema na tela de início do celular e receba os avisos.",
+    icon: "DeviceMobile",
     group: "organizacao",
     section: "Sua conta",
   },
@@ -1066,6 +1137,32 @@ export const NAV_CATALOG = [
     label: "Telefonia",
     description: "Conecte a conta api4com e mapeie o ramal de cada pessoa para ligar pelo CRM.",
     icon: "Phone",
+    group: "organizacao",
+    section: "Dados e acesso",
+    minRole: "admin",
+  },
+  {
+    // A porta do cadastro do servidor MCP externo (#2948). Em "Dados e acesso"
+    // pela MESMA razão de API Tokens e Dados externos: é o eixo "por onde dado
+    // entra e sai do CRM" — o endereço e a chave são de um sistema de fora que
+    // a IA da empresa consulta. Antes desta linha, a action que grava
+    // (`definirServidorMcpExterno`) existia e não era chamada de lugar nenhum:
+    // registrar o servidor só era possível por fora da interface.
+    //
+    // SEM `sidebar`, como as duas vizinhas: trocar a credencial de um ERP é
+    // tarefa de uma vez, e o hub + o ⌘K já são porta suficiente.
+    //
+    // ⚠️ `minRole: "admin"` é o mais perto que este registro chega do que a
+    // tela cobra: quem ESCREVE é o dono da INSTALAÇÃO (`is_platform_admin`, a
+    // `regraPlatformAdmin` da action), e o catálogo não modela esse papel — a
+    // mesma limitação que a allowlist de `/app/settings/atualizacao` já
+    // registra em `tests/unit/navegacao-completude.test.ts`. Quem clicar sem a
+    // permissão recebe `/403` da própria tela; a porta existe porque a tela
+    // nova precisa de por onde ser encontrada (item 14 da Definition of Done).
+    href: "/app/settings/servidor-mcp-externo",
+    label: "Servidor MCP externo",
+    description: "O endereço e a chave do sistema de fora que a IA da empresa pode consultar.",
+    icon: "Plugs",
     group: "organizacao",
     section: "Dados e acesso",
     minRole: "admin",

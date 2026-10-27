@@ -42,6 +42,29 @@ async function inbound(id = conversation, at?: string, direction = "inbound") {
 async function state(id = conversation) {
   return (await pool.query("select * from conversations where id=$1", [id])).rows[0];
 }
+// A proteção de execução exige o lease real que o worker recebe da fila.
+// Mantemos o assunto testado; só o preparo do turno deixa de inventar JobRow.
+async function withClaimedJob(
+  kind: "inbound_turn" | "followup_turn",
+  ct: string,
+  boundary: Awaited<ReturnType<typeof readCurrentServiceBoundary>>,
+  action: () => Promise<void>,
+) {
+  const { rows } = await pool.query<JobRow>(
+    `insert into job_queue(organization_id, contact_id, kind, payload, status, locked_by, locked_at)
+     values($1,$2,$3,$4,'running','service-boundary-test',clock_timestamp())
+     returning *, locked_at::text as claim_acquired_at`,
+    [GOV_ORG, ct, kind, { service_boundary: boundary }],
+  );
+  try {
+    await withServiceJob(pool, rows[0]!, action);
+  } finally {
+    await pool.query("delete from job_queue where organization_id=$1 and id=$2", [
+      GOV_ORG,
+      rows[0]!.id,
+    ]);
+  }
+}
 async function close(id = conversation) {
   const c = await state(id);
   return (
@@ -99,7 +122,7 @@ describe("transição real de atendimento", () => {
         c.current_demanda_id,
         GOV_AGENT_A,
       ]),
-    ).rejects.toMatchObject({ code: "40001" });
+    ).rejects.toMatchObject({ code: "PT409" });
   });
   it("antigo/igual/outbound não reabre; nova entrada concorrente reabre uma vez e invalida trabalho antigo", async () => {
     const closed = await state();
@@ -239,13 +262,7 @@ describe("transição real de atendimento", () => {
     await inbound();
     const boundary = await readCurrentServiceBoundary(pool, GOV_ORG, conversation);
     if (!boundary) throw new Error("missing");
-    const job = {
-      kind: "inbound_turn",
-      organization_id: GOV_ORG,
-      contact_id: contact,
-      payload: { service_boundary: boundary },
-    } as unknown as JobRow;
-    await withServiceJob(pool, job, async () => {
+    await withClaimedJob("inbound_turn", contact, boundary, async () => {
       expect(await latestCheckpoint(pool, GOV_ORG, contact)).toBeNull();
       const result = await getLeadContext(
         pool,
@@ -281,7 +298,7 @@ describe("transição real de atendimento", () => {
     await inbound();
     await expect(
       pool.query("select fn_service_begin($1,$2,null,$3)", [GOV_ORG, contact, rows[0].snapshot]),
-    ).rejects.toMatchObject({ code: "40001" });
+    ).rejects.toMatchObject({ code: "PT409" });
     const fresh = await pool.query("select fn_service_observe($1,$2) snapshot", [GOV_ORG, contact]);
     const started = await pool.query("select fn_service_begin($1,$2,null,$3) boundary", [
       GOV_ORG,
@@ -307,7 +324,7 @@ describe("transição real de atendimento", () => {
     expect(first.service_started_at).toBeTruthy();
     await expect(
       pool.query("select fn_service_begin($1,$2,null,$3)", [GOV_ORG, ct, observed]),
-    ).rejects.toMatchObject({ code: "40001" });
+    ).rejects.toMatchObject({ code: "PT409" });
     await pool.query("update conversations set service_started_at=null where id=$1", [
       first.conversation_id,
     ]);
@@ -450,21 +467,12 @@ describe("transição real de atendimento", () => {
     // A fronteira do vencedor não herda o checkpoint que ficou na outra conversa.
     const fronteira = await readCurrentServiceBoundary(pool, GOV_ORG, convA);
     if (!fronteira) throw new Error("fronteira do vencedor ausente");
-    await withServiceJob(
-      pool,
-      {
-        kind: "inbound_turn",
-        organization_id: GOV_ORG,
-        contact_id: a,
-        payload: { service_boundary: fronteira },
-      } as unknown as JobRow,
-      async () => {
-        expect(
-          await latestCheckpoint(pool, GOV_ORG, a),
-          "o checkpoint amarrado à conversa da lápide não entra na fronteira do vencedor",
-        ).toBeNull();
-      },
-    );
+    await withClaimedJob("inbound_turn", a, fronteira, async () => {
+      expect(
+        await latestCheckpoint(pool, GOV_ORG, a),
+        "o checkpoint amarrado à conversa da lápide não entra na fronteira do vencedor",
+      ).toBeNull();
+    });
   });
 
   it("checkpoint vigente sem demanda é recuperado; fechar/reabrir o exclui", async () => {
@@ -478,35 +486,17 @@ describe("transição real de atendimento", () => {
       values($1,$2,$3,$4,null,null,'[]','[]','PASSO_VIGENTE_SEM_DEMANDA','RESUMO_VIGENTE')`,
       [GOV_ORG, contact, conversation, current.service_revision],
     );
-    await withServiceJob(
-      pool,
-      {
-        kind: "followup_turn",
-        organization_id: GOV_ORG,
-        contact_id: contact,
-        payload: { service_boundary: current },
-      } as unknown as JobRow,
-      async () => {
-        expect((await latestCheckpoint(pool, GOV_ORG, contact))?.next_action).toBe(
-          "PASSO_VIGENTE_SEM_DEMANDA",
-        );
-      },
-    );
+    await withClaimedJob("followup_turn", contact, current, async () => {
+      expect((await latestCheckpoint(pool, GOV_ORG, contact))?.next_action).toBe(
+        "PASSO_VIGENTE_SEM_DEMANDA",
+      );
+    });
     await close();
     await pool.query("select fn_service_begin($1,$2,$3)", [GOV_ORG, contact, GOV_SESSION]);
     const next = await readCurrentServiceBoundary(pool, GOV_ORG, conversation);
-    await withServiceJob(
-      pool,
-      {
-        kind: "followup_turn",
-        organization_id: GOV_ORG,
-        contact_id: contact,
-        payload: { service_boundary: next },
-      } as unknown as JobRow,
-      async () => {
-        expect(await latestCheckpoint(pool, GOV_ORG, contact)).toBeNull();
-      },
-    );
+    await withClaimedJob("followup_turn", contact, next, async () => {
+      expect(await latestCheckpoint(pool, GOV_ORG, contact)).toBeNull();
+    });
   });
   it("memória inclui duas entradas pós-fechamento fora de ordem, excluindo passado", async () => {
     await close();

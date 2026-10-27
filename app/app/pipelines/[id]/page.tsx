@@ -1,15 +1,12 @@
 import { notFound, redirect } from "next/navigation";
 import { requireAuth, resolveActiveOrg } from "@/lib/auth/server";
+import type { Pipeline, Stage } from "@/lib/kanban/types";
 import { createClient } from "@/lib/supabase/server";
 import { PipelinePageClient } from "./_client";
 
 export const dynamic = "force-dynamic";
 
-export default async function PipelinePage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default async function PipelinePage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireAuth();
   const activeOrg = await resolveActiveOrg(user);
   if (!activeOrg) redirect("/app");
@@ -21,16 +18,36 @@ export default async function PipelinePage({
   // um lugar e o cabeçalho de outro.
   const { data: pipeline } = await supabase
     .from("crm_pipelines")
-    .select("id, name, vocabulary")
+    .select("*")
     .eq("organization_id", activeOrg.orgId)
     .eq("id", id)
     .maybeSingle();
   if (!pipeline) notFound();
-  // Para o seletor de pipelines do cabeçalho (16/10): a MESMA consulta aberta
-  // que /app/kanban já faz (leitura é papel nenhum — só a gestão exige
-  // manager+), buscada aqui no servidor para não precisar de uma rota nova
-  // nem repetir o gate de papel de `GET /api/v1/pipelines`.
-  const { data: outros } = await supabase
+  /**
+   * ─── A LEITURA LEVE (#3172, item 4 do CR) ─────────────────────────────────
+   *
+   * O FUNIL e as ETAPAS vivas, sem negócio nenhum. É o que a aba Lista precisa
+   * para abrir: ela é a tela que existe para o funil que NÃO cabe numa leitura
+   * só, e depender da leitura que não cabe seria o defeito de volta. Aqui são
+   * duas consultas por chave (a linha do funil, as etapas por `position`), e
+   * não a varredura de `crm_leads` que a rota do quadro faz — a mesma que leva
+   * 19 s num funil migrado e estoura o `statement_timeout`.
+   *
+   * Ficam no SERVIDOR e descem como prop porque a página já lê o funil para o
+   * `notFound()`: é o mesmo cliente por cookie, a mesma RLS, e nenhum vaivém de
+   * rede a mais na abertura da tela.
+   */
+  const { data: etapas } = await supabase
+    .from("crm_stages")
+    .select("*")
+    .eq("organization_id", activeOrg.orgId)
+    .eq("pipeline_id", id)
+    .eq("is_archived", false)
+    .order("position");
+  // A lista que alimenta o seletor de troca rápida: os mesmos vivos da tela de
+  // Funis (`app/app/kanban/page.tsx`), só `id` + `name`. Arquivado não entra —
+  // trocar para um funil que não recebe negócio seria destino que não existe.
+  const { data: funis } = await supabase
     .from("crm_pipelines")
     .select("id, name")
     .eq("organization_id", activeOrg.orgId)
@@ -41,7 +58,9 @@ export default async function PipelinePage({
       pipelineId={id}
       initialName={pipeline.name}
       role={activeOrg.role}
-      pipelines={outros ?? []}
+      funis={funis ?? []}
+      funilInicial={pipeline as Pipeline}
+      etapasIniciais={(etapas ?? []) as Stage[]}
     />
   );
 }

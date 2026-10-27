@@ -112,6 +112,7 @@ export async function ensureTenantForUser(
         legal_name: orgName,
         status: "active",
         created_by: user.id,
+        ...(typeof user.user_metadata?.cobranca_plan_id === "string" ? { settings: { cobranca_signup_plan_id: user.user_metadata.cobranca_plan_id } } : {}),
       })
       .select("id, slug")
       .single();

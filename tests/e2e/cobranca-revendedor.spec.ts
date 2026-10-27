@@ -11,10 +11,11 @@
  *      401 e deixa rastro que a Visão geral mostra;
  *   5. a 1ª cobrança paga → "Em dia"; o checklist do dono marca chave, plano,
  *      aviso e compra, e diz que falta publicar (faixa do modo de teste);
- *   6. trocar de plano depois do teste: vale na virada paga;
- *   7. atraso → aviso "venceu" com link de pagamento → aviso final → suspensão
+ *   6. upgrade após pagamento: cobra o proporcional e só então troca plano/preço;
+ *   7. downgrade: agenda para a próxima renovação sem mudar a cobrança atual;
+ *   8. atraso → aviso "venceu" com link de pagamento → aviso final → suspensão
  *      (datas RECUADAS no banco; o cron roda com o now() real);
- *   8. no hub, "Já paguei" sem pagar não reativa; pagar a fatura reativa sozinha,
+ *   9. no hub, "Já paguei" sem pagar não reativa; pagar a fatura reativa sozinha,
  *      sem rajada, com um item de revisão.
  * Self-contida: tudo nasce pelo service role ou pela tela, e morre no `finally`.
  * As chaves da instalação voltam ao que eram.
@@ -73,8 +74,19 @@ test("[P0] primeira cobrança: conectar, assinar, atrasar, suspender e voltar so
     await page.goto("/admin/sistema");
     const interruptor = page.getByRole("switch", { name: "Cobrança dos seus clientes" });
     await expect(interruptor).toHaveAttribute("aria-checked", "false");
+    const salvamento = page.waitForResponse(r => new URL(r.url()).pathname === "/admin/sistema" && r.request().method() === "POST");
     await interruptor.click();
     await expect(interruptor).toHaveAttribute("aria-checked", "true");
+    // O switch é otimista; navegar antes da resposta aborta a Server Action.
+    const respostaDoSalvamento = await salvamento;
+    expect(respostaDoSalvamento.status()).toBe(200);
+    // A transição reabilita o controle ao receber o resultado; o poll abaixo confirma a gravação.
+    await expect(interruptor).toBeEnabled();
+    await expect.poll(async () => {
+      const gravada = await db.from("platform_config").select("valor").eq("chave", "MODULO_COBRANCA").maybeSingle();
+      expect(gravada.error).toBeNull();
+      return gravada.data?.valor;
+    }).toBe("ligado");
     await expect(page.getByText(/Empresas que já existem ficam isentas/)).toBeVisible();
     await page.screenshot({ path: `${EVIDENCIA}/sistema-cobranca-ligada.png`, fullPage: true });
     await page.goto("/admin/dashboard");
@@ -209,16 +221,34 @@ test("[P0] primeira cobrança: conectar, assinar, atrasar, suspender e voltar so
     expect(await page.evaluate(() => document.body.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
     await page.screenshot({ path: `${EVIDENCIA}/visao-geral-checklist.png`, fullPage: true });
 
-    // ── 6. Trocar de plano depois do teste: vale na virada paga ─────────────
+    // ── 6. Upgrade no período pago: só aplica depois de pagar o proporcional ─
     await pB.getByRole("button", { name: "Trocar de plano" }).click();
     await pB.getByLabel("Novo plano").selectOption(idProfissional);
     await pB.getByRole("button", { name: "Confirmar troca" }).click();
-    await expect(pB.getByText(/O novo plano vale a partir de \d{2}\/\d{2}/)).toBeVisible();
-    expect(await assinaturaDe(orgB)).toMatchObject({ plano_id: idEssencial, plano_agendado_id: idProfissional });
-    expect(duble.assinaturaPrincipal(cliente!)).toMatchObject({ unit_amount: 9990, proration_behavior: "none" });
-    await pB.screenshot({ path: `${EVIDENCIA}/billing-troca-agendada.png`, fullPage: true });
+    await pB.waitForURL((url) => url.origin === duble!.base && url.pathname.startsWith("/checkout/"));
+    await expect(pB.getByRole("heading", { name: "Checkout de teste" })).toBeVisible();
+    await expect(pB.getByText("(pagamento único)")).toBeVisible();
+    expect(await assinaturaDe(orgB)).toMatchObject({ plano_id: idEssencial, plano_agendado_id: null });
+    expect(duble.assinaturaPrincipal(cliente!)?.unit_amount).toBe(4990);
+    await pB.getByRole("button", { name: "Pagar com cartão de teste" }).click();
+    await pB.waitForURL(/\/app\/settings\/billing\?voltou=1/);
+    await expect(pB.getByText("Pagamento confirmado. Obrigado!")).toBeVisible({ timeout: 60_000 });
+    await expect.poll(async () => assinaturaDe(orgB)).toMatchObject({ plano_id: idProfissional, plano_agendado_id: null });
+    await expect.poll(() => duble!.assinaturaPrincipal(cliente!)?.unit_amount).toBe(9990);
+    await pB.screenshot({ path: `${EVIDENCIA}/billing-upgrade-proporcional-pago.png`, fullPage: true });
 
-    // ── 7. Atraso, avisos com link de pagamento, suspensão ──────────────────
+    // ── 7. Downgrade: só agenda a mudança para a próxima renovação ────────────
+    await pB.getByRole("button", { name: "Trocar de plano" }).click();
+    await pB.getByLabel("Novo plano").selectOption(idEssencial);
+    await pB.getByRole("button", { name: "Confirmar troca" }).click();
+    await expect(pB.getByText(/O novo plano vale a partir de \d{2}\/\d{2}/)).toBeVisible();
+    expect(await assinaturaDe(orgB)).toMatchObject({ plano_id: idProfissional, plano_agendado_id: idEssencial });
+    // A próxima fatura já sai com o preço novo, sem proração (spec §7e): o plano
+    // e os limites é que só viram na renovação paga.
+    expect(duble.assinaturaPrincipal(cliente!)).toMatchObject({ unit_amount: 4990, proration_behavior: "none" });
+    await pB.screenshot({ path: `${EVIDENCIA}/billing-downgrade-agendado.png`, fullPage: true });
+
+    // ── 8. Atraso, avisos com link de pagamento, suspensão ──────────────────
     const linkDaFatura = await duble.atrasar(cliente!);
     await drenarAte(request, "em atraso com aviso", async () => {
       const a = await assinaturaDe(orgB);
@@ -265,7 +295,8 @@ test("[P0] primeira cobrança: conectar, assinar, atrasar, suspender e voltar so
     await pB.getByRole("button", { name: "Pagar fatura" }).click();
     await expect(pB.getByText("Fatura paga")).toBeVisible();
     await drenarAte(request, "reativada sozinha", async () => (await estadoDaOrg(orgB)).status === "active");
-    expect(await assinaturaDe(orgB)).toMatchObject({ estado: "ativa", ultimo_aviso: null, plano_id: idProfissional, plano_agendado_id: null });
+    // Pagar o atraso é pagar o período novo: o downgrade agendado no passo 7 vira aqui.
+    expect(await assinaturaDe(orgB)).toMatchObject({ estado: "ativa", ultimo_aviso: null, plano_id: idEssencial, plano_agendado_id: null });
     expect(await saidasDe(orgB)).toEqual({ llm: 0, outbound: 0 });
     const revisao = await db.from("agent_inbox_items").select("id").eq("organization_id", orgB).eq("kind", "org_reativada");
     if (revisao.error) throw revisao.error;

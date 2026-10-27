@@ -14,6 +14,7 @@ import { ApiError } from "@/lib/api/types";
 import { documentoDoPagador, exigeDocumento } from "@/lib/cobranca/documento";
 import { formatadorDeData } from "@/lib/cobranca/fuso";
 import { linkDePagamentoSeguro } from "@/lib/cobranca/link";
+import { calcularAjusteProporcional } from "@/lib/cobranca/prorata";
 import { abrirNoNavegador } from "@/lib/cobranca/navegar";
 import type { PlanoParaTroca } from "@/lib/cobranca/painel";
 import type { EstadoDaAssinatura, ProvedorDeCobranca } from "@/lib/cobranca/vocabulario";
@@ -26,6 +27,12 @@ export interface PropsDasAcoes {
   linkDePagamento: string | null;
   cancelaNoFim: boolean;
   planosParaTroca: readonly PlanoParaTroca[];
+  planoAtual: PlanoParaTroca | null;
+  periodoPagoDesde: string | null;
+  proximoVencimento: string | null;
+  trocaPagamentoUrl: string | null;
+  trocaStatus: string | null;
+  instanteCalculo: string;
   /** A página recebeu `?voltou=1`: relê uma vez e dá o recado. */
   voltouDoCheckout: boolean;
   /** No hub de conta suspensa: pagar e voltar ao sistema é o único assunto. */
@@ -56,6 +63,10 @@ const FRASE_DO_ERRO: Record<string, string> = {
   pagamento_pendente: "Regularize o pagamento antes de trocar de plano.",
   pagamento_do_periodo_pendente:
     'A mensalidade de agora ainda não foi paga. Pague em "Pagar agora" e troque de plano depois que o pagamento for confirmado (Pix: minutos; boleto: até 1 dia útil).',
+  troca_em_preparo: "Estamos preparando o ajuste proporcional. Aguarde alguns segundos e tente novamente.",
+  troca_pendente: "Conclua ou aguarde a cobrança proporcional antes de solicitar outra troca de plano.",
+  pagamento_nao_registrado: "A cobrança foi iniciada, mas não conseguimos registrar o pagamento. Tente novamente; se houver uma cobrança aberta, fale com o suporte.",
+  periodo_indisponivel: "Não foi possível calcular o período pago. Atualize a assinatura e tente novamente.",
 };
 const FRASE_GENERICA = "Não foi possível concluir agora. Tente de novo.";
 type Leitura = { estado: EstadoDaAssinatura | null; assinaturas_vivas: number; org_operante: boolean };
@@ -70,6 +81,7 @@ export function AcoesDaAssinatura(p: PropsDasAcoes) {
   const idioma = useIdioma();
   const router = useRouter();
   const link = linkDePagamentoSeguro(p.linkDePagamento);
+  const linkDoAjuste = linkDePagamentoSeguro(p.trocaPagamentoUrl);
   const [ocupado, setOcupado] = useState(false);
   const [recado, setRecado] = useState<string | null>(null);
   const [trocando, setTrocando] = useState(false);
@@ -89,6 +101,20 @@ export function AcoesDaAssinatura(p: PropsDasAcoes) {
     };
   }, []);
   const dia = (v: string | null) => (v ? formatadorDeData(idioma, p.fuso ?? null, { day: "2-digit", month: "2-digit" }).format(new Date(v)) : "");
+  const selecionado = p.planosParaTroca.find((plano) => plano.id === novo) ?? null;
+  // A MESMA conta da cobrança (`troca.ts`), mínimo do provedor incluído: abaixo
+  // dele a tela diz "na próxima renovação", que é o que o servidor faz.
+  const ajusteProporcional = !p.planoAtual || !selecionado
+    ? 0
+    : calcularAjusteProporcional({
+        precoAtualCents: p.planoAtual.preco_cents,
+        precoNovoCents: selecionado.preco_cents,
+        periodoPagoDesde: p.periodoPagoDesde ? new Date(p.periodoPagoDesde) : null,
+        proximoVencimento: p.proximoVencimento ? new Date(p.proximoVencimento) : null,
+        agora: new Date(p.instanteCalculo),
+      });
+  const reais = (centavos: number) => new Intl.NumberFormat(idioma, { style: "currency", currency: "BRL" }).format(centavos / 100);
+  const dolares = (centavos: number) => new Intl.NumberFormat(idioma, { style: "currency", currency: "USD" }).format(centavos / 100);
 
   const emDivida = p.estado === "em_atraso" || p.estado === "cancelada";
   const podeAssinar = p.assinaturasVivas === 0 && p.estado !== "ativa";
@@ -105,8 +131,8 @@ export function AcoesDaAssinatura(p: PropsDasAcoes) {
   // que ficou aberta e relê aqui, sem esperar o cron — também no teste grátis.
   const aguardandoAsaas = p.provedor === "asaas" && (fatura !== null || (p.temProvedor && (p.estado === "trial" || link !== null)));
   // "Já paguei" só onde há o que reler: quem nunca assinou (teste que acabou) não pagou nada.
-  const podeDizerQuePagou = (emDivida && p.temProvedor) || p.noHub || aguardandoAsaas;
-  const podeTrocar = p.planosParaTroca.length > 0 && (p.estado === "trial" || p.estado === "ativa") && !p.cancelaNoFim;
+  const podeDizerQuePagou = (emDivida && p.temProvedor) || p.noHub || aguardandoAsaas || p.trocaPagamentoUrl !== null;
+  const podeTrocar = p.planosParaTroca.length > 0 && (p.estado === "trial" || p.estado === "ativa") && !p.cancelaNoFim && p.trocaStatus !== "criando";
   const podeCancelar = p.temProvedor && p.assinaturasVivas > 0 && !p.cancelaNoFim && (p.estado === "ativa" || p.estado === "trial");
 
   async function agir(acao: () => Promise<void>) {
@@ -236,6 +262,11 @@ export function AcoesDaAssinatura(p: PropsDasAcoes) {
             </a>
           </Button>
         )}
+        {linkDoAjuste && (
+          <Button asChild variant="outline">
+            <a href={linkDoAjuste} target="_blank" rel="noopener noreferrer">{t("Pagar ajuste do upgrade")}</a>
+          </Button>
+        )}
         {podeAssinar && (
           <Button
             disabled={ocupado || (pedeDocumento && documentoNormalizado === null)}
@@ -280,6 +311,11 @@ export function AcoesDaAssinatura(p: PropsDasAcoes) {
             {t("Trocar de plano")}
           </Button>
         )}
+        {p.trocaStatus && (
+          <p className="basis-full text-sm text-muted-foreground" role="status">
+            {t(p.trocaStatus === "criando" ? "Estamos preparando o ajuste proporcional. Aguarde alguns segundos." : "Há um ajuste proporcional esperando pagamento. Escolher outro plano cancela esse ajuste.")}
+          </p>
+        )}
         {podeCancelar && !cancelando && (
           <Button variant="ghost" disabled={ocupado} onClick={() => setCancelando(true)}>
             {t("Cancelar assinatura")}
@@ -288,7 +324,8 @@ export function AcoesDaAssinatura(p: PropsDasAcoes) {
       </div>
 
       {trocando && (
-        <div className="flex flex-wrap items-end gap-2 rounded-md border p-3">
+        <div className="space-y-3 rounded-md border p-3">
+          <div className="flex flex-wrap items-end gap-2">
           <div className="space-y-1">
             <Label htmlFor="novo-plano">{t("Novo plano")}</Label>
             <select id="novo-plano" className="h-9 rounded-md border bg-background px-2 text-sm" value={novo} onChange={(e) => setNovo(e.target.value)}>
@@ -299,12 +336,46 @@ export function AcoesDaAssinatura(p: PropsDasAcoes) {
               ))}
             </select>
           </div>
+          </div>
+          {p.planoAtual && selecionado && (
+            <div className="grid gap-2 text-sm sm:grid-cols-2" aria-live="polite">
+              {[p.planoAtual, selecionado].map((plano, i) => (
+                <section key={plano.id} className="rounded-md bg-muted/40 p-3">
+                  <h3 className="font-medium">{i === 0 ? t("Plano atual") : t("Novo plano")}: {plano.nome}</h3>
+                  <p>{reais(plano.preco_cents)} / {plano.intervalo === "ano" ? t("ano") : t("mês")}</p>
+                  <ul className="mt-2 space-y-1 text-muted-foreground">
+                    <li>{t("Pessoas")}: {plano.max_assentos ?? t("sem limite")}</li>
+                    <li>{t("Números conectados")}: {plano.max_canais ?? t("sem limite")}</li>
+                    <li>{t("IA por mês")}: {plano.teto_ia_usd_cents === null ? t("sem limite") : dolares(plano.teto_ia_usd_cents)}</li>
+                  </ul>
+                </section>
+              ))}
+            </div>
+          )}
+          {selecionado && selecionado.preco_cents > (p.planoAtual?.preco_cents ?? 0) && (
+            <p className="text-sm">
+              {ajusteProporcional === null
+                ? t("Não foi possível calcular o proporcional com os dados do período pago. Nenhuma troca será realizada.")
+                : ajusteProporcional === 0
+                  ? `${t("O ajuste proporcional é zero; o novo plano entra na próxima renovação")}: ${dia(p.proximoVencimento)}.`
+                  : `${t("Ajuste proporcional estimado para hoje")}: ${reais(ajusteProporcional)}. ${t("A data da próxima renovação permanece")}: ${dia(p.proximoVencimento)}.`}
+            </p>
+          )}
+          {selecionado && p.planoAtual && selecionado.preco_cents <= p.planoAtual.preco_cents && (
+            <p className="text-sm text-muted-foreground">{t("O plano escolhido e seus limites passam a valer na próxima renovação. A fatura atual mantém o valor e o vencimento.")}</p>
+          )}
           <Button
             disabled={ocupado || !novo}
             onClick={() =>
               void agir(async () => {
-                const { data: r } = await apiClient.post<{ data: { quando: string; vale_a_partir_de: string | null } }>(`${BASE}/plano`, { plano_id: novo });
+                const { data: r } = await apiClient.post<{ data: { quando: string; vale_a_partir_de: string | null; url_pagamento?: string | null } }>(`${BASE}/plano`, { plano_id: novo });
                 setTrocando(false);
+                if (r.url_pagamento) {
+                  if (p.provedor === "asaas") setFatura(linkDePagamentoSeguro(r.url_pagamento));
+                  else abrirNoNavegador(r.url_pagamento);
+                  setRecado(t("Pague o ajuste proporcional para aplicar o novo plano. Seus limites atuais permanecem até a confirmação."));
+                  return;
+                }
                 setRecado(
                   r.quando === "agendado" && r.vale_a_partir_de
                     ? t("O novo plano vale a partir de {data}.").replace("{data}", dia(r.vale_a_partir_de))

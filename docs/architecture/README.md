@@ -15,8 +15,10 @@ ser fonte sem ninguém decidir isso.
 ## Mapas
 
 | arquivo | escopo |
+| `etiquetas-paginadas.architecture.json` | vocabulário paginado, busca e sugestões nos editores do Inbox |
 |---|---|
-| `conversoes-de-anuncios.architecture.json` | venda, entrega, protocolo assíncrono, pendências e reprocessamento |
+| `nomes-internos-das-conexoes.architecture.json` | renomeação interna dos canais — cartões de WhatsApp, parceiro e redes sociais → rota tenant-aware → `channel_sessions.display_name` → cartões e seletores, com auditoria e sem alterar o nome público no provedor |
+| `conversoes-de-anuncios.architecture.json` | Purchase, etapas e LeadSubmitted por clique CTWA; entrega, livro de cliques e reprocessamento |
 | `prospeccao-nativa.architecture.json` | busca comercial, fila gradual, configuração conversacional persistente, sandbox e assistente de voz opcional |
 | `pre-go-live-whatsapp.architecture.json` | modo de teste por canal (issue #573): configuração administrativa, gate compartilhado, releitura no envio e validação pelo Inbox |
 | `app-da-meta-da-instalacao.architecture.json` | App da Meta da instalação (issue #850, migration 0257) — 10 peças, 12 arestas; a tela `/admin/meta` que grava a chave e mostra o token uma vez, o resolvedor que serve o par inteiro de UMA fonte (banco, com o `.env` de reserva) e por que Conexões só mostra o token quando ele veio do `.env` |
@@ -32,12 +34,14 @@ ser fonte sem ninguém decidir isso.
 | `central-avisos.architecture.json` | projeção em lote sob RLS, contexto real e resolver/reabrir independentes |
 | `followup-dossie.architecture.json` | dossiê do follow-up e intervenção humana — 20 peças, 30 arestas; as **duas metades** da corrida contra o motor (o tick reclamado e o turno em voo) e quatro não-ligações declaradas |
 | `followup-duplicar.architecture.json` | duplicar e renomear um fluxo — cópia sempre rascunho, nome único na org, o mesmo PATCH de nome agora com superfície na lista e no construtor |
+| `rodizio-de-atendentes.architecture.json` | rodízio de atendentes na ação Atribuir das Automações (#2041) — 8 peças, 8 arestas; a fila mora na regra, e uma função SQL trava por regra, escolhe, registra a vez e grava o dono numa transação só, para dois leads simultâneos não irem para a mesma pessoa |
+| `designer-de-automacoes.architecture.json` | designer de automações (fase 1) — 8 peças, 9 arestas; a mesma regra da aba Automações montada em caixas ligadas, validada pelo mesmo schema e gravada pela mesma rota, e por que o desenho em si não vai para o banco |
 | `followup-retorno.architecture.json` | gatilho Cliente voltou — inbound depois do silêncio, envio inline, turno do agente cede |
 | `indice-de-atrito.architecture.json` | índice de atrito — 24 peças, 31 arestas; a régua do atrito, o rádio que a lê e as demandas que entram nela |
 | `marca-propria.architecture.json` | marca própria (white-label) — 37 peças, 54 arestas, 6 faixas; a pilha org → instalação → `.env` → padrão, as saídas SEM DOM (`marcaDaSaida`) e a **não-ligação declarada** do PDF de LGPD, que imprime o CONTROLADOR e nunca a marca de quem revende |
 | `retencao-de-historico.architecture.json` | poda do histórico (issue #261) — 16 peças, 18 arestas, 6 faixas; o que sai (`done`/`failed`/`dead` velho), o que tem dono e **não** sai (`pending`/`running`, e `dead` com aviso ainda aberto), e por que o expurgo do audit é uma `security definer` sem seletor de linha em vez de uma porta |
 | `extensoes-declarativas.architecture.json` | perfil declarativo: catálogo de ensaio, admissão, recibos, arquivo local, ativação por organização, guia no CRM, as trocas de versão (atualizar e desfazer a última troca), a remoção da instalação e a auditoria da organização; o estado das provas fica no `contracts.status` do próprio mapa |
-| `banco-de-dados-externo.architecture.json` | banco externo (migration 0372, recorte do PR #1130 de @vgamkt) — 14 peças, 19 arestas, 4 faixas; o cadastro por admin e a leitura por todos, a view `_safe` como única superfície da tela, a guarda de rede revalidada a CADA abertura de pool, e a **não-ligação declarada**: as tools do agente ficaram no PR de origem e entram num segundo recorte |
+| `banco-de-dados-externo.architecture.json` | banco externo (migration 0372, recorte do PR #1130 de @vgamkt) — 27 peças, 48 arestas, 5 faixas; o cadastro por admin e a leitura por todos, a view `_safe` como única superfície da tela, a guarda de rede revalidada a CADA abertura de pool, e a **não-ligação declarada**: as tools do agente ficaram no PR de origem e entram num segundo recorte |
 | `captacao-por-webhook.architecture.json` | captação por webhook — 17 peças, 26 arestas, 5 faixas; o adaptador por ferramenta (Respondi, RD Station, Elementor, genérico), o cadastro do campo que mora no funil e o laço em que a definição volta como rótulo no painel, no card do lead, nos botões da automação e na entrada da IA; **não-ligação declarada**: o rótulo que o Elementor manda não é guardado |
 | `suspensao-de-organizacao.architecture.json` | suspensão que suspende (PR 1 da cobrança do revendedor): 17 peças, 24 arestas; a régua única de "opera", a escrita do estado só por duas funções definer (e o gatilho que fecha o PostgREST), o hub `/account-suspended` e o laço de retorno pela Central até a Fila; as **não-ligações declaradas** (entrada de mensagens, landings, escrita pela RLS) estão no card do próprio mapa |
 | `cobranca-do-revendedor.architecture.json` | cobrança do revendedor, PR 2 (planos e limites): a chave da instalação acima de uma régua única de limite (`fn_limite_do_plano`), as travas no banco para pessoas e números, o teto de IA numa consulta separada do orçamento da org, o teste grátis na criação e a liberação ao desligar a chave. Cada nó que espelha outro mapa declara `espelho`, e o teste reprova quando a peça espelhada some; a PR 3a acrescenta o caminho do dinheiro (conexão, adaptador, aviso assinado, releitura, régua, cron, hub do suspenso) e o card lista o que ainda não liga; a PR 3b liga o Asaas (Pix e boleto recorrentes) no mesmo encaixe, com o dialeto /v3 no mesmo dublê |
@@ -103,3 +107,6 @@ superfície do CRM atravessa essa aresta, e precisa responder três perguntas
 
 As três vezes o custo foi o mesmo: descobrir a aresta **durante** a
 implementação, com a peça já meio pronta.
+
+- `carteiras-transferencia.architecture.json`: atribuição respeita o escopo da carteira sob lock.
+- `atendimento-comercial.architecture.json`: entrada, veto, briefing e configuração de atendimento comercial exclusivamente humano.

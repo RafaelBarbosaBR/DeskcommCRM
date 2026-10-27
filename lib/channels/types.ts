@@ -6,8 +6,14 @@
 import type { SendMessageInput } from "@/lib/schemas";
 import type { FetchedMedia } from "@/lib/messaging/media/types";
 import type { OutboundMedia } from "@/lib/waha/media-send";
+import type { TemplateContract } from "@/lib/channels/meta/template-contract";
+import type { ContatoDoAparelho } from "@/lib/waha/client";
 
-export type { OutboundMedia };
+// O tipo do contato do aparelho ATRAVESSA o seam como tipo só (o import some na
+// compilação), do mesmo jeito do `OutboundMedia` acima: quem fora daqui precisa
+// tipar a lista que o canal devolve importa DESTE módulo, não de `lib/waha/` —
+// e o lint de canal reprovaria o caminho.
+export type { OutboundMedia, ContatoDoAparelho };
 
 export type ChannelProvider = "waha" | "meta_cloud" | "zernio" | "zernio_social" | "wacalls" | "datafy";
 
@@ -56,6 +62,21 @@ export interface ChannelCapabilities {
   costPerMessage: boolean;
   /** O atendente pode editar e apagar para todos uma mensagem já enviada. */
   alteraMensagemEnviada: boolean;
+  /**
+   * O canal deixa LER, em bloco e paginado, a AGENDA DE CONTATOS do aparelho
+   * pareado — o que o número da empresa salvou no celular?
+   *
+   * Nasce de uma diferença física entre os canais: só quem conversa com um
+   * aparelho de verdade tem uma agenda do aparelho para devolver; um canal
+   * expõe os contatos que já passaram por ele, não a lista salva no celular.
+   *
+   * É a pergunta que a tela faz para decidir se OFFERECE o gesto ("Sincronizar
+   * agenda do celular", #2736) — declarativa porque a tela não tem adapter em
+   * mãos, e perguntar QUAL provider é justamente o que o invariante 1 da
+   * doutrina proíbe. Quem executa o gesto confirma do mesmo jeito, pela
+   * presença do método `listPhonebook` no adapter.
+   */
+  phonebook: boolean;
 }
 
 /**
@@ -290,6 +311,27 @@ export interface ChannelAdapter {
   ): Promise<string | null>;
 
   /**
+   * O nome salvo na agenda do aparelho ligado a este canal, e o apelido do perfil.
+   *
+   * OPCIONAL: nem todo canal tem agenda. `null` significa que a pergunta nem
+   * saiu (transporte fora, canal sem o método). Um objeto com os dois campos
+   * nulos significa que o canal respondeu e não tinha nome — quem chama
+   * carimba e tenta de novo depois, em vez de perguntar a mesma pessoa para
+   * sempre.
+   *
+   * `agenda` é o nome que o dono do número GRAVOU no celular. `perfil` é o
+   * apelido que a própria pessoa pôs no WhatsApp. Quem chama não precisa saber
+   * QUAL canal guarda a agenda: testa a presença do método.
+   */
+  resolveAddressBookName?(
+    input: ChannelTenantScope & {
+      sessionRef: string;
+      phone: string | null;
+      lid: string | null;
+    },
+  ): Promise<{ agenda: string | null; perfil: string | null } | null>;
+
+  /**
    * O número, em dígitos, pelo qual este canal REGISTRA um telefone — `null`
    * quando não souber, quando o número não existir ou quando só houver
    * identidade opaca.
@@ -412,6 +454,25 @@ export interface ChannelAdapter {
    */
   checkHealth?(input: ChannelTenantScope & { sessionRef: string }): Promise<ChannelHealth>;
 
+  /**
+   * Uma PÁGINA da agenda de contatos do APARELHO pareado — o que o número da
+   * empresa salvou no celular (`limit`/`offset`, com ordenação fixa lá dentro
+   * para o offset não pular nem repetir linha).
+   *
+   * Existe porque a agenda mora no APARELHO, não no CRM: ler pede um endpoint
+   * do transporte, e quem não conversa com um aparelho de verdade não tem o
+   * que ler. A tela pergunta a capability `phonebook` antes de oferecer o
+   * gesto; quem executa testa a presença do método em vez de perguntar QUAL
+   * provider é — o que o lint de canal proíbe fora daqui.
+   *
+   * OPCIONAL como os demais: canal sem agenda não implementa.
+   */
+  listPhonebook?(input: ChannelTenantScope & {
+    sessionRef: string;
+    limit: number;
+    offset: number;
+  }): Promise<ContatoDoAparelho[]>;
+
   /** Grupos do número. Ausente = o canal não lista grupos. */
   listGroups?(input: { sessionRef: string }): Promise<ChannelGroup[]>;
 
@@ -471,6 +532,13 @@ export interface ChannelAdapter {
     language: string;
     /** Valores dos `{{n}}`, na ordem em que a definição os declara. */
     values: Record<string, string>;
+    /**
+     * O contrato que o pré-voo conferiu (`conferirDefinicao`), quando o espelho
+     * tem a definição. O transporte que precisa ORDENAR os valores — modelo
+     * nomeado, texto do cabeçalho, sufixo de link de botão — lê a ordem daqui.
+     * `null`/ausente: modelo fora do espelho, e vale a ordem numérica das chaves.
+     */
+    contrato?: TemplateContract | null;
   }): Promise<{ externalId: string | null }>;
 }
 

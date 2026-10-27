@@ -4,7 +4,7 @@ import { requireSupportWrite } from "@/lib/impersonate/support";
  * POST /api/v1/ai/routers — cria router (admin), audit `ai.router_created`.
  *
  * Intent Router (Fase 3 do épico harness — spec 2026-07-23, migration 0085).
- * organization_id vem SEMPRE de requireRole — nunca do body. Unique parcial
+ * organization_id vem SEMPRE da sessão/token — nunca do body. Unique parcial
  * index (channel_session_id where is_active) garante 1 router ativo por sessão
  * — violação vira 409 tratado, não 500 cru.
  */
@@ -12,9 +12,9 @@ import { randomUUID } from "node:crypto";
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
+import { resolveAuthDual, tetoDeEscritaDoToken } from "@/lib/api/auth-dual";
 import { ok, fail } from "@/lib/api/wrappers";
 import { audit } from "@/lib/audit";
-import { requireRole } from "@/lib/auth/require-role";
 import { ARCHIVED_AT, queryTolerantToMissingArchived } from "@/lib/channels/archived";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { traduzir } from "@/lib/i18n/dicionario";
@@ -39,18 +39,28 @@ const createRouterSchema = z.object({
 // GET
 // ---------------------------------------------------------------------------
 
-export async function GET(_req: NextRequest): Promise<Response> {
+export async function GET(req: NextRequest): Promise<Response> {
   const requestId = randomUUID();
-  const authz = await requireRole("agent", { requestId, resource: "ai_routers" });
+  const authz = await resolveAuthDual(req, {
+    requestId,
+    resource: "ai_routers",
+    role: "agent",
+    // Roteador é configuração de IA (decide qual agente responde): pelo token
+    // vale a regra de #2194 — escopo próprio `config:*` com token de admin, e
+    // token já emitido não ganha poder novo. Inclui a lista, que expõe
+    // channel_session_id e fallback_agent_id.
+    scope: "config:read",
+    tokenRole: "admin",
+  });
   if (!authz.ok) return authz.response;
-  const { org } = authz;
+  const { organizationId } = authz;
 
   const admin = createAdminClient();
 
   const { data: routers, error: routersErr } = await admin
     .from("ai_routers")
     .select(ROUTER_LIST_COLUMNS)
-    .eq("organization_id", org.orgId)
+    .eq("organization_id", organizationId)
     .order("created_at", { ascending: false });
   if (routersErr) {
     return fail("internal_error", "Erro ao listar routers.", 500, { requestId });
@@ -59,7 +69,7 @@ export async function GET(_req: NextRequest): Promise<Response> {
   const { data: memberRows, error: membersErr } = await admin
     .from("ai_router_members")
     .select("router_id")
-    .eq("organization_id", org.orgId);
+    .eq("organization_id", organizationId);
   if (membersErr) {
     return fail("internal_error", "Erro ao contar membros dos routers.", 500, { requestId });
   }
@@ -83,10 +93,20 @@ export async function POST(req: NextRequest): Promise<Response> {
   if (supportDenied) return supportDenied;
 
   const requestId = randomUUID();
-  const authz = await requireRole("admin", { requestId, resource: "ai_routers" });
+  const authz = await resolveAuthDual(req, {
+    requestId,
+    resource: "ai_routers",
+    role: "admin",
+    scope: "config:write",
+    tokenRole: "admin",
+  });
   if (!authz.ok) return authz.response;
-  const t = (texto: string) => traduzir(texto, authz.user.idioma);
-  const { user: authUser, org } = authz;
+  const t = (texto: string) => traduzir(texto, authz.idioma ?? "pt-BR");
+  const { organizationId, actor } = authz;
+
+  const teto = await tetoDeEscritaDoToken(authz, "ai_routers", requestId);
+  if (teto) return teto;
+  const authUserId = actor.type === "user" ? actor.id : null;
 
   let rawBody: unknown;
   try {
@@ -120,7 +140,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       .from("channel_sessions")
       .select("id")
       .eq("id", input.channel_session_id)
-      .eq("organization_id", org.orgId);
+      .eq("organization_id", organizationId);
   const { data: session, error: sessionErr } = await queryTolerantToMissingArchived(
     () => base().is(ARCHIVED_AT, null).maybeSingle(),
     () => base().maybeSingle(),
@@ -137,12 +157,12 @@ export async function POST(req: NextRequest): Promise<Response> {
   const { data: created, error: insErr } = await admin
     .from("ai_routers")
     .insert({
-      organization_id: org.orgId,
+      organization_id: organizationId,
       name: input.name,
       channel_session_id: input.channel_session_id,
       fallback_agent_id: input.fallback_agent_id ?? null,
       config: { ...input.config, context_message_count: input.config?.context_message_count ?? NEW_ROUTER_CONTEXT_MESSAGES },
-      created_by: authUser.id,
+      created_by: authUserId,
     })
     .select("id")
     .single();
@@ -156,8 +176,9 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   void audit({
     action: "ai.router_created",
-    actorUserId: authUser.id,
-    organizationId: org.orgId,
+    actorUserId: authUserId,
+    actorApiTokenId: authz.apiTokenId ?? null,
+    organizationId,
     resourceType: "ai_router",
     resourceId: created.id,
     requestId,

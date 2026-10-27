@@ -166,6 +166,18 @@ export async function POST(req: NextRequest): Promise<Response> {
         { requestId },
       );
     }
+    // #2846 (doc 146): com a cobrança ligada e planos oferecidos sem um padrão, o
+    // gatilho da 0679 não deixa a empresa nascer sem plano. É configuração da
+    // instalação, não falha: o integrador recebe o motivo, e repetir depois que
+    // houver padrão funciona (o dono já criado é reaproveitado).
+    if (err instanceof Error && err.message.includes("plano_obrigatorio")) {
+      return fail(
+        "plano_obrigatorio",
+        "Esta instalação cobra por plano e ainda não tem um plano padrão para empresas novas. Peça a quem administra para definir um.",
+        409,
+        { requestId },
+      );
+    }
     logger.error("[tenants.provision] falhou", {
       requestId,
       erro: err instanceof Error ? err.message : String(err),

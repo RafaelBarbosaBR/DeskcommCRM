@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
+import { ehVistoAzul } from "../support/waha-visto-azul";
 import { mkdirSync, writeFileSync } from "node:fs";
 import pg from "pg";
 import { createClient } from "@supabase/supabase-js";
@@ -188,6 +189,10 @@ async function receiver() {
   const target = new URL(process.env.WAHA_API_BASE_URL!);
   expect(["127.0.0.1", "localhost"]).toContain(target.hostname);
   const server = createServer(async (req, res) => {
+    if (ehVistoAzul(req.url)) {
+      res.end("{}");
+      return;
+    }
     let raw = "";
     for await (const part of req) raw += String(part);
     bodies.push(JSON.parse(raw));
@@ -207,11 +212,21 @@ async function receiver() {
   };
 }
 const panel = (page: Page) => page.locator('section[aria-label="Assistência do agente"]');
+/**
+ * O MESMO gesto, nas DUAS superfícies (issue #3027).
+ *
+ * Sem rascunho, o bloco não é montado e quem oferece a sugestão é o botão de
+ * ícone do compositor; com rascunho, é o botão de texto do bloco. Nunca os dois
+ * ao mesmo tempo — por isso um localizador de página serve para os dois estados,
+ * e é ele que o `generate` usa em vez de entrar pelo painel.
+ */
+const botaoSugerir = (page: Page) =>
+  page.getByRole("button", { name: "Sugerir resposta", exact: true });
 async function generate(page: Page) {
   const response = page.waitForResponse(
     (r) => r.url().endsWith("/draft-reply") && r.request().method() === "POST",
   );
-  await panel(page).getByRole("button", { name: "Sugerir resposta", exact: true }).click();
+  await botaoSugerir(page).click();
   const r = await response;
   expect(r.status(), await r.text()).toBe(200);
   await expect(panel(page).getByText("Sugestão para revisar", { exact: true })).toBeVisible();
@@ -333,10 +348,15 @@ test("testa sem enviar, pausa preserva publicação e duas aprovações entregam
     // Não é tempo: subir o teto para 15s não mudou nada, porque o elemento não
     // existe em instante nenhum.
     //
-    // O que a tela faz agora é o que se prova aqui: a sugestão SAI e o painel
-    // volta ao neutro — título genérico, e nada a aprovar.
-    await expect(panel(page).getByText("Assistência do agente", { exact: true })).toBeVisible();
-    await expect(panel(page).getByRole("button", { name: "Aprovar e enviar" })).toHaveCount(0);
+    // O que a tela faz agora é o que se prova aqui: a sugestão SAI — e, com ela,
+    // o BLOCO inteiro sai da faixa (issue #3027). O que sobra é o botão de ícone
+    // do compositor, que é o mesmo gesto sem custar 2-3 linhas do histórico.
+    await expect(
+      panel(page),
+      "o bloco 'Assistência do agente' continuou ocupando a faixa sem rascunho",
+    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Aprovar e enviar" })).toHaveCount(0);
+    await expect(botaoSugerir(page)).toBeVisible();
     await inbound(f, "Obrigada, pode continuar");
     const second = await generate(page);
     await panel(page)
@@ -378,11 +398,20 @@ test("testa sem enviar, pausa preserva publicação e duas aprovações entregam
     // Os três rótulos de `statuses` cobertos por esse conjunto (`sent`, `stale`,
     // `dismissed`) são hoje código inalcançável no componente. Está anotado; o
     // teste não é o lugar de decidir se eles voltam a aparecer.
-    await expect(panel(page).getByText("Assistência do agente", { exact: true })).toBeVisible();
-    await expect(panel(page).getByRole("button", { name: "Aprovar e enviar" })).toHaveCount(0);
+    await expect(
+      panel(page),
+      "o bloco 'Assistência do agente' continuou ocupando a faixa sem rascunho",
+    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Aprovar e enviar" })).toHaveCount(0);
+    // O aviso inline de aprovação saiu do componente: com o bloco fora da tela
+    // não há onde ele caiba (a confirmação virou toast). O que se prova é que ele
+    // não reaparece no bloco — que é o que existia antes do conserto.
     await expect(panel(page).getByText("Resposta aprovada. Acompanhe o envio aqui.", { exact: true })).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
-    await capture(page, panel(page), info, "obsoleta-mobile");
+    // O alvo do recorte era o BLOCO; sem rascunho ele não existe mais, e o que
+    // precisa caber nos 390px é a linha de ações do compositor — com o botão de
+    // ícone no lugar do bloco.
+    await capture(page, page.getByRole("textbox", { name: "Mensagem", exact: true }).locator("xpath=.."), info, "obsoleta-mobile");
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(`/app/ai/agents/${f.agent}`);
     await page.getByLabel("Modo de operação").selectOption("automatic");

@@ -31,6 +31,8 @@ vi.mock("@/lib/env", () => ({
 
 vi.mock("@/lib/channels", () => ({
   DEFAULT_CHANNEL_PROVIDER: "waha",
+  CHANNEL_SESSION_REF_COLUMNS: "provider, waha_session_name",
+  resolveSessionRef: (session: { waha_session_name: string }) => session.waha_session_name,
   getAdapter: () => ({
     fetchProfilePictureUrl: async (input: { recipient: string }) => {
       pedidos.push(input.recipient);
@@ -46,7 +48,16 @@ vi.mock("@/lib/supabase/admin", () => ({
         const dados =
           tabela === "contacts"
             ? [linhaDoContato]
-            : { waha_session_name: "sessao-de-teste", provider: "waha" };
+            : tabela === "conversations"
+              ? {
+                  channel_sessions: {
+                    provider: "waha",
+                    waha_session_name: "sessao-de-teste",
+                    status: "WORKING",
+                    archived_at: null,
+                  },
+                }
+              : { waha_session_name: "sessao-de-teste", provider: "waha" };
         const proxy: Record<string, unknown> = new Proxy(
           {},
           {

@@ -8,8 +8,8 @@
  *
  * Esta spec dirige a TELA: abre a conversa, usa o seletor "Etapa do funil" do
  * bloco "Leads recentes" e prova no banco que o negócio mudou de etapa pelo MESMO
- * caminho do quadro (atividade `stage_changed` gravada). Etapa de perda não é
- * oferecida — ela pede motivo, e esse diálogo mora no quadro.
+ * caminho do quadro (atividade `stage_changed` gravada). A etapa de perda é
+ * oferecida, mas não move direto: ela abre a janela de motivo (issue #2871).
  */
 import { randomInt, randomUUID } from "node:crypto";
 
@@ -123,8 +123,8 @@ test.describe("Etapa do negócio pela conversa", () => {
     await seletor.click();
     const opcoes = page.getByRole("option");
     await expect(opcoes.filter({ hasText: "Pedido confirmado" })).toBeVisible();
-    // Perda pede motivo: fica no quadro, não aqui.
-    await expect(opcoes.filter({ hasText: "Cancelado" })).toHaveCount(0);
+    // Perda aparece, mas pede motivo: escolhê-la abre a janela, não move (coberto no unit).
+    await expect(opcoes.filter({ hasText: "Cancelado" })).toHaveCount(1);
     registra(`etapa · opções = ${JSON.stringify(await opcoes.allInnerTexts())}`);
     await captura(page, "etapa-02-opcoes");
 

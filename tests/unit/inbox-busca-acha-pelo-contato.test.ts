@@ -102,6 +102,8 @@ describe("busca do inbox — o contato entra no predicado", () => {
       "display_name",
     );
     expect(nomes).toContain("name");
+    // O nome da agenda do celular (#2439) é o que a lista mostra sem nome no CRM.
+    expect(nomes).toContain("address_book_name");
     expect(
       args(c, "contacts", "eq"),
       "consulta em contacts sem filtro de organização — service role bypassa RLS",

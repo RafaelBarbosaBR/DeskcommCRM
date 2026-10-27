@@ -2,11 +2,15 @@
  * Domain types for Contacts (EPIC-05).
  * Mirror the verified `contacts` schema (see CLAUDE.md / Spec 05).
  */
+import type { ContactType } from "@/lib/schemas/contacts";
+
 export interface Contact {
   id: string;
   organization_id: string;
   name: string | null;
   display_name: string | null;
+  /** Nome salvo na agenda do celular. SÓ A EQUIPE vê (`rotuloParaAEquipe`); nunca vai em mensagem. */
+  address_book_name?: string | null;
   email: string | null;
   email_normalized: string | null;
   phone_number: string | null;
@@ -16,6 +20,19 @@ export interface Contact {
   blocked_reason: string | null;
   /** Spec 21: vida pessoal — escondido da operação e inutilizado para envio. */
   is_personal: boolean;
+  /**
+   * Issue 3005: o papel do contato — `cliente` (default do banco) ou
+   * `fornecedor`. Separado de `is_personal` de propósito: fornecedor conversa
+   * normalmente e NÃO entra no predicado de stop do envio.
+   * Opcional: resposta em cache/legado pode não trazer o campo.
+   */
+  contact_type?: ContactType;
+  /**
+   * Issue 2379: marca PERMANENTE "sempre atendimento humano". A IA nunca
+   * responde este contato e a devolução (manual ou automática) não a desfaz.
+   * Separada de `force_human`, que é a trava de handoff e continua temporária.
+   */
+  ai_opt_out: boolean;
   is_anonymized: boolean;
   anonymized_at: string | null;
   is_merged_into: string | null;

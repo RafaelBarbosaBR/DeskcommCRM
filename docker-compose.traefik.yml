@@ -27,10 +27,6 @@
 # - `encode gzip`             → middleware `deskcomm-compress`
 # - `respond @waha_global 403`→ router `deskcomm-waha-block` (ver abaixo)
 #
-# Os timeouts longos que o Caddyfile dá a /api/internal/agents/run* NÃO precisam
-# de equivalente: no Traefik o writeTimeout e o responseHeaderTimeout já são
-# ilimitados por padrão, então uma resposta de 5 minutos passa inteira.
-#
 # PRÉ-REQUISITOS NO TRAEFIK DA HOSPEDAGEM
 # ---------------------------------------
 # Espera-se um entrypoint `websecure` (443) e um certresolver `letsencrypt` —

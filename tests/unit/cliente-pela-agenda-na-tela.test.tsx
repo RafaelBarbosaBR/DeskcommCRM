@@ -4,7 +4,7 @@
  * `contacts.first_service_at` só é mantida enquanto a organização tem
  * "Clientes pela agenda" ligada (migration 0262). Desligada, a coluna fica
  * congelada no que era — e um selo "Cliente", uma linha "Cliente desde" ou um
- * botão "Funil de clientes" mostrados a partir dela falariam de uma regra que
+ * botão "Pipeline de clientes" mostrados a partir dela falariam de uma regra que
  * não roda. Cada consumidor lê a regra por `ActiveOrg.cliente_pela_agenda`, que
  * o layout monta; esta suíte prova os dois estados em cada um.
  */
@@ -25,6 +25,7 @@ const USER = { id: "u-1", is_platform_admin: false, support: null };
 
 vi.mock("@/hooks/auth/AuthProvider", () => ({
   useActiveOrg: () => ({ ...ORG, cliente_pela_agenda: ligada }),
+  usePermission: () => true,
   useAuth: () => ({ user: USER, activeOrg: { ...ORG, cliente_pela_agenda: ligada } }),
 }));
 vi.mock("@/hooks/i18n/useT", () => ({ useT: () => (s: string) => s }));
@@ -84,6 +85,7 @@ const CONTATO = {
   updated_at: "2026-01-01T10:00:00.000Z",
   last_activity_at: null,
   first_service_at: "2025-03-12T14:00:00.000Z",
+  ai_opt_out: false,
 } satisfies Contact;
 
 function comQuery(ui: ReactNode) {
@@ -187,11 +189,11 @@ describe("funil de clientes na tela de Funis", () => {
   it("ligada: botão em cada funil, selo no marcado, e o rodapé do roteamento", () => {
     ligada = true;
     render(comQuery(<FunisClient funis={FUNIS} arquivados={[]} podeGerenciar podeImportar />));
-    expect(screen.getByTestId("clientes-f1")).toHaveTextContent("Funil de clientes");
-    expect(screen.getByTestId("clientes-f2")).toHaveTextContent("Deixar de ser funil de clientes");
+    expect(screen.getByTestId("clientes-f1")).toHaveTextContent("Pipeline de clientes");
+    expect(screen.getByTestId("clientes-f2")).toHaveTextContent("Deixar de ser pipeline de clientes");
     expect(screen.getAllByText("Clientes")).toHaveLength(2);
     expect(screen.getByTestId("funis-rodape-clientes")).toHaveTextContent(
-      "Quem já tem atendimento marcado entra pelo funil de clientes.",
+      "Quem já tem atendimento marcado entra pelo pipeline de clientes.",
     );
   });
 });

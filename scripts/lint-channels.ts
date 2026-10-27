@@ -186,7 +186,6 @@ const KNOWN_DEBT: { reason: string; files: string[] }[] = [
       "lib/agent-engine/env.ts",
       "lib/agent-engine/health/circuit.ts",
       "lib/agent-engine/obs/metrics.ts",
-      "lib/ai/dispatcher/triggers.ts",
       "lib/ai/runtime/finalize.ts",
       "lib/automation/start-conversation.ts",
       "lib/env.ts",

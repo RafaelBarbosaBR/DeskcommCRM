@@ -1,3 +1,4 @@
+import { guardServiceEffect } from "@/lib/atendimento/fronteira-server";
 import { observeServiceOrigin } from "@/lib/atendimento/origem";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { idsDeContatosPessoais } from "@/app/api/v1/conversations/_handler";
@@ -20,6 +21,13 @@ import { camposAlterados } from "@/lib/leads/campos-alterados";
 import { valoresAntesDepois } from "@/lib/leads/valores-audit";
 import { RECUSA_DE_TROCA_DE_FUNIL } from "@/lib/leads/clonar-para-funil";
 import {
+  camposQueMudaram,
+  defsDoPadraoDoFunil,
+  erroDePadrao,
+  recusasDePadrao,
+} from "@/lib/leads/padrao-do-campo";
+import { testaComPrazo } from "@/lib/leads/padrao-do-campo-no-servidor";
+import {
   RECUSA_RETOMADA_ETAPA_INDISPONIVEL,
   RECUSA_RETOMADA_LEAD_ABERTO,
   RECUSA_RETOMADA_SEM_ETAPA,
@@ -28,6 +36,7 @@ import {
   recusaReabertura,
 } from "@/lib/leads/reabertura";
 import {
+  camposComAnexo,
   recusaDeCamposObrigatorios,
   recusaDeMotivoDoGanho,
   settingsDoFunil,
@@ -43,6 +52,8 @@ import {
 import { motivosDaCategoria } from "@/lib/leads/motivos-de-perda-do-funil";
 import type { CreateLeadInput, UpdateLeadInput } from "@/lib/schemas";
 import { ehCorrecaoDeMovimentoDaIa } from "@/lib/leads/correcao-humana";
+import { ocultarProvaMetaNaResposta, removerProvaMetaLeadSubmitted } from "@/lib/leads/prova-meta-lead-submitted";
+import { ehRecusaDaVisibilidadeDoFunil } from "@/lib/leads/recusa-da-visibilidade";
 
 type SB = SupabaseClient;
 
@@ -261,14 +272,9 @@ function recusaDaGuardaDoBanco(
       traduzir("Responsável não é um atendente ativo desta organização.", ctx.idioma ?? "pt-BR"),
     );
   }
-  // Só a policy de `crm_leads`: o mesmo 42501 também é GRANT faltando numa
-  // função ou numa tabela que um gatilho alcança — defeito nosso, que tem de
-  // continuar 500 com a mensagem do banco, e não virar "visibilidade". A recusa
-  // de RLS nomeia a tabela entre aspas na mensagem em inglês, que é o
-  // lc_messages do Supabase (en_US); a de GRANT ("permission denied for table
-  // crm_leads") não. Num Postgres com mensagens em de, es ou fr as aspas mudam
-  // e a recusa cai no 500 antigo, que é a direção segura.
-  if (erro?.code === "42501" && erro.message?.includes('"crm_leads"')) {
+  // Só a policy de `crm_leads` (a régua mora no predicado); o 42501 de GRANT
+  // faltando continua 500 com a mensagem do banco.
+  if (ehRecusaDaVisibilidadeDoFunil(erro)) {
     return new ApiError(
       403,
       "forbidden",
@@ -443,7 +449,7 @@ export async function listLeadsHandler(
     hasMore && last
       ? encLeadCursor({ created_at: String(last.created_at), id: String(last.id) })
       : null;
-  return { leads: page, cursor, has_more: hasMore };
+  return { leads: page.map(ocultarProvaMetaNaResposta), cursor, has_more: hasMore };
 }
 
 // ---------------------------------------------------------------------------
@@ -494,7 +500,7 @@ export async function getLeadHandler(
       traduzir("Lead não encontrado.", ctx.idioma ?? "pt-BR"),
     );
   }
-  return data as Record<string, unknown>;
+  return ocultarProvaMetaNaResposta(data as Record<string, unknown>);
 }
 
 // ---------------------------------------------------------------------------
@@ -509,6 +515,17 @@ export async function createLeadHandler(
     source_metadata?: Record<string, unknown>;
     /** Interno (webhook inbound) — idempotência via uniq_crm_leads_org_source_external. */
     external_id?: string;
+    /**
+     * Interno (webhook inbound) — a FONTE que criou este card (issue #2316,
+     * migration 0683).
+     *
+     * É o carimbo que responde "de quem é este card" para a atualização por
+     * integração alcançar só o card da própria fonte, e ele é durável por
+     * desenho: a linha de `webhook_lead_captures` é podada em 365 dias. Não vem
+     * do corpo da requisição — quem passa é a rota de captação, que resolve a
+     * fonte pelo `path_token`.
+     */
+    webhook_source_id?: string | null;
     /**
      * Interno (importação de planilha). Marca o `lead.created` com
      * `metadata.via`, e o gatilho de follow-up "Lead criado" não inscreve em
@@ -531,6 +548,14 @@ export async function createLeadHandler(
      * MCP `crm_retomar_lead`), nunca o POST genérico.
      */
     retomado_de_lead_id?: string | null;
+    /**
+     * Interno (clone, transferência entre funis, retomada): o `custom_fields`
+     * do negócio de ORIGEM. A régua do padrão (#2730) julga só o que difere
+     * dele — o valor herdado já estava gravado, e trocar de funil não pode ser
+     * barrado por um dado antigo que ninguém tocou, a mesma regra da edição.
+     * Não vem do corpo da requisição.
+     */
+    custom_fields_da_origem?: Record<string, unknown> | null;
   },
   opcoes: {
     /**
@@ -544,6 +569,13 @@ export async function createLeadHandler(
      * E não vem do corpo da requisição, como os demais internos.
      */
     exigirCamposDaEtapa?: boolean;
+    /**
+     * `false` SÓ no webhook de captação, pelo mesmo motivo do anterior: o lead
+     * de formulário nasce com o valor como veio, mesmo fora do `padrao` do
+     * campo (#2730). Recusar perderia o lead; o formato passa a ser cobrado
+     * quando alguém editar o campo na ficha.
+     */
+    exigirPadraoDoCampo?: boolean;
   } = {},
 ): Promise<Record<string, unknown>> {
   // Validate stage belongs to pipeline within active org.
@@ -575,6 +607,42 @@ export async function createLeadHandler(
     );
   }
 
+  // As DUAS réguas desta criação leem o MESMO `settings` de funil — os campos
+  // exigidos (#2295, logo abaixo) e o PADRÃO do valor (#2730) — então a linha é
+  // perguntada UMA vez só. E nenhuma quando não há o que perguntar: o webhook de
+  // captação, isento das duas, continua sem tocar em `crm_pipelines`, byte a
+  // byte como antes. O valor herdado de outro negócio não é julgado (ver
+  // `custom_fields_da_origem`), só o que difere dele.
+  const camposAJulgar =
+    opcoes.exigirPadraoDoCampo === false || !input.custom_fields
+      ? {}
+      : input.custom_fields_da_origem !== undefined
+        ? camposQueMudaram(input.custom_fields, input.custom_fields_da_origem)
+        : input.custom_fields;
+  const settingsDaCriacao =
+    opcoes.exigirCamposDaEtapa !== false || Object.keys(camposAJulgar).length > 0
+      ? await settingsDoFunil(supabase, input.pipeline_id)
+      : null;
+
+  // ── O PADRÃO (#2730) — o valor do campo tem de CASAR antes de nascer ─────
+  //
+  // A MESMA régua do formulário e da API (`lib/leads/padrao-do-campo`): regex
+  // do `settings.fields[].padrao` com a frase do DONO na recusa. Aqui ela roda
+  // ANTES da régua de campos exigidos, porque é sobre o que já veio escrito —
+  // um "dois" em "Idades das crianças" não é campo faltando, é valor torto.
+  //
+  // Fail-open igual ao resto da casa: `settingsDoFunil` devolve `null` quando a
+  // leitura falha, `defsDoPadraoDoFunil` devolve lista vazia e a criação segue
+  // como hoje — a régua só tem poder sobre o que ela consegue ler.
+  if (Object.keys(camposAJulgar).length > 0) {
+    const recusas = recusasDePadrao(
+      defsDoPadraoDoFunil(settingsDaCriacao, "negocio"),
+      camposAJulgar,
+      testaComPrazo,
+    );
+    if (recusas.length > 0) throw erroDePadrao(recusas, ctx.requestId, ctx.idioma);
+  }
+
   // ── A ETAPA EM QUE O NEGÓCIO NASCE TAMBÉM É UMA ENTRADA (issue #1710) ──────
   //
   // Criar direto numa etapa exigente é o MESMO gatilho do arrasto: o funil que
@@ -600,12 +668,17 @@ export async function createLeadHandler(
   // leitura falha): um funil sem `obrigatorio_em` valida `faltando: []` e a
   // criação acontece byte a byte como antes — a regra continua opt-in.
   if (opcoes.exigirCamposDaEtapa !== false) {
-    const settingsDaCriacao = await settingsDoFunil(supabase, input.pipeline_id);
     const vereditoDeCampos = validaCamposExigidos({
       lead: { custom_fields: input.custom_fields ?? {} },
       settingsDoFunil: settingsDaCriacao,
       destino: { stageId: stage.id, desfecho: null },
       motivoDeGanho: null,
+      // O ARQUIVO não é cobrado aqui (#3433): o anexo mora em
+      // `crm_lead_attachments.lead_id` e só pode subir depois que o negócio
+      // existe. Sem esta opção, etapa que exige documento recusava TODA
+      // criação (422) sem caminho de saída. A exigência volta no próximo move,
+      // no lote ou no fechamento — lá `camposComAnexo` é lido de verdade.
+      semAnexosAinda: true,
     });
     if (vereditoDeCampos.faltando.length > 0) {
       const recusa = recusaDeCamposObrigatorios(vereditoDeCampos.faltando, ctx.idioma);
@@ -664,6 +737,7 @@ export async function createLeadHandler(
   const currency = input.currency ?? (await moedaDaOrganizacao(supabase, ctx.organization_id));
 
   const serviceOrigin = ctx.serviceOrigin ?? await observeServiceOrigin(createAdminClient(), ctx.organization_id, input.contact_id ?? null);
+  await guardServiceEffect();
   const { data: lead, error: insErr } = await supabase
     .from("crm_leads")
     .insert({
@@ -681,8 +755,9 @@ export async function createLeadHandler(
       expected_close_date: input.expected_close_date ?? null,
       tags: input.tags ?? [],
       source: input.source,
-      source_metadata: input.source_metadata ?? {},
+      source_metadata: removerProvaMetaLeadSubmitted(input.source_metadata),
       external_id: input.external_id ?? null,
+      webhook_source_id: input.webhook_source_id ?? null,
       custom_fields: input.custom_fields ?? {},
       retomado_de_lead_id: input.retomado_de_lead_id ?? null,
       status: "open",
@@ -694,6 +769,33 @@ export async function createLeadHandler(
 
   const recusaNoInsert = recusaDaGuardaDoBanco(ctx, insErr);
   if (recusaNoInsert) throw recusaNoInsert;
+
+  // ── A PERDA SEM MOTIVO NA PRÓPRIA CRIAÇÃO (issue #2743) ────────────────────
+  //
+  // Nascer numa etapa de perda é o ÚNICO caminho de escrita em que este
+  // handler chega ao trigger `fn_validate_lost_reason_required` sem ter
+  // perguntado nada: o arrasto, o move, o bulk, o encerramento e o `/lose`
+  // decidem `decideMotivoDaPerda` ANTES de escrever, e aqui não há
+  // `lost_reason` no corpo (`CreateLeadInput` nem o declara). O trigger levanta
+  // `22023` — e sem esta linha o catch-all logo abaixo entregava 500
+  // `internal_error` com a mensagem crua do banco, que o Sentry conta como
+  // defeito interno (#2743, medido na prova do #2713).
+  //
+  // É a MESMA rede de segurança que `moveLeadHandler`, `bulk`, `encerramento`
+  // e o arrasto já usam — uma pergunta, uma resposta: a recusa do banco vira
+  // recusa de NEGÓCIO (422 `lost_reason_required`, frase traduzida), e um erro
+  // de banco de outra classe segue intocado no 500.
+  const recusaDeMotivoNoInsert = recusaDeMotivoDaPerdaPeloBanco(insErr, ctx.idioma);
+  if (recusaDeMotivoNoInsert) {
+    throw new ApiError(
+      422,
+      recusaDeMotivoNoInsert.codigo,
+      undefined,
+      ctx.requestId,
+      recusaDeMotivoNoInsert.mensagem,
+    );
+  }
+
   if (insErr || !lead) {
     throw new ApiError(
       500,
@@ -767,7 +869,7 @@ export async function createLeadHandler(
     },
   });
 
-  return lead as Record<string, unknown>;
+  return ocultarProvaMetaNaResposta(lead as Record<string, unknown>);
 }
 
 // ---------------------------------------------------------------------------
@@ -807,6 +909,32 @@ export async function updateLeadHandler(
       ctx.requestId,
       traduzir("Lead não encontrado.", ctx.idioma ?? "pt-BR"),
     );
+  }
+
+  // ── O PADRÃO (#2730) — a MESMA régua da criação, na EDIÇÃO ───────────────
+  //
+  // O funil é o do PRÓPRIO negócio (a linha já está em mãos), e o julgamento é
+  // sobre o DIFF contra o que está gravado (`camposQueMudaram`, a mesma conta
+  // da auditoria): a ficha do dossiê manda o formulário INTEIRO a cada
+  // salvamento (#2814), e julgar tudo recusaria a gravação por um campo que a
+  // pessoa nem tocou — o caso medido do campo escondido por `mostrar_quando`.
+  // Escopo `negocio` (#2852): o valor de um campo do CONTATO mora em
+  // `contacts.custom_fields`, e o padrão dele é julgado na ficha do contato.
+  // `settingsDoFunil` é fail-open: funil ilegível = lista vazia = grava como hoje.
+  if (input.custom_fields && Object.keys(input.custom_fields).length > 0) {
+    const alterados = camposQueMudaram(
+      input.custom_fields,
+      (existing as { custom_fields?: unknown }).custom_fields,
+    );
+    if (Object.keys(alterados).length > 0) {
+      const settingsDoEdicao = await settingsDoFunil(supabase, existing.pipeline_id);
+      const recusas = recusasDePadrao(
+        defsDoPadraoDoFunil(settingsDoEdicao, "negocio"),
+        alterados,
+        testaComPrazo,
+      );
+      if (recusas.length > 0) throw erroDePadrao(recusas, ctx.requestId, ctx.idioma);
+    }
   }
 
   // Reenviar o contato que o lead já tem não é ligar a um contato novo.
@@ -876,6 +1004,7 @@ export async function updateLeadHandler(
   const tagServiceOrigin = input.tags !== undefined
     ? ctx.serviceOrigin ?? await observeServiceOrigin(createAdminClient(), ctx.organization_id, input.contact_id ?? existing.contact_id)
     : null;
+  await guardServiceEffect();
   const { data: updated, error: updErr } = await supabase
     .from("crm_leads")
     .update(patch)
@@ -1076,7 +1205,7 @@ export async function updateLeadHandler(
     },
   });
 
-  return (fresh ?? updated) as Record<string, unknown>;
+  return ocultarProvaMetaNaResposta((fresh ?? updated) as Record<string, unknown>);
 }
 
 // ---------------------------------------------------------------------------
@@ -1231,6 +1360,7 @@ export async function moveLeadHandler(
     : validaCamposExigidos({
         lead: lead as Record<string, unknown>,
         settingsDoFunil: settings,
+        camposComAnexo: await camposComAnexo(supabase, settings, ctx.organization_id, leadId),
         destino: {
           stageId: stage.id,
           desfecho: stage.is_won ? "won" : stage.is_lost ? "lost" : null,
@@ -1275,6 +1405,7 @@ export async function moveLeadHandler(
 
   const serviceOrigin = ctx.serviceOrigin ?? await observeServiceOrigin(createAdminClient(), ctx.organization_id, lead.contact_id);
   const nowIso = new Date().toISOString();
+  await guardServiceEffect();
   const { data: updated, error: updErr } = await supabase
     .from("crm_leads")
     .update({
@@ -1485,7 +1616,7 @@ export async function moveLeadHandler(
     },
   });
 
-  return finalLead;
+  return ocultarProvaMetaNaResposta(finalLead);
 }
 
 
@@ -1583,7 +1714,7 @@ export async function retomarLeadHandler(
   if (jaErr) {
     throw new ApiError(500, "internal_error", undefined, ctx.requestId, jaErr.message);
   }
-  if (jaRetomado) return jaRetomado as Record<string, unknown>;
+  if (jaRetomado) return ocultarProvaMetaNaResposta(jaRetomado as Record<string, unknown>);
 
   const { data: funil, error: funilErr } = await supabase
     .from("crm_pipelines")
@@ -1656,6 +1787,7 @@ export async function retomarLeadHandler(
 
   const payload: CreateLeadInput & {
     custom_fields?: Record<string, unknown>;
+    custom_fields_da_origem?: Record<string, unknown>;
     source_metadata?: Record<string, unknown>;
     retomado_de_lead_id?: string;
     dono_herdado?: boolean;
@@ -1670,6 +1802,7 @@ export async function retomarLeadHandler(
     source: "retomada",
     tags: copia("tags") ? origemTipada.tags ?? [] : [],
     custom_fields: copia("custom_fields") ? origemTipada.custom_fields ?? {} : {},
+    custom_fields_da_origem: origemTipada.custom_fields ?? {},
     retomado_de_lead_id: origemTipada.id,
     // O ponteiro da coluna é a cadeia; este registro guarda TAMBÉM o desfecho
     // de origem para a tela, porque a coluna guarda só o id.

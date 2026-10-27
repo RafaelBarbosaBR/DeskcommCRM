@@ -93,6 +93,17 @@ export const crmStartConversationAndSend: McpToolDefinition<typeof inputShape> =
       throw new Error("Informe contact_id ou phone_number.");
     }
 
+    // A mensagem é validada ANTES de abrir: depois de aberta, um corpo
+    // inválido deixaria nascer uma conversa vazia. O id real só existe depois
+    // de abrir; o UUID nulo ocupa o lugar dele apenas nesta validação.
+    const mensagem = sendMessageSchema.parse({
+      conversation_id: "00000000-0000-0000-0000-000000000000",
+      type: input.type,
+      body: input.body,
+      media_url: input.media_url,
+      media_mime: input.media_mime,
+    });
+
     // Abrir conversa com pessoal é escrita para fora da operação (spec 21,
     // etapa 12): recusa ANTES de abrir — depois de aberta, o `send` recusaria
     // mas a conversa vazia já teria nascido. Contato novo (telefone sem dono)
@@ -168,13 +179,7 @@ export const crmStartConversationAndSend: McpToolDefinition<typeof inputShape> =
       name: input.name,
     });
 
-    const parsed = sendMessageSchema.parse({
-      conversation_id: opened.conversation_id,
-      type: input.type,
-      body: input.body,
-      media_url: input.media_url,
-      media_mime: input.media_mime,
-    });
+    const parsed = { ...mensagem, conversation_id: opened.conversation_id };
 
     const message = await sendMessageHandler(
       ctx.supabase,

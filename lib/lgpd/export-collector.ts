@@ -34,6 +34,15 @@ export interface ContactSnapshot {
   id: string;
   name: string | null;
   display_name: string | null;
+  /**
+   * O nome que a equipe salvou na agenda do celular (PR #2439). Só a equipe o
+   * vê na tela, mas é dado pessoal do titular: a anonimização o apaga
+   * (`trg_contato_anonimizado_esquece_a_agenda`), então o `data.json` o leva.
+   * Quem RECEBE o `data.json` é o titular fora do Brasil: o worker só assina a
+   * ligação dele quando o país não é o padrão (`lgpd-export-worker.ts`). No
+   * Brasil o arquivo fica guardado sem ser enviado, e o PDF não lê este campo.
+   */
+  address_book_name: string | null;
   email: string | null;
   phone_number: string | null;
   cpf_present: boolean;
@@ -125,6 +134,29 @@ export interface ActivityRow {
   type: string;
   source_module: string | null;
   performed_at: string;
+}
+
+/**
+ * A proposta de campo lida num documento do negócio (`lead_field_proposals`,
+ * migration 0772).
+ *
+ * Entra porque a anonimização a REDIGE: `trecho`, `valor_proposto` e
+ * `valor_anterior` são conteúdo do documento de quem pediu o acesso. Sem esta
+ * coleta, o Art. 18 II devolveria um export sem exatamente o dado que a casa
+ * apaga — e a régua de `lgpd-exporta-o-que-redige` reprova por isso.
+ */
+export interface LeadFieldProposalRow {
+  id: string;
+  lead_id: string;
+  campo: string;
+  valor_proposto: unknown;
+  valor_anterior: unknown;
+  trecho: string | null;
+  attachment_id: string | null;
+  status: string;
+  proposed_at: string;
+  expires_at: string;
+  decided_at: string | null;
 }
 
 /**
@@ -507,6 +539,15 @@ export interface ProspectingCandidateRow {
   updated_at: string;
 }
 
+/** O clique do próprio titular e o resultado do envio à plataforma de anúncios. */
+export interface MetaCtwaClickRow {
+  ctwa_clid: string;
+  captured_at: string;
+  status: string;
+  attempted_at: string | null;
+  created_at: string;
+}
+
 /**
  * Uma campanha que falou com este titular (migration 0374).
  *
@@ -588,11 +629,25 @@ export interface ExportPayload {
    */
   lei_citada: string | null;
   /**
-   * Como o documento rotula a citação ("Direito exercido" em Portugal).
-   * AUSENTE no Brasil — o renderizador usa "Base legal" — para o `data.json`
-   * brasileiro sair igual byte a byte (doc 88).
+   * Como o documento rotula a citação ("Direito exercido" em Portugal e,
+   * desde a issue #2344, no Brasil também). AUSENTE no Brasil — o
+   * renderizador lê o rótulo do PERFIL PADRÃO — para o `data.json` brasileiro
+   * sair igual byte a byte (doc 88).
    */
   lei_rotulo?: string;
+  /**
+   * O papel do responsável pelos dados, no vocabulário do país: "Responsável
+   * pelo tratamento" em Portugal (RGPD art. 4.º, n.º 7). AUSENTE no Brasil —
+   * o renderizador usa o rótulo do PERFIL PADRÃO ("Controlador"), pela mesma
+   * régua do `lei_rotulo`: nenhuma chave nova no `data.json` brasileiro.
+   */
+  papel_controlador?: string;
+  /**
+   * O papel de quem recebe os pedidos do titular: "Encarregado da proteção de
+   * dados" em Portugal (RGPD art. 37.º). Ausente no Brasil, que segue com
+   * "Encarregado (DPO)" pelo perfil padrão.
+   */
+  papel_encarregado?: string;
   /**
    * Fuso IANA da organização, para as datas do documento. Ausente no Brasil,
    * que segue no formato de sempre (`America/Sao_Paulo`, sem nome de fuso).
@@ -641,6 +696,7 @@ export interface ExportPayload {
    */
   honorarios_contratos: HonorariosContratoRow[];
   honorarios_parcelas: HonorariosParcelaRow[];
+  lead_field_proposals: LeadFieldProposalRow[];
   orders: OrderRow[];
   activities: ActivityRow[];
   checkpoints: CheckpointRow[];
@@ -663,6 +719,12 @@ export interface ExportPayload {
    */
   voice_calls: VoiceCallRow[];
   prospecting_candidates: ProspectingCandidateRow[];
+  /**
+   * O registro por clique é apagado na anonimização (0806), então também entra
+   * no acesso. Ausente quando vazio para preservar a cópia anterior de quem
+   * não tem cliques; tokens de claim e detalhes internos não são coletados.
+   */
+  meta_ctwa_click_dispatches?: MetaCtwaClickRow[];
   /**
    * Casos, linha do tempo do caso e demandas (migration 0280).
    *
@@ -780,6 +842,20 @@ export interface ExportPayload {
    * dois quando ele pede anonimização; o que se apaga a pedido dele é o que se
    * entrega a pedido dele (Art. 18 II). Mesmo escopo da cascata: org + contato.
    */
+  /**
+   * Anexos dos negócios dele (#3229): o documento que ele mandou (voucher,
+   * comprovante) é dado dele, e a cascata o apaga a pedido dele — então sai aqui
+   * a pedido dele. Vai o registro (nome, tipo, tamanho, data), não o binário.
+   */
+  lead_attachments?: Array<{
+    id: string;
+    lead_id: string;
+    field_key: string;
+    file_name: string;
+    mime_type: string;
+    file_size: number;
+    created_at: string;
+  }>;
   lead_notes?: Array<{
     id: string;
     headline: string | null;
@@ -1061,7 +1137,7 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
     const { data, error } = await admin
       .from("contacts")
       .select(
-        "id, name, display_name, email, phone_number, wa_lid, cpf_encrypted, birthdate, is_blocked, is_anonymized, consent, tags, source, source_metadata, custom_fields, created_at, last_activity_at, first_service_at",
+        "id, name, display_name, address_book_name, email, phone_number, wa_lid, cpf_encrypted, birthdate, is_blocked, is_anonymized, consent, tags, source, source_metadata, custom_fields, created_at, last_activity_at, first_service_at",
       )
       .eq("organization_id", organizationId)
       .eq("id", contactId)
@@ -1115,6 +1191,7 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
         id: data.id,
         name: data.name ?? null,
         display_name: data.display_name ?? null,
+        address_book_name: data.address_book_name ?? null,
         email: data.email ?? null,
         phone_number: data.phone_number ?? null,
         cpf_present: Boolean(data.cpf_encrypted),
@@ -1307,15 +1384,64 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
     }
   }
 
+  // Anexos dos negócios dele (#3229) — pelos ids de `leads` já coletados.
+  let lead_attachments: NonNullable<ExportPayload["lead_attachments"]> = [];
+  if (leads.length > 0) {
+    const { data, error } = await admin
+      .from("crm_lead_attachments")
+      .select("id, lead_id, field_key, file_name, mime_type, file_size, created_at")
+      .eq("organization_id", organizationId)
+      .in(
+        "lead_id",
+        leads.map((l) => l.id),
+      )
+      .order("created_at", { ascending: true })
+      .limit(500);
+    if (error) {
+      logger.warn("[lgpd-export-worker] lead attachments load failed", {
+        request_id: requestId,
+        error: error.message,
+      });
+    } else if (data) {
+      conferirTeto("lead_attachments", data, 500);
+      lead_attachments = data;
+    }
+  }
+
   // Honorários — módulo opcional (ADR-0002/D8). Deriva dos ids de `leads` já
   // coletados: o contrato é `lead_id`, não `contact_id` direto.
   //
   // Módulo pode não estar instalado nesta instalação — a tabela então não
-  // existe (42P01) — e o bloco sai vazio nesse caso, sem falhar o export
+  // existe (42P01 no SQL, PGRST205 no PostgREST) — e o bloco sai vazio, sem falhar o export
   // inteiro por causa de um módulo que a organização nem ligou.
   let honorarios_contratos: HonorariosContratoRow[] = [];
   let honorarios_parcelas: HonorariosParcelaRow[] = [];
   const leadIds = leads.map((l) => l.id);
+
+  // Propostas de campos lidos no documento — a cascata da 0772 redige `trecho`
+  // e os valores, então o Art. 18 II tem de alcançá-las pela mesma porta dos
+  // outros dados do negócio: o `lead_id` já coletado. Tabela de módulo: num
+  // clone sem a migration ela não existe (42P01) e o bloco sai vazio.
+  let lead_field_proposals: LeadFieldProposalRow[] = [];
+  if (leadIds.length > 0) {
+    const { data, error } = await admin
+      .from("lead_field_proposals")
+      .select(
+        "id, lead_id, campo, valor_proposto, valor_anterior, trecho, attachment_id, status, proposed_at, expires_at, decided_at",
+      )
+      .eq("organization_id", organizationId)
+      .in("lead_id", leadIds)
+      .order("proposed_at", { ascending: false })
+      .limit(500);
+    if (error) {
+      if (error.code !== "42P01") {
+        throw new Error(`lead_field_proposals_load_failed: ${error.message}`);
+      }
+    } else if (data) {
+      conferirTeto("lead_field_proposals", data, 500);
+      lead_field_proposals = data;
+    }
+  }
   if (leadIds.length > 0) {
     const { data, error } = await admin
       .from("honorarios_contratos")
@@ -1328,7 +1454,7 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
     // novo, em vez de entregar ao titular um export sem o contrato como se fosse
     // completo (ADR-0002 D8 — seção de módulo ilegível nunca sai como completa).
     if (error) {
-      if (error.code !== "42P01") {
+      if (error.code !== "42P01" && error.code !== "PGRST205") {
         throw new Error(`honorarios_contratos_load_failed: ${error.message}`);
       }
     } else if (data) {
@@ -1780,6 +1906,25 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
     }
   }
 
+  // O clique liga o titular ao anúncio. A 0806 o apaga na anonimização; no
+  // acesso ele precisa aparecer, inclusive além da primeira página. A chave
+  // id ordena empates sem entregar o identificador interno no arquivo.
+  const meta_ctwa_click_dispatches: MetaCtwaClickRow[] = [];
+  if (contactId) {
+    for (let offset = 0; ; offset += 500) {
+      const { data, error } = await admin
+        .from("meta_ctwa_click_dispatches")
+        .select("ctwa_clid, captured_at, status, attempted_at, created_at")
+        .eq("organization_id", organizationId)
+        .eq("contact_id", contactId)
+        .order("id")
+        .range(offset, offset + 499);
+      if (error) throw error;
+      meta_ctwa_click_dispatches.push(...(data ?? []));
+      if (!data || data.length < 500) break;
+    }
+  }
+
   // Audit log extract (best-effort: rows where metadata.contact_id matches).
   let audit_log_extract: AuditRow[] = [];
   if (contactId) {
@@ -2198,7 +2343,7 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
           .from("agent_inbox_items")
           .select("id,ref_id,title,body,status,created_at,resolved_at")
           .eq("organization_id", organizationId)
-          .eq("ref_kind", "appointment")
+          .in("ref_kind", ["appointment", "agenda_reminder_sender"])
           .in("kind", ["other", "appointment_outcome_required", "appointment_recovery_review"])
           .in("ref_id", ids.slice(batch, batch + refBatchSize))
           .order("id")
@@ -2247,6 +2392,7 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
     messages_count_total,
     messages_recent,
     leads,
+    lead_field_proposals,
     honorarios_contratos,
     honorarios_parcelas,
     orders,
@@ -2263,6 +2409,7 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
     appointment_notices,
     voice_calls,
     prospecting_candidates,
+    ...(meta_ctwa_click_dispatches.length > 0 ? { meta_ctwa_click_dispatches } : {}),
     cases,
     case_events,
     demandas,
@@ -2276,6 +2423,7 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
     conversation_drafts,
     conversation_notes,
     contact_field_proposals,
+    lead_attachments,
     lead_notes,
     ai_agent_runs,
     lead_state,
@@ -2284,16 +2432,20 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
 }
 
 /**
- * O que só existe no documento FORA do Brasil: o rótulo da citação e o fuso.
- * Para o Brasil devolve `{}` — nenhuma chave nova no `data.json` (doc 88).
+ * O que só existe no documento FORA do Brasil: o rótulo da citação, os papéis
+ * e o fuso. Para o Brasil devolve `{}` — nenhuma chave nova no `data.json`
+ * (doc 88). O rótulo brasileiro ("Direito exercido", issue #2344) e os papéis
+ * brasileiros saem do PERFIL PADRÃO no renderizador, não daqui.
  */
 function foraDoBrasil(
   perfil: PerfilDoPais,
   controlador: Controlador,
-): Pick<ExportPayload, "lei_rotulo" | "fuso"> {
+): Pick<ExportPayload, "lei_rotulo" | "papel_controlador" | "papel_encarregado" | "fuso"> {
   if (perfil.codigo === PAIS_PADRAO) return {};
   return {
     ...(perfil.lei?.rotuloNoDocumento ? { lei_rotulo: perfil.lei.rotuloNoDocumento } : {}),
+    papel_controlador: perfil.papel.controlador,
+    papel_encarregado: perfil.papel.encarregado,
     ...(controlador.timezone ? { fuso: controlador.timezone } : {}),
   };
 }
@@ -2437,6 +2589,7 @@ function emptyPayload(
     messages_count_total: 0,
     messages_recent: [],
     leads: [],
+    lead_field_proposals: [],
     honorarios_contratos: [],
     honorarios_parcelas: [],
     orders: [],
@@ -2462,6 +2615,7 @@ function emptyPayload(
     campaign_suppressions: [],
     channel_session_groups: [],
     group_messages_authored: [],
+    lead_attachments: [],
     lead_notes: [],
     ai_agent_runs: [],
     lead_state: [],

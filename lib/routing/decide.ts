@@ -38,6 +38,14 @@ export interface DecideRoutingInput {
   /** Atendentes JÁ elegíveis (o worker aplicou isAttendantEligible). */
   eligibles: RoutingCandidate[];
   config: RoutingConfig;
+  /**
+   * Destino padrão do NÚMERO (#2331). Quando o canal tem um atendente de
+   * destino padrão configurado, a conversa vai DIRETO para ele, antes de
+   * qualquer distribuição por modo — é o "entregar tudo a uma pessoa
+   * específica" da tela por número. `null`/ausente = sem destino padrão; o
+   * modo decide normalmente.
+   */
+  defaultAssigneeUserId?: string | null;
   /** attempts atual do event_log (antes deste processamento). */
   attempts: number;
   now: Date;
@@ -76,6 +84,11 @@ export function decideRouting(input: DecideRoutingInput): RoutingAction {
   // Idempotência (acceptance 3): conversa que já ganhou dono não é reatribuída.
   if (input.alreadyAssigned) return { kind: "skip", reason: "already_assigned" };
 
+  // Destino padrão do NÚMERO (#2331): vence o modo. O canal que entrega tudo a
+  // uma pessoa específica recebe mesmo quando o modo da organização é manual (o
+  // caso "sem IA, direto para o fulano") ou rodízio.
+  if (input.defaultAssigneeUserId) return { kind: "assign", userId: input.defaultAssigneeUserId };
+
   // Modo manual (acceptance 5): worker não roteia.
   if (input.mode === "manual") return { kind: "skip", reason: "manual_mode" };
 
@@ -94,4 +107,39 @@ export function decideRouting(input: DecideRoutingInput): RoutingAction {
   const seconds = slow ? Math.max(900, input.config.backoff_seconds) : input.config.backoff_seconds;
   const nextAttemptAt = new Date(input.now.getTime() + seconds * 1000).toISOString();
   return { kind: "requeue", nextAttemptAt, attempts };
+}
+
+/**
+ * A regra POR NÚMERO, como o worker a lê de `channel_routing_policies` (#2331).
+ * `null` no campo = o número não tem regra própria naquele eixo.
+ */
+export interface RegraDoNumero {
+  distribution_mode: RoutingMode | null;
+  default_assignee_user_id: string | null;
+}
+
+export interface RoteamentoEfetivo {
+  mode: RoutingMode;
+  defaultAssigneeUserId: string | null;
+}
+
+/**
+ * Resolve o que VALE para um número a partir do que vale para a organização.
+ *
+ * É o coração da issue #2331: um canal com regra própria NÃO usa a regra da
+ * organização; um canal SEM regra cai no comportamento da organização — e é
+ * exatamente o que não muda para quem já instalou (a policy nasce com os dois
+ * campos nulos).
+ *
+ * Pura de propósito: o worker (I/O) chama isto e os testes provam o
+ * isolamento canal × organização sem Postgres vivo.
+ */
+export function resolverRoteamentoPorNumero(
+  daOrganizacao: RoutingConfig,
+  regraDoNumero: RegraDoNumero | null | undefined,
+): RoteamentoEfetivo {
+  return {
+    mode: regraDoNumero?.distribution_mode ?? daOrganizacao.mode,
+    defaultAssigneeUserId: regraDoNumero?.default_assignee_user_id ?? null,
+  };
 }

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { z } from "zod";
 
 import { requireAuth, resolveActiveOrg } from "@/lib/auth/server";
 import { createClient } from "@/lib/supabase/server";
@@ -25,7 +26,8 @@ export type RecoverOrganizationResult =
         | "somente_convite"
         | "provision_failed"
         | "access_revoked"
-        | "pedido_recusado";
+        | "pedido_recusado"
+        | "plano_obrigatorio";
     };
 
 /**
@@ -62,9 +64,19 @@ export type RecoverOrganizationResult =
  *
  * Achado de @prevprocesso-maker no PR #465.
  */
-export async function recoverOrganization(name: string): Promise<RecoverOrganizationResult> {
+/**
+ * `planoId` (#2846): o plano escolhido nesta tela. É por aqui que sai do beco
+ * quem chegou sem plano — conta nova pelo Google no /login, ou cadastro feito
+ * antes da cobrança — numa instalação que oferece planos sem ter um padrão:
+ * sem escolha, o gatilho recusa a empresa com `plano_obrigatorio`. Quem valida
+ * a escolha é o gatilho (oferecido e não arquivado; senão, o padrão).
+ */
+export async function recoverOrganization(name: string, planoId?: string): Promise<RecoverOrganizationResult> {
   const parsed = organizationNameSchema.safeParse(name);
   if (!parsed.success) return { ok: false, error: "validation_error" };
+  const plano = z.string().uuid().optional().safeParse(planoId || undefined);
+  if (!plano.success) return { ok: false, error: "validation_error" };
+  const comPlano = plano.data ? { cobranca_plan_id: plano.data } : {};
 
   const user = await requireAuth();
   const activeOrg = await resolveActiveOrg(user);
@@ -134,6 +146,12 @@ export async function recoverOrganization(name: string): Promise<RecoverOrganiza
       return { ok: false, error: "pedido_recusado" };
     }
     try {
+      // A empresa só nasce na APROVAÇÃO, que lê o plano da conta
+      // (`decide.ts`): a escolha fica guardada nela, pela sessão da própria pessoa.
+      if (plano.data) {
+        const { error: erroDoPlano } = await supabase.auth.updateUser({ data: comPlano });
+        if (erroDoPlano) throw new Error(`plano do pedido não gravado: ${erroDoPlano.message}`);
+      }
       const pedido = await createRegistrationRequest(authUser.id, parsed.data);
       if (pedido.created) {
         void audit({
@@ -160,18 +178,20 @@ export async function recoverOrganization(name: string): Promise<RecoverOrganiza
       {
         id: authUser.id,
         email: authUser.email,
-        user_metadata: { ...authUser.user_metadata, org_name: parsed.data },
+        user_metadata: { ...authUser.user_metadata, org_name: parsed.data, ...comPlano },
       },
       { source: "recovery" },
     );
     if (!provisioned.organizationId) return { ok: false, error: "provision_failed" };
   } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
     void audit({
       action: "auth.signup_provision_recovery_failed",
       actorUserId: authUser.id,
-      metadata: { reason: error instanceof Error ? error.message : String(error) },
+      metadata: { reason },
     });
-    return { ok: false, error: "provision_failed" };
+    // A recusa do gatilho (0679) tem saída nesta mesma tela: escolher um plano.
+    return { ok: false, error: reason.includes("plano_obrigatorio") ? "plano_obrigatorio" : "provision_failed" };
   }
 
   revalidatePath("/app");

@@ -6,6 +6,11 @@
  * (`lib/agent-engine/edge/llm/pricing.ts`) e às colunas `numeric` de
  * `llm_calls`/`ai_invocations`.
  *
+ * Exceção: os ids com promoção datada (Gemini 3.6/3.7/3.8 Flash, migration
+ * 0649; Gemini 4 Argon, migration 0703 — e o prefixo `provider/`) não usam a
+ * linha. Ela já guarda a tarifa POSTERIOR à promo, para a lista mostrá-la. O
+ * gasto sai de `costCentsComVirada`, o mesmo corte de `costCents`.
+ *
  * Arredondava para cima até o centavo inteiro "para errar cobrando a mais".
  * Numa chamada de classificador (~250 tokens de entrada no gpt-5.6-luna, custo
  * real ≈ 0,01 centavo) isso gravava 1 centavo: 100× o real. Medido numa VPS em
@@ -14,6 +19,7 @@
  * da organização por um número falso.
  */
 
+import { costCentsComVirada } from "@/lib/agent-engine/edge/llm/pricing";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 interface PricingRow {
@@ -67,6 +73,11 @@ export interface ComputeCostInput {
   completionTokens?: number;
   /** For embedding-only models, treat tokens as embedding tokens. */
   embeddingTokens?: number;
+  /**
+   * Instante da chamada. Sem ele, agora. Os ids com promoção datada (e o
+   * prefixo `provider/`) usam o corte de `costCents`, não a linha da tabela.
+   */
+  em?: Date;
 }
 
 /**
@@ -116,6 +127,19 @@ async function precoDoCatalogo(
  * Returns cost in **cents** (fracionado, sem arredondar). Zero when pricing missing.
  */
 export async function computeCost(input: ComputeCostInput): Promise<number> {
+  // Ids com promoção datada guardam no catálogo a tarifa posterior à promo
+  // (0649, 0703). O gasto gravado em llm_calls tem de seguir `costCents`
+  // (promo estritamente antes do corte). Outro modelo segue a linha de ai_pricing.
+  const pelaVirada = costCentsComVirada(
+    input.model,
+    {
+      inputTokens: input.promptTokens ?? 0,
+      outputTokens: input.completionTokens ?? 0,
+    },
+    input.em ?? new Date(),
+  );
+  if (pelaVirada !== null) return pelaVirada;
+
   const pricing = await loadPricing();
   const row = pricing.get(input.model);
   if (!row) {

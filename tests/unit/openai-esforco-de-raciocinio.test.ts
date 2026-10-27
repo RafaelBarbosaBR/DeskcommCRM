@@ -56,6 +56,44 @@ describe("knob ligado: a chamada da OpenAI leva reasoning.effort", () => {
   });
 });
 
+describe("knob em none/minimal num modelo que não aceita desligar o raciocínio", () => {
+  // Doc oficial (11/10/2026): o gpt-6.1-sol diz "`none` and `minimal` reasoning
+  // efforts are not supported"; o gpt-6-astra lista só low…max; o gpt-6-luna lista
+  // none, low…max — sem minimal. Mandar o knob como está seria 400 em toda resposta.
+  it.each([
+    ["gpt-6.1-sol", "none"],
+    ["gpt-6-astra", "none"],
+    ["gpt-6.1-sol", "minimal"],
+    ["gpt-6-astra", "minimal"],
+  ] as const)("%s com %s recebe low", async (modelo, esforco) => {
+    const { corpos } = interceptarSaida();
+    await disparar(createDefaultRegistry({ openaiReasoningEffort: esforco })["openai"]!("sk-de-teste", modelo));
+    expect(corpos[0]?.reasoning).toMatchObject({ effort: "low" });
+  });
+
+  it("quem aceita none continua recebendo none (gpt-6-luna, gpt-6-sol, linha 5.x)", async () => {
+    for (const modelo of ["gpt-6-luna", "gpt-6-sol", "gpt-5.6-terra"]) {
+      const { corpos } = interceptarSaida();
+      await disparar(createDefaultRegistry({ openaiReasoningEffort: "none" })["openai"]!("sk-de-teste", modelo));
+      expect(corpos[0]?.reasoning, modelo).toMatchObject({ effort: "none" });
+    }
+  });
+
+  // Quem pediu minimal pediu velocidade: no Luna `low` é mais lento que o padrão
+  // (medição na docstring do knob), então o que respeita o pedido é `none`.
+  it.each(["gpt-6-luna", "gpt-6-sol"])("%s com minimal recebe none", async (modelo) => {
+    const { corpos } = interceptarSaida();
+    await disparar(createDefaultRegistry({ openaiReasoningEffort: "minimal" })["openai"]!("sk-de-teste", modelo));
+    expect(corpos[0]?.reasoning).toMatchObject({ effort: "none" });
+  });
+
+  it("esforço que o modelo aceita passa intacto", async () => {
+    const { corpos } = interceptarSaida();
+    await disparar(createDefaultRegistry({ openaiReasoningEffort: "high" })["openai"]!("sk-de-teste", "gpt-6-astra"));
+    expect(corpos[0]?.reasoning).toMatchObject({ effort: "high" });
+  });
+});
+
 describe("knob desligado ou fora do escopo: nada é injetado", () => {
   it("sem a variável, o corpo da OpenAI não ganha reasoning", async () => {
     vi.stubEnv("OPENAI_REASONING_EFFORT", "");

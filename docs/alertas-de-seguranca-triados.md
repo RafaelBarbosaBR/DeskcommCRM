@@ -142,7 +142,7 @@ pontos **e** entrada externa verificada lendo o call site:
 | `lib/sentry/scrub.ts:56` | ~3,2 s | Indireta (dado de evento Sentry) |
 | `lib/agent-engine/guardrails/vazamento-interno.ts:398` | ~4,5 s | Parcial — por token da saída do LLM; teto real de `max_tokens` **não medido** |
 | `lib/ai/skills/package.ts:84,85` | ~2,9 s | Autenticada (`requireRole("manager")`), mas o SKILL.md vem descompactado de zip — zip-bomb de espaços dá N grande com upload pequeno |
-| `lib/mcp/auth.ts:72` + `app/api/internal/agents/run/route.ts:53` | ~160 ms | **Não autenticada** — é o próprio check de auth, e `/api/mcp` é rota pública. Limitada pelo teto de 16 KB de header do Node, mas ~6 req/s saturam um core |
+| `lib/mcp/auth.ts:72` (a outra ocorrência, em `app/api/internal/agents/run/route.ts`, saiu com a rota) | ~160 ms | **Não autenticada** — é o próprio check de auth, e `/api/mcp` é rota pública. Limitada pelo teto de 16 KB de header do Node, mas ~6 req/s saturam um core |
 | `app/api/v1/channels/partner/route.ts:78` | ~166 ms | Header `origin`, controlado pelo cliente; atrás de `adminGate` |
 
 **Por que ficaram de fora desta rodada, e não é por serem menores:** quatro das seis são

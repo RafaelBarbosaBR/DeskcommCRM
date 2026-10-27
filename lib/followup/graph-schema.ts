@@ -1,6 +1,8 @@
 import { z } from 'zod';
+import { variaveisDoModeloSchema } from '@/lib/channels/meta/variaveis-do-fluxo';
 
 import { PRIORIDADES_DA_TAREFA } from '@/lib/tarefas/tipos';
+import { ehOpDeData, OPS_DE_DATA } from './condicao-por-data';
 
 /**
  * Flow graph schema for the follow-up automation system.
@@ -247,6 +249,14 @@ export const actionConfigSchema = z.discriminatedUnion('mode', [
   z.strictObject({
     mode: z.literal('text'),
     body: z.string().min(1).max(4000),
+    /**
+     * #2734 — MÍDIA OPCIONAL (imagem, vídeo, áudio ou documento, #2972) por URL.
+     * Presente, o `body` vira a
+     * LEGENDA. Opcional de propósito: os grafos publicados não têm a chave e
+     * continuam válidos byte a byte (o `strictObject` só recusa o que ELE não
+     * conhece; um campo novo e opcional é aceito pelos antigos).
+     */
+    media_url: z.string().url().max(2000).optional(),
   }),
   z.strictObject({
     mode: z.literal('ai_message'),
@@ -256,6 +266,12 @@ export const actionConfigSchema = z.discriminatedUnion('mode', [
   z.strictObject({
     mode: z.literal('template'),
     template_id: z.string().uuid(),
+    /**
+     * De onde sai cada variável (`{{1}}`, `{{2}}`…) de um modelo APROVADO:
+     * nome do contato ou campo do negócio, resolvido na hora do envio
+     * (`lib/channels/meta/variaveis-do-fluxo.ts`). Ausente = modelo sem variável.
+     */
+    template_values: variaveisDoModeloSchema.optional(),
   }),
 ]);
 
@@ -325,18 +341,52 @@ export const editLeadTagConfigSchema = z.strictObject({
  * — identity lives on the rule itself, never in a parallel array that would
  * desync the moment the user reorders the rules.
  */
-export const conditionCheckSchema = z.strictObject({
-  id: declaredBranchIdSchema.optional(),
-  label: z.string().min(1).max(60).optional(),
-  field: z.enum([
-    'lead_stage',
-    'tag',
-    'steps_taken',
-    'last_outcome',
-  ]),
-  op: z.enum(['eq', 'neq', 'gte', 'lte', 'contains']),
-  value: z.union([z.string(), z.number()]),
-});
+export const conditionCheckSchema = z
+  .strictObject({
+    id: declaredBranchIdSchema.optional(),
+    label: z.string().min(1).max(60).optional(),
+    field: z.enum([
+      'lead_stage',
+      'tag',
+      'steps_taken',
+      'last_outcome',
+      // Data relativa sobre um campo personalizado do negócio — ver
+      // `condicao-por-data.ts`. É o que permite perguntar "o período de teste
+      // terminou?", que nenhum dos quatro campos acima alcança.
+      'lead_date',
+    ]),
+    op: z.enum(['eq', 'neq', 'gte', 'lte', 'contains', ...OPS_DE_DATA]),
+    value: z.union([z.string(), z.number()]),
+    /**
+     * A chave em `crm_leads.custom_fields` que a regra lê (ex.: `fim_teste`).
+     * Só `lead_date` usa, e para ele é OBRIGATÓRIA no PUBLISH: regra de data
+     * sem campo não tem o que comparar, e deixá-la passar daria uma condição
+     * que responde sempre `false` sem dizer por quê. Aqui, no rascunho, a
+     * chave VAZIA passa — ver o aviso logo abaixo.
+     */
+    key: z.string().max(60, 'Nome do campo muito longo: máximo de 60 caracteres.').optional(),
+  })
+  // ⚠️ `key` VAZIA PASSA AQUI, de propósito, e isso foi achado pela prova de
+  // tela. O rascunho é validado SÓ estruturalmente — a mesma razão pela qual
+  // `move_lead.stage_id` e `edit_lead_tag.tags` aceitam vazio: quem escolhe o
+  // campo de data ainda não digitou o nome dele, e o painel grava a cada
+  // tecla (`commit` → `safeParse`). Exigir a chave aqui fazia aparecer um erro
+  // no instante em que a pessoa escolhia «Data de um campo do negócio», antes
+  // de ela ter chance de preencher — e a regra nem era persistida, então o nó
+  // continuava com a regra ANTERIOR enquanto a tela mostrava a nova.
+  //
+  // Quem exige é o publish (`campo_de_data_ausente` em `validate-publish.ts`),
+  // como exige etapa de destino e tag. O mesmo vale para o prazo: limpar o
+  // campo para redigitar passa por um valor vazio, e o publish é que recusa
+  // (`check_value_not_number`).
+  .refine((c) => c.field !== 'lead_date' || ehOpDeData(c.op), {
+    message: `uma regra de data usa ${OPS_DE_DATA.join(' ou ')}`,
+    path: ['op'],
+  })
+  .refine((c) => c.field === 'lead_date' || !ehOpDeData(c.op), {
+    message: 'passou_ha e falta_para existem só para regra de data',
+    path: ['op'],
+  });
 
 export type ConditionCheck = z.infer<typeof conditionCheckSchema>;
 
@@ -651,9 +701,32 @@ export const flowSettingsSchema = z.strictObject({
   /**
    * Palavras/expressões que LIGAM este fluxo: quando a mensagem do cliente
    * contém uma delas, o MOTOR inicia o fluxo (entrada por gatilho, sem depender
-   * do modelo). Vazio/ausente = o fluxo só começa por `flow_start` ou roteador.
+   * do modelo). Vazio/ausente = este fluxo só começa por `etapas_do_funil`, pelo
+   * roteador ou encadeado no fim de outro — `flow_start` não existe no código,
+   * e citá-lo aqui prometia uma entrada que ninguém podia configurar.
    */
   gatilhos: z.array(z.string().min(1).max(60)).max(30).optional(),
+  /**
+   * As ETAPAS DO FUNIL que LIGAM este roteiro: quando o card do contato está
+   * numa delas, o MOTOR começa o roteiro no próximo turno daquela conversa —
+   * a entrada por etapa, irmã da palavra-gatilho, e sem depender da mensagem.
+   *
+   * ⚠️ POR QUE AQUI (no `settings` do grafo) E NÃO EM `trigger_config`. Para o
+   * follow-up, a entrada por etapa mora no gatilho (`kind: 'stage_change'`,
+   * `lib/followup/gatilho-etapa.ts`, event-driven). No roteiro de atendimento
+   * isso é impossível por construção: o CHECK
+   * `followup_flow_pointers_roteiro_so_manual` (0394) obriga
+   * `trigger_config->>'kind' = 'manual'` na superfície `atendimento`, e o
+   * publicador devolve 422 a qualquer outro kind. O `settings` é o lugar do
+   * vocabulário do roteiro (é onde já vivem `gatilhos`, `expira_em_horas` e
+   * `pode_recomecar`), é versionado junto do grafo e passa pelo schema.
+   *
+   * O id é o da ETAPA (`crm_stages.id`) — o mesmo que `crm_leads.stage_id`, que
+   * é o que o turno lê. A etapa já identifica o funil, então não há par
+   * (funil, etapa) a guardar; o nome do funil existe na tela, para distinguir
+   * etapas homônimas de funis diferentes. Vazio/ausente = nenhuma etapa liga.
+   */
+  etapas_do_funil: z.array(z.string().min(1).max(64)).max(30).optional(),
   /**
    * Em quantas horas SEM mensagem do cliente o roteiro em andamento expira
    * (0397, `fn_encerrar_roteiros_vencidos`). Ausente = 72 h. Sem prazo, um

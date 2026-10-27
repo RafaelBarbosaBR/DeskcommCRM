@@ -31,7 +31,8 @@ const PEDIDO = {
 function banco({
   pedido = PEDIDO as typeof PEDIDO | null,
   emailConfirmado = true,
-}: { pedido?: typeof PEDIDO | null; emailConfirmado?: boolean } = {}) {
+  metadata = {} as Record<string, unknown>,
+}: { pedido?: typeof PEDIDO | null; emailConfirmado?: boolean; metadata?: Record<string, unknown> } = {}) {
   const atualizacao = vi.fn();
   const update = vi.fn((valores: Record<string, unknown>) => {
     atualizacao(valores);
@@ -50,6 +51,7 @@ function banco({
               id: PEDIDO.user_id,
               email: "dono@exemplo.com.br",
               email_confirmed_at: emailConfirmado ? "2026-09-22T10:00:00Z" : null,
+              user_metadata: metadata,
             },
           },
         })),
@@ -87,6 +89,18 @@ describe("decideRegistrationRequest", () => {
         organizationId: "22222222-2222-4222-8222-222222222222",
       }),
     );
+  });
+
+  it("⭐ o plano escolhido no cadastro chega à empresa aprovada (#2846) — e só ele, não a metadata inteira", async () => {
+    banco({ metadata: { cobranca_plan_id: "55555555-5555-4555-8555-555555555555", org_name: "Nome do cliente", invite_token: "x" } });
+    const { decideRegistrationRequest } = await import("./decide");
+
+    await expect(decideRegistrationRequest({ requestId: PEDIDO.id, decision: "approve" })).resolves.toEqual({ ok: true });
+    const [usuario] = vi.mocked(ensureTenantForUser).mock.calls[0]!;
+    expect(usuario.user_metadata).toEqual({
+      org_name: "Clínica Boa Vista",
+      cobranca_plan_id: "55555555-5555-4555-8555-555555555555",
+    });
   });
 
   it("⭐ recusar não cria empresa nenhuma", async () => {

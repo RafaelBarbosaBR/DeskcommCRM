@@ -97,8 +97,29 @@ interface Ocorrencia {
   pos: number;
 }
 
+/**
+ * A linha (1-based) de uma posição do texto. As quebras de linha de cada texto são achadas UMA
+ * vez e a linha sai por busca binária: o `slice(0, pos).split("\n")` de antes copiava e partia o
+ * arquivo inteiro a cada chamada, e a cerca das concessões o chama por grant/revoke — quadrático
+ * no baseline, 6 s parada e acima de 15 s com a suíte inteira em paralelo (R43, regra 3: baixar o
+ * custo da varredura sem reduzir o que ela cobre). O resultado é o mesmo: quebras antes de `pos`, + 1.
+ */
+const QUEBRAS_POR_TEXTO = new Map<string, number[]>();
 function linhaDe(sql: string, pos: number): number {
-  return sql.slice(0, pos).split("\n").length;
+  let quebras = QUEBRAS_POR_TEXTO.get(sql);
+  if (!quebras) {
+    quebras = [];
+    for (let i = sql.indexOf("\n"); i !== -1; i = sql.indexOf("\n", i + 1)) quebras.push(i);
+    QUEBRAS_POR_TEXTO.set(sql, quebras);
+  }
+  let baixo = 0;
+  let alto = quebras.length;
+  while (baixo < alto) {
+    const meio = (baixo + alto) >> 1;
+    if (quebras[meio]! < pos) baixo = meio + 1;
+    else alto = meio;
+  }
+  return baixo + 1;
 }
 
 /** O bloco `do $tag$ … $tag$` que contém a posição, se houver. Fecha no próximo `$tag$`. */
@@ -453,6 +474,12 @@ const CONCESSOES_ACEITAS = new Map<string, string>([
     "O snapshot concede TRUNCATE a service_role e a 0258 revoga U/D/T; a companheira cobre service_role desde " +
       "a #2258 — era a única janela de 20 mil linhas que a cerca não via. O bloco continua a fonte do " +
       "contrato.",
+  ],
+  [
+    "lgpd_requests :: anon",
+    "O snapshot concede ALL e a 0672 revoga I/U/D/T de anon e authenticated: a escrita do pedido de dados é " +
+      "do servidor (webhook, workers e aprovação, todos com a chave de serviço). A revogação mora colada no " +
+      "grant desde a mesma migration; estreitar o grant mudaria o ACL FINAL (SELECT/REFERENCES/TRIGGER ficam).",
   ],
   [
     "idempotency_keys :: anon",
@@ -821,6 +848,15 @@ describe("baseline.sql não reconstrói o que ele mesmo derruba ou substitui", (
       largas,
       "concessão aceita só vale com a revogação ao lado do grant (issues #2251, #2255, #2258)\n",
     ).toEqual([]);
+  });
+
+  it("a linha achada por busca binária é a mesma do slice + split, em todo grant e revoke do arquivo", () => {
+    // O `linhaDe` de antes, inline, como régua: o atalho só vale se não mudar a resposta (R43, regra 3).
+    const devagar = (pos: number) => SQL.slice(0, pos).split("\n").length;
+    const posicoes = [...SQL.matchAll(/\b(grant|revoke)\b/gi)].map((m) => m.index!);
+    expect(posicoes.length).toBeGreaterThan(100);
+    const amostra = posicoes.filter((_, i) => i % Math.ceil(posicoes.length / 60) === 0);
+    for (const pos of [0, ...amostra, SQL.length]) expect(linhaDe(SQL, pos), `posição ${pos}`).toBe(devagar(pos));
   });
 
   it("nenhuma policy é reinstalada numa versão intermediária diferente da final", () => {

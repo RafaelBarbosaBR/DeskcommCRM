@@ -2,7 +2,7 @@
 
 import { useActiveOrg } from "@/hooks/auth/AuthProvider";
 import { useT } from "@/hooks/i18n/useT";
-import { useEffect, useState } from "react";
+import { useEffect, useImperativeHandle, useState, type Ref } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
@@ -16,14 +16,26 @@ import { updateLeadSchema, type UpdateLeadInput } from "@/lib/schemas/leads";
 import { MOEDA_PADRAO, parseReaisToCents, simboloDaMoeda } from "@/lib/money";
 import { soChavesAlteradas } from "@/lib/leads/custom-fields-so-diff";
 import { CustomFieldsEditor, type CustomFieldDef } from "@/components/contacts/CustomFieldsEditor";
+import { ContactTagsEditor } from "@/components/inbox/ContactTagsEditor";
 import { EcoDoValor } from "./EcoDoValor";
+import type { CampoConfirmadoDoDocumento } from "./RevisaoDoDocumento";
 
+/**
+ * As etiquetas do negócio SAÍRAM deste formulário (#2979): quem as edita é o
+ * `ContactTagsEditor`, que grava na hora em `crm_leads.tags`. Manter um
+ * `tagsRaw` aqui seria pior do que redundância — "Salvar" reenviaria a lista
+ * carregada na abertura do dossiê e DESFARIA em silêncio a etiqueta que a
+ * pessoa acabou de criar no editor.
+ */
 interface FormShape {
   title: string;
   description: string;
   valueReais: string;
-  tagsRaw: string;
   expected_close_date: string;
+}
+
+export interface ControleDosCamposDoNegocio {
+  confirmarCampo: (confirmado: CampoConfirmadoDoDocumento) => void;
 }
 
 interface Props {
@@ -34,6 +46,8 @@ interface Props {
   onSaved?: () => void;
   /** O dossiê não tem "cancelar"; o diálogo tem. */
   onCancel?: () => void;
+  /** Confirmação externa do próprio card: preserva os outros campos em edição. */
+  controle?: Ref<ControleDosCamposDoNegocio>;
 }
 
 function centsToReais(cents: number | null | undefined): string {
@@ -50,7 +64,7 @@ function centsToReais(cents: number | null | undefined): string {
  * registro justamente de quem o produziu — a funcionalidade que prova "sua ação
  * fica registrada" provaria isso para todo mundo menos para o autor.
  */
-export function LeadFieldsForm({ lead, pipelineId, fieldDefs = [], onSaved, onCancel }: Props) {
+export function LeadFieldsForm({ lead, pipelineId, fieldDefs = [], onSaved, onCancel, controle }: Props) {
   const t = useT();
   const org = useActiveOrg();
   // A moeda do negócio JÁ GRAVADO vence: trocar a moeda da empresa não
@@ -70,7 +84,6 @@ export function LeadFieldsForm({ lead, pipelineId, fieldDefs = [], onSaved, onCa
       title: lead.title,
       description: lead.description ?? "",
       valueReais: centsToReais(lead.value_cents),
-      tagsRaw: (lead.tags ?? []).join(", "),
       expected_close_date: lead.expected_close_date ?? "",
     },
   });
@@ -80,7 +93,6 @@ export function LeadFieldsForm({ lead, pipelineId, fieldDefs = [], onSaved, onCa
       title: lead.title,
       description: lead.description ?? "",
       valueReais: centsToReais(lead.value_cents),
-      tagsRaw: (lead.tags ?? []).join(", "),
       expected_close_date: lead.expected_close_date ?? "",
     });
     setCustomFields(lead.custom_fields ?? {});
@@ -88,16 +100,25 @@ export function LeadFieldsForm({ lead, pipelineId, fieldDefs = [], onSaved, onCa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead.id]);
 
-  async function onSubmit(values: FormShape) {
-    const tags = values.tagsRaw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+  useImperativeHandle(controle, () => ({
+    confirmarCampo(confirmacao) {
+      // A confirmação pode terminar depois de a pessoa abrir outro card.
+      if (confirmacao.leadId !== lead.id) return;
+      const { campo, valor } = confirmacao;
+      // O evento já gravou este valor: atualiza o campo e a régua do diff,
+      // preservando os outros rascunhos. Não remonta o formulário (#2132).
+      setCustomFields((atuais) => ({ ...atuais, [campo]: valor }));
+      setCamposCarregados((atuais) => ({ ...atuais, [campo]: valor }));
+    },
+  }), [lead.id]);
 
+  async function onSubmit(values: FormShape) {
     const reais = values.valueReais.trim();
     let valueCents: number | null = null;
     if (reais.length > 0) {
-      valueCents = parseReaisToCents(reais);
+      // A MESMA moeda que o rótulo do campo mostra ao lado («Valor ($)»): é ela
+      // que decide se a vírgula é decimal ou separador de milhar (#3331).
+      valueCents = parseReaisToCents(reais, moedaDoValor);
       if (valueCents === null) {
         form.setError("valueReais", { message: t("Valor inválido") });
         return;
@@ -108,7 +129,6 @@ export function LeadFieldsForm({ lead, pipelineId, fieldDefs = [], onSaved, onCa
       title: values.title.trim(),
       description: values.description.trim() ? values.description.trim() : null,
       value_cents: valueCents,
-      tags,
       expected_close_date: values.expected_close_date || null,
       // Só o que a pessoa alterou (issue #2132) — o merge continua do servidor.
       ...(fieldDefs.length > 0
@@ -183,8 +203,18 @@ export function LeadFieldsForm({ lead, pipelineId, fieldDefs = [], onSaved, onCa
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="tagsRaw">{t("Tags (separadas por vírgula)")}</Label>
-          <Input id="tagsRaw" placeholder="vip, recompra" {...form.register("tagsRaw")} />
+          {/* A etiqueta do NEGÓCIO (#2979): o MESMO editor do Inbox, gravando
+              na OUTRA caixa — `crm_leads.tags` por `PATCH /api/v1/leads/{id}`,
+              nunca o perfil do contato. Ele grava na hora; por isso o dossiê
+              não carrega mais o campo de texto livre que substituía a lista. */}
+          <p className="text-sm font-medium">{t("Tags do negócio")}</p>
+          <ContactTagsEditor
+            entityType="lead"
+            entityId={lead.id}
+            pipelineId={pipelineId}
+            orgId={org?.orgId ?? ""}
+            tags={lead.tags ?? []}
+          />
         </div>
 
         {fieldDefs.length > 0 && (
@@ -195,6 +225,7 @@ export function LeadFieldsForm({ lead, pipelineId, fieldDefs = [], onSaved, onCa
               value={customFields}
               onChange={setCustomFields}
               mode="lead"
+              leadId={lead.id}
             />
           </div>
         )}

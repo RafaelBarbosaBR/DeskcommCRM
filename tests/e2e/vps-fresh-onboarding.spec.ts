@@ -177,6 +177,21 @@ test.describe("J1 — onboarding do dono numa instalação fresca", () => {
 
     // J1.4 — preenche e avança
     await page.locator("#display_name").fill("Loja QA VPS");
+    await page.locator("#timezone").click();
+    // A tradução substitui o Text original, mas o portal do Select ainda precisa desmontar.
+    await page.locator("#timezone").evaluate((gatilho) => {
+      const walker = document.createTreeWalker(gatilho, NodeFilter.SHOW_TEXT);
+      const texto = walker.nextNode();
+      if (!texto?.parentNode) throw new Error("O fuso selecionado não tem texto");
+      const traduzido = document.createElement("font");
+      traduzido.textContent = texto.textContent;
+      texto.parentNode.replaceChild(traduzido, texto);
+    });
+    await page.getByRole("option", { name: "Los Angeles", exact: true }).click();
+    await expect(page.locator('input[name="timezone"]')).toHaveValue("America/Los_Angeles");
+    await page.locator("#timezone").click();
+    await page.getByRole("option", { name: "São Paulo, Rio, Brasília, Sul e Sudeste", exact: true }).click();
+    await expect(page.locator('input[name="timezone"]')).toHaveValue("America/Sao_Paulo");
     await page.locator('input[type="checkbox"]').check();
     await expect(continuar).toBeEnabled();
     await continuar.click();

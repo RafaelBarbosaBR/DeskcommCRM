@@ -76,6 +76,15 @@ function pgClient(): SupabaseClient {
   return {
     rpc: async (name: string, args: Record<string, unknown>) => {
       try {
+        // A página entra em lote, numa RPC de três argumentos (sem p_action).
+        if (name === "fn_google_calendar_page_batch") {
+          const result = await pool.query(`select ${name}($1,$2,$3) result`, [
+            args.p_org,
+            args.p_id,
+            args.p_args,
+          ]);
+          return { data: result.rows[0].result, error: null };
+        }
         const names = ["fn_google_appointment", "fn_google_calendar"];
         if (!names.includes(name)) throw new Error(name);
         const result = await pool.query(`select ${name}($1,$2,$3,$4) result`, [
@@ -124,6 +133,11 @@ function pgClient(): SupabaseClient {
         },
         eq: (k: string, v: unknown) => where(k, v),
         lte: (k: string, v: unknown) => where(k, v, "<="),
+        in: (k: string, vs: readonly unknown[]) => {
+          values.push(vs);
+          filters.push(`${ident(k)} = any($${values.length})`);
+          return q;
+        },
         is: (k: string, v: null) => {
           expect(v).toBeNull();
           filters.push(`${ident(k)} is null`);

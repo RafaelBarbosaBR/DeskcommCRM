@@ -29,17 +29,24 @@
 		@waha_global path /api/v1/webhooks/waha
 		respond @waha_global 403
 
-		# O runner de agente de IA (ToolLoop) pode levar até ~5min por requisição.
-		# Timeout estendido só nessa rota pra o proxy não cortar a resposta longa.
-		@agentrun path /api/internal/agents/run*
-		reverse_proxy @agentrun app:3000 {
-			transport http {
-				read_timeout 320s
-				write_timeout 320s
-			}
-		}
-
 		# Todo o resto do app.
 		reverse_proxy app:3000
 	}
 }
+
+# ── Ponto de extensão (#2724) ────────────────────────────────────────────────
+# Publicar OUTRO serviço no mesmo VPS (wiki, landing page, n8n) sem editar
+# este arquivo: solte um arquivo seu em `caddy-sites/` — a pasta local que o
+# compose monta em /etc/caddy/sites, somente-leitura — e o Caddy publica aquele
+# serviço em seguida. Exemplo comentado em caddy-sites/README.caddy.
+#
+# É assim de propósito: este Caddyfile entra no contêiner por bind mount de um
+# arquivo e o update.sh troca de versão com `git checkout <tag>`; com o arquivo
+# alterado a atualização para em "parece haver mudanças locais que divergem" —
+# e quem atualiza pela tela do CRM nem vê o motivo. Ninguém precisa editar nada
+# versionado para publicar um domínio a mais.
+#
+# O caminho tem de ser o MESMO que o bind mount do compose declara; se os dois
+# divergirem o glob não acha nada e só avisa no log (a régua em
+# tests/unit/ponto-de-extensao-do-caddy.test.ts acopla os dois).
+import /etc/caddy/sites/*.caddy

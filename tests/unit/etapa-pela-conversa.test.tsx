@@ -26,8 +26,10 @@ import { createClient } from "@/lib/supabase/server";
  *     (`/api/v1/leads/bulk`, ação `move`): é ele que grava atividade, evento e
  *     auditoria. Um PATCH direto no lead moveria o card sem nada disso, e a
  *     etapa que avisa na Central deixaria de avisar quando movida pela conversa.
- *  3. **Etapa de perda não é oferecida** — ela pede motivo, e esse diálogo mora
- *     no quadro. Oferecê-la aqui seria perder sem motivo.
+ *  3. **Etapa de perda é oferecida, mas não move direto** — ela pede motivo, então
+ *     abre o `LoseLeadDialog` do quadro, com os motivos do funil que a rota
+ *     devolve (o quadro não está em cache aqui). Mover direto seria perder sem
+ *     motivo (issue #2871).
  *  4. **Resposta antiga (sem as etapas) não desenha seletor vazio.**
  */
 
@@ -185,7 +187,7 @@ beforeEach(() => {
 });
 
 describe("painel da conversa — Etapa do funil", () => {
-  it("move pelo mesmo caminho do quadro, sem oferecer etapa de perda, e relê o resumo", async () => {
+  it("move pelo mesmo caminho do quadro e relê o resumo", async () => {
     get.mockResolvedValue(resumo({ stage_id: "s-dados", etapas_do_funil: ETAPAS }));
     renderPainel();
     const user = userEvent.setup();
@@ -195,7 +197,7 @@ describe("painel da conversa — Etapa do funil", () => {
 
     await user.click(seletor);
     const opcoes = (await screen.findAllByRole("option")).map((o) => o.textContent);
-    expect(opcoes).toEqual(["Dados incompletos", "Pedido confirmado", "Entregue"]);
+    expect(opcoes).toEqual(["Dados incompletos", "Pedido confirmado", "Entregue", "Cancelado"]);
 
     const leiturasAntes = get.mock.calls.length;
     await user.click(screen.getByRole("option", { name: "Pedido confirmado" }));
@@ -208,6 +210,31 @@ describe("painel da conversa — Etapa do funil", () => {
       }),
     );
     // A tela relê o resumo: seletor e "Funil · Etapa" dizem a etapa nova.
+    await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(leiturasAntes));
+  });
+
+  it("escolher a etapa de perda abre o motivo do funil, perde com ele e relê o resumo", async () => {
+    get.mockResolvedValue(
+      resumo({ stage_id: "s-dados", etapas_do_funil: ETAPAS, motivos_de_perda: ["preço", "sumiu"] }),
+    );
+    renderPainel();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("combobox", { name: "Etapa do funil" }));
+    await user.click(await screen.findByRole("option", { name: "Cancelado" }));
+
+    // Não moveu: perder pede motivo. A janela traz os motivos DO FUNIL, não o padrão do produto.
+    expect(post).not.toHaveBeenCalled();
+    await user.click(await screen.findByRole("radio", { name: "preço" }));
+    expect(screen.getByRole("radio", { name: "sumiu" })).toBeTruthy();
+
+    const leiturasAntes = get.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Confirmar" }));
+
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/api/v1/leads/l-1/lose", { lost_reason: "preço" }),
+    );
+    expect(post).not.toHaveBeenCalledWith("/api/v1/leads/bulk", expect.anything());
     await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(leiturasAntes));
   });
 

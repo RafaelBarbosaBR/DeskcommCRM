@@ -58,8 +58,8 @@ const SCOPES: { id: string; label: string }[] = [
   // #2052 / PR #2194: configurar o agente é escopo PRÓPRIO, nunca `mcp:*`. Um
   // token já emitido não ganha este poder na atualização: só quem cria um token
   // novo marcando esta caixa. O rótulo diz o poder inteiro de propósito.
-  { id: "config:read", label: "Ler a configuração do agente de IA (exige papel de administrador)" },
-  { id: "config:write", label: "Editar, testar, PUBLICAR, PAUSAR, DESLIGAR e ARQUIVAR o agente de IA que atende seus clientes (exige papel de administrador)" },
+  { id: "config:read", label: "Ler a configuração do agente de IA e dos roteadores de IA (exige papel de administrador)" },
+  { id: "config:write", label: "Editar, testar, PUBLICAR, PAUSAR, DESLIGAR e ARQUIVAR o agente de IA que atende seus clientes, e criar, editar, testar e APAGAR os roteadores de IA que escolhem qual agente responde (exige papel de administrador)" },
   { id: "contacts:read", label: "Ler contatos" },
   { id: "contacts:write", label: "Criar e editar contatos" },
   { id: "leads:read", label: "Ler leads" },

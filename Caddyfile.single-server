@@ -18,14 +18,23 @@
 		@supabase path /auth/v1* /rest/v1* /realtime/v1* /storage/v1* /functions/v1* /graphql/v1*
 		reverse_proxy @supabase supabase-envoy:8000
 
-		@agentrun path /api/internal/agents/run*
-		reverse_proxy @agentrun app:3000 {
-			transport http {
-				read_timeout 320s
-				write_timeout 320s
-			}
-		}
-
 		reverse_proxy app:3000
 	}
 }
+
+# ── Ponto de extensão (#2724) ────────────────────────────────────────────────
+# Publicar OUTRO serviço no mesmo VPS (wiki, landing page, n8n) sem editar
+# este arquivo: solte um arquivo seu em `caddy-sites/` — a pasta local que o
+# compose monta em /etc/caddy/sites, somente-leitura — e o Caddy publica aquele
+# serviço em seguida. Exemplo comentado em caddy-sites/README.caddy.
+#
+# Mesma razão do Caddyfile da base: este arquivo entra no contêiner por bind
+# mount de um arquivo e o update.sh troca de versão com `git checkout <tag>`;
+# com o arquivo alterado a atualização para em "parece haver mudanças locais
+# que divergem". As duas variantes (single-server e normal) têm o mesmo ponto
+# de extensão.
+#
+# O caminho tem de ser o MESMO que o bind mount do compose declara; se os dois
+# divergirem o glob não acha nada e só avisa no log (a régua em
+# tests/unit/ponto-de-extensao-do-caddy.test.ts acopla os dois).
+import /etc/caddy/sites/*.caddy

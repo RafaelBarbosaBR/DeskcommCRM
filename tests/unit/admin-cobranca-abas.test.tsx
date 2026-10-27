@@ -14,9 +14,9 @@ vi.mock("@/lib/api/client", () => ({ apiClient: { post: h.post, patch: h.patch }
 vi.mock("@/components/feedback/ApiErrorToast", () => ({ showApiError: h.showApiError }));
 
 import { ConexaoDaCobranca } from "@/app/admin/(protected)/cobranca/_conexao";
-import { CopiarLinkDePagamento } from "@/app/admin/(protected)/cobranca/_copiar-link";
 import { ReguaDaCobranca } from "@/app/admin/(protected)/cobranca/_regua";
 import { FaixaDoModoDeTeste, VisaoGeral } from "@/app/admin/(protected)/cobranca/_visao-geral";
+import { CopiarLinkDePagamento } from "@/components/admin/cobranca/CopiarLinkDePagamento";
 import { ApiError } from "@/lib/api/types";
 import { montarChecklist, type DadosDaVisaoGeral } from "@/lib/cobranca/visao-geral";
 
@@ -77,6 +77,8 @@ describe("Régua", () => {
     const u = userEvent.setup();
     render(<ReguaDaCobranca tolerancia={7} />);
     expect(screen.getByText(/Dia 5:/)).toBeTruthy();
+    // #2753: a tolerância é de pagamento atrasado; o trial não a espera.
+    expect(screen.getByText(/O teste grátis que acaba sem pagamento não espera por ela/)).toBeTruthy();
     const campo = screen.getByLabelText("Dias de tolerância");
     await u.clear(campo);
     await u.type(campo, "10");

@@ -8,8 +8,15 @@
  */
 import { z } from "zod";
 
-/** Espelha o CHECK de `webhook_lead_captures.outcome` (migration 0174). */
-export const DESFECHOS_DA_CAPTACAO = ["criado", "duplicado", "recusado"] as const;
+/**
+ * Espelha o CHECK de `webhook_lead_captures.outcome` (migration 0683).
+ *
+ * `atualizado` entrou junto com a opção por fonte do #2316 — o desfecho do card
+ * que a integração reescreveu. Ele é o único dos quatro que NÃO é um envio
+ * isolado: depende de a fonte ter a opção ligada, e por isso quem não liga
+ * continua vendo só os três de sempre.
+ */
+export const DESFECHOS_DA_CAPTACAO = ["criado", "duplicado", "atualizado", "recusado"] as const;
 
 export const leadCapturesQuerySchema = z.object({
   source_id: z.string().uuid().optional(),

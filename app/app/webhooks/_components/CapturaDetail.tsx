@@ -42,7 +42,13 @@ function Linha({
 }) {
   return (
     <div className="grid grid-cols-[minmax(0,7rem)_1fr] gap-3 py-1.5">
-      <dt className="text-xs text-muted-foreground">{rotulo}</dt>
+      {/* A trilha do rótulo tem TETO de 7rem. Uma chave que o formulário mandou
+          (uma palavra sem espaço: `disposto_investir_1500_reais_por_mes_em_trafego`,
+          ou um UUID de pergunta) não tem onde quebrar, vaza da célula e é pintada
+          por cima do valor ao lado. `wrap-anywhere` (e não `break-words`): só
+          `overflow-wrap: anywhere` reduz o min-content, então o rótulo caiba na
+          trilha quebrando — sem cortá-lo, o que o tornaria ilegível. */}
+      <dt className="wrap-anywhere text-xs text-muted-foreground">{rotulo}</dt>
       <dd className="min-w-0 break-words text-sm text-text">{children}</dd>
     </div>
   );

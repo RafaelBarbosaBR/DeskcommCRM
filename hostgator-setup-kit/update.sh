@@ -72,7 +72,11 @@ if [ "${SINGLE_SERVER:-0}" = "1" ]; then
   if sincronizar_smtp_do_gotrue; then
     dc_supabase up -d --no-deps auth >/dev/null 2>&1 || c_ylw "⚠ Não consegui reiniciar o auth do Supabase com o SMTP do CRM."
   else
-    c_ylw "⚠ Sem SMTP no CRM: 'esqueci a senha' e a confirmação de cadastro não enviam e-mail. Configure em /admin/email e rode o update.sh de novo."
+    # #2755 — o aviso diz POR QUE rodar de novo: o app não leva o SMTP de
+    # /admin/email ao GoTrue, quem leva é a chamada logo acima. Sem o porquê,
+    # "rode de novo" parecia ordem sem motivo. Não citamos o painel de
+    # Atualização: o botão dele só aparece quando há versão nova.
+    c_ylw "⚠ Sem SMTP no CRM: 'esqueci a senha' e a confirmação de cadastro não enviam e-mail. Configure em /admin/email e rode bash hostgator-setup-kit/update.sh de novo (ele roda mesmo sem versão nova) — é ele que leva o SMTP ao serviço de login."
   fi
 fi
 
@@ -82,6 +86,34 @@ fi
 # saem do script mais abaixo, e se o cron dependesse deles a atualização pela
 # tela nunca ligaria justamente em quem já está em dia. É idempotente.
 setup_update_agent_cron
+
+# ── 0+. O par VAPID também em quem não vai atualizar nada ───────────────────
+# A tela de Notificações manda rodar a atualização, sem --force. Quem já está na
+# última versão sai pela saída "nada a atualizar" logo abaixo, e quem segue a
+# `main` sai pela recusa de versão anterior: sem esta chamada, nos dois o par
+# nunca nasceria. Só na lacuna, nunca troca um par existente (D6).
+#
+# Aqui o par só vai para o .env. Quem sobe o app e o worker de novo para lê-lo é
+# `subir_para_ler_o_par`, e SÓ nas duas saídas sem atualização: no caminho de
+# atualização de verdade o `up -d` lá embaixo já recria os dois, e as recusas de
+# uma atualização real (registro fora, árvore suja) prometem não ter parado
+# nada — ali o par liga na atualização que vier depois.
+PAR_VAPID_CRIADO=""
+PAR_LIGADO_AGORA=""
+completar_par_vapid .env
+subir_para_ler_o_par() {
+  [ -n "$PAR_VAPID_CRIADO" ] || return 0
+  PAR_VAPID_CRIADO=""
+  # `never`: recriar para ler o .env, nunca trocar de imagem. Com tag de canal
+  # (`always`) o compose baixaria o topo do canal antes de recriar — app novo sem
+  # o baseline, logo antes de uma recusa que diz que nada mudou.
+  if ( export APP_PULL_POLICY=never WORKER_PULL_POLICY=never; dc up -d --no-deps app worker ) >/dev/null 2>&1; then
+    PAR_LIGADO_AGORA=1
+    c_grn "$(t "✓ app e worker reiniciados para ligar os avisos com o app fechado")"
+  else
+    c_ylw "$(t "⚠ Criei as chaves dos avisos com o app fechado, mas não consegui reiniciar o app e o worker. Os avisos ligam quando eles reiniciarem, o que acontece sozinho na próxima atualização.")"
+  fi
+}
 
 # ── 1. Tem atualização mesmo? ────────────────────────────────────────────────
 step "Procurando atualizações"
@@ -147,6 +179,7 @@ if [ -n "$MESMA_TAG" ] && [ -z "$FORCE" ] && ! image_desatualizada; then
     c_ylw "    bash hostgator-setup-kit/update.sh --to $TARGET_TAG --force"
   fi
   c_grn "✓ Você já está na versão mais recente ($TARGET_TAG). Nada a atualizar."
+  subir_para_ler_o_par
   exit 0
 fi
 
@@ -162,9 +195,10 @@ fi
 if [ -z "$FORCE" ] && [ -z "$MESMA_TAG" ]; then
   is_already_in_head "$TARGET_TAG" && CONTIDA=0 || CONTIDA=$?
   case "$CONTIDA" in
-    0) refuse "A versão $TARGET_TAG é ANTERIOR à que já está instalada neste servidor.
+    0) subir_para_ler_o_par
+       refuse "A versão $TARGET_TAG é ANTERIOR à que já está instalada neste servidor.
      Instalar ela seria voltar no tempo e desligar coisas que você já tem.
-     Não mexi em nada: nem no banco, nem no app — está tudo como estava.
+     Não mexi em nada${PAR_LIGADO_AGORA:+ além das chaves dos avisos com o app fechado}: nem no banco, nem na versão do app — está tudo como estava.
      Se você REALMENTE quer voltar para a $TARGET_TAG, rode:
        bash hostgator-setup-kit/update.sh --to $TARGET_TAG --force" ;;
     2) refuse "Não consegui ter CERTEZA de que a versão $TARGET_TAG é mais nova que a instalada
@@ -175,6 +209,19 @@ if [ -z "$FORCE" ] && [ -z "$MESMA_TAG" ]; then
      servidor. Para instalar assim mesmo, por sua conta:
        bash hostgator-setup-kit/update.sh --to $TARGET_TAG --force" ;;
   esac
+fi
+
+# Aqui já sabemos que há atualização real ou --force. Em ARM64, a release
+# inteira (quatro imagens + WAHA efetiva) é conferida no índice OCI antes de
+# backup, checkout, banco ou contêiner: recusar aqui não deixa nada pela metade.
+# Em AMD64 não há este pré-voo: toda imagem publicada tem amd64, e o preflight
+# geral abaixo (#1955) já confere as quatro imagens em toda arquitetura.
+# Com DESKCOMM_BUILD_LOCAL o escape da #1955 vale aqui também: quem pediu
+# construção local não depende do registro, e recusá-la aqui a anularia
+# justamente com o registro fora.
+PLATAFORMA_HOST="$(plataforma_oci_do_host "$(uname -m 2>/dev/null || true)" 2>/dev/null || true)"
+if [ "$PLATAFORMA_HOST" = linux/arm64 ] && ! build_local_pedido && ! preflight_plataforma_atualizacao "$TARGET_TAG" "$PLATAFORMA_HOST"; then
+  refuse "A versão $TARGET_TAG não está completa para $PLATAFORMA_HOST ou a WAHA configurada é incompatível. Não alterei banco, imagens nem código. Confira o registry e repita."
 fi
 if [ -n "$MESMA_TAG" ] && [ -n "$FORCE" ]; then
   # Com --force na mesma tag ninguém conferiu a imagem: quem chega aqui pediu
@@ -211,6 +258,44 @@ if build_local_pedido; then
   c_grn "✓ preflight — o Docker respondeu; construção local pedida (DESKCOMM_BUILD_LOCAL), sem depender do registro."
 else
   c_grn "✓ preflight — as quatro imagens da $TARGET_TAG estão prontas no registro."
+fi
+
+# ── 1.6 A volta fica de prontidão (#2757) ──────────────────────────────────
+# Daqui para baixo a atualização VAI mexer no que está no ar. Esta marca é o
+# que autoriza o agente do host a voltar sozinho, sem ninguém do outro lado,
+# se o app não responder mais depois disto — é o caso em que o painel de
+# atualização está justamente dentro do app que parou, e nenhum botão salva.
+#
+# Nasce SÓ aqui: antes do preflight nada foi tocado (o `refuse` devolve RC 3 e
+# a versão atual segue no ar), e uma marca sem atualização de verdade seria
+# rollback disparado sobre uma queda qualquer. E só com a versão que ESTAVA no
+# ar — instalação fora de release não tem tag para onde voltar, e aí
+# `vigia_armar` fica calada em vez de prometer uma volta impossível.
+#
+# Quem DESARMA é o agente, quando vê o app respondendo (ou quando a janela de
+# validade fecha) — não este script: ele termina com o app saudável, mas é a
+# vigência de alguns minutos depois que prova que a versão nova continuou de
+# pé sob os primeiros requests e sob o primeiro cron novo.
+#
+# EXCETO quando esta execução É a volta: andar pra trás não arma. Sem isto a
+# própria volta gravaria uma marca nova (o `vigia_encerrar` do agente corre
+# ANTES de chamar este script), e o agente — vendo o app ainda fora do ar,
+# porque a queda não era da versão — voltaria de novo daqui a dois ciclos,
+# para a release que acabou de ser largada. As duas trocas se alternariam a
+# cada ~10 min, com backup e migration de cada vez, até a janela de duas
+# horas fechar: o laço que a issue apontou como risco principal. Uma ida,
+# uma vigília — quem está saindo não vigia.
+VOLTA_NO_TEMPO=""
+if [ -z "$MESMA_TAG" ]; then
+  # O MESMO critério da recusa lá em cima (e do agente): alvo contido no que
+  # roda aqui = versão anterior. `2` (não consegui ter certeza) não é volta
+  # comprovada, e aí armar continua sendo o lado seguro.
+  is_already_in_head "$TARGET_TAG" && VOLTA_NO_TEMPO=1 || VOLTA_NO_TEMPO=""
+fi
+if [ -n "$VOLTA_NO_TEMPO" ]; then
+  c_ylw "Volta para a $TARGET_TAG — a vigência pós-atualização não re-arma: quem está voltando não vigia."
+else
+  vigia_armar "$CURRENT_TAG"
 fi
 
 # ── 2. Backup de segurança ANTES de tocar no banco ───────────────────────────
@@ -664,6 +749,11 @@ export APP_IMAGE="${IMG_APP}:${VERSAO_ALVO}"
 export WORKER_IMAGE="${IMG_WORKER}:${VERSAO_ALVO}"
 export SCHEDULER_IMAGE="${IMG_SCHEDULER}:${VERSAO_ALVO}"
 export VOICE_AGENT_IMAGE="${IMG_VOICE_AGENT}:${VERSAO_ALVO}"
+# `gravar_imagens` também cria, só na lacuna, o par VAPID dos avisos com o app
+# fechado (`completar_par_vapid`), e nunca troca um par que já existe. Mora lá
+# dentro, e não numa linha daqui, porque é ela que o update.sh ANTIGO chama
+# depois de reler o kit: assim o par chega já na primeira atualização, antes do
+# pull e do `up -d` abaixo.
 gravar_imagens .env "$VERSAO_ALVO"
 
 # Os segredos da chamada de voz (spec 18), para quem instalou antes dela existir.
@@ -716,6 +806,15 @@ fi
 # external, but could not be found" — e este script roda sozinho pelo agent.sh,
 # então ninguém está lendo a tela para decifrar isso. Mesma função do install.sh.
 garantir_rede_do_proxy
+# Antes de qualquer `up -d`: a configuração NOVA do Caddy (Caddyfile desta
+# versão + caddy-sites/ do operador + imagem já puxada) passa pela conferência.
+# Recusada, nem o `up -d` do parque nem a recriação lá embaixo tocam no proxy
+# que está no ar (#2724; ver conferir_config_do_proxy em _common.sh).
+PROXY_RECUSA=""
+case "${REVERSE_PROXY:-caddy}" in
+traefik|npm|cloudflared) ;;
+*) conferir_config_do_proxy || true ;;
+esac
 # O `up -d` falha por imagem ausente no disco e, com ele, a atualização inteira:
 # numa VPS de arquitetura diferente da das imagens publicadas o `pull` acima não
 # traz nada. Worker, scheduler e voz têm `build:` ao lado do `image:` e o
@@ -746,7 +845,7 @@ garantir_rede_do_proxy
 # de ERRO, onde este ponto aqui nunca chega a ser alcancado.
 manutencao_desce
 CONSTRUIU_AQUI=""
-if ! dc up -d; then
+if ! subir_o_parque; then
   # ── O PORTÃO DO BUILD LOCAL (#1955, critério 2) ─────────────────────────
   # O gatilho continua sendo o CÓDIGO DE SAÍDA do `up -d` (nunca o texto do
   # erro — arquitetura, tag publicando, pacote privado e registro fora caem no
@@ -794,13 +893,11 @@ fi
 # proxy" em TODA atualização de quem usa proxy externo: alarme falso, num
 # momento em que o dono precisa confiar no que está lendo.
 case "${REVERSE_PROXY:-caddy}" in
-traefik|npm)
+traefik|npm|cloudflared)
   c_grn "✓ proxy externo (${REVERSE_PROXY}): o Caddy não é usado aqui — nada a recarregar"
   ;;
 *)
-  dc up -d --force-recreate --no-deps caddy >/dev/null 2>&1 \
-    && c_grn "✓ proxy recarregado com a configuração desta versão" \
-    || c_ylw "⚠ não consegui recriar o proxy — rode: docker compose $(dc_files) up -d --force-recreate caddy"
+  recriar_o_proxy || true
   ;;
 esac
 

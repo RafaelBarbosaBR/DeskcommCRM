@@ -30,13 +30,24 @@ interface SuspendDialogProps {
   open: boolean;
   onClose: () => void;
   organizationId: string;
+  /**
+   * O nome do tenant, para o diálogo dizer QUEM vai ser suspenso. Veio do
+   * atalho da listagem (#2778): suspender sem ver o alvo é como se derruba a
+   * instalação errada. Opcional porque a ficha do tenant já sabe quem é.
+   */
+  displayName?: string;
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function SuspendDialog({ open, onClose, organizationId }: SuspendDialogProps) {
+export function SuspendDialog({
+  open,
+  onClose,
+  organizationId,
+  displayName,
+}: SuspendDialogProps) {
   const t = useT();
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +84,13 @@ export function SuspendDialog({ open, onClose, organizationId }: SuspendDialogPr
     <AlertDialog open={open} onOpenChange={(open) => { if (!open) handleClose(); }}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t("Suspender tenant")}</AlertDialogTitle>
+          <AlertDialogTitle>
+            {t("Suspender tenant")}
+            {/* O ALVO da suspensão, na linha de cima: este diálogo abre a partir
+                da listagem (#2778) e quem opera 20 tenants precisa ver quem vai
+                ser suspenso antes de confirmar. */}
+            {displayName ? <span className="font-normal"> {displayName}</span> : null}
+          </AlertDialogTitle>
           <AlertDialogDescription>
             {t(
               "A empresa perde o acesso, e a IA, os envios e as automações dela param. Mensagens na fila e tarefas agendadas são descartadas e não saem ao reativar; os follow-ups em andamento retomam de onde pararam. As mensagens que chegarem continuam gravadas.",

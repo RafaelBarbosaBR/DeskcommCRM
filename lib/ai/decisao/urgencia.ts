@@ -52,7 +52,7 @@ import type { Pergunta, Resposta } from "./cliente";
 import type { EstadoQuePergunta } from "./config";
 import { podeTentar, registrarFalha, registrarSucesso } from "./disjuntor";
 import { estadoDaTarefaNoPool } from "./pool";
-import { chaveDasTarefas, decidirNoPonto, type DependenciasDoPonto } from "./ponto";
+import { decidirNoPonto, destinoDasTarefas, type DependenciasDoPonto } from "./ponto";
 import { TAREFA_DA_URGENCIA } from "./tarefas";
 
 /** Acima disso o Jev diz "há risco AGORA". `>` — igual não passa. */
@@ -153,8 +153,13 @@ export async function perguntarUrgenciaAoJev(
       ...deps,
       // A chave desta tarefa (e não a de um ponto — não há ponto no registro).
       // `decidirNoPonto` sem `ponto` só resolveria a chave se cada PERGUNTA
-      // fosse id de tarefa, e aqui as duas perguntas são de UMA tarefa.
-      buscarChave: deps.buscarChave ?? ((org: string) => chaveDasTarefas(org, [TAREFA_DA_URGENCIA])),
+      // fosse id de tarefa, e aqui as duas perguntas são de UMA tarefa. A
+      // ORIGEM vem junto: ela escolhe base, nome do modelo e provedor da
+      // credencial. Chave injetada por teste continua vencendo (caminho de
+      // sempre).
+      ...(deps.buscarDestino || deps.buscarChave
+        ? {}
+        : { buscarDestino: (org: string) => destinoDasTarefas(org, [TAREFA_DA_URGENCIA]) }),
     },
   );
   if (!r.ok) {

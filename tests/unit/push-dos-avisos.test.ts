@@ -25,6 +25,7 @@ import { enviarPushDaOrg } from "@/lib/notifications/web_push";
 import { webPushInboundHandler } from "@/lib/notifications/push.handler";
 import type { EventRow } from "@/lib/event-log/dispatcher";
 import { corpoDoAvisoDeEtapa, tituloDoAvisoDeEtapa } from "@/lib/leads/aviso-de-etapa";
+import { PAPEL_MINIMO_DA_CENTRAL } from "@/lib/ai/inbox-destino";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 
@@ -77,6 +78,8 @@ describe("aviso da Central → celular", () => {
     expect(payload).toEqual({
       title: "Negocio entró en «Pedido confirmado»",
       body: "Abre el negocio para dar el siguiente paso. Este aviso se pidió en la configuración de la etapa.",
+      // Frase fixa, sem dado de cliente: pode aparecer no modo "só quem mandou".
+      corpoSemPrevia: "Abre el negocio para dar el siguiente paso. Este aviso se pidió en la configuración de la etapa.",
       tag: "aviso:i1",
       href: "/app/pipelines/p1?lead=l1",
     });
@@ -95,6 +98,8 @@ describe("aviso da Central → celular", () => {
     expect(vi.mocked(enviarPushDaOrg).mock.calls[0]![1]).toEqual({
       title: "La IA pasó una conversación al equipo",
       body: "Abre la conversación para responder al cliente.",
+      // Frase fixa, sem dado de cliente: pode aparecer no modo "só quem mandou".
+      corpoSemPrevia: "Abre la conversación para responder al cliente.",
       tag: "aviso:i2",
       href: "/app/inbox/c1",
     });
@@ -124,6 +129,8 @@ describe("aviso da Central → celular", () => {
     expect(vi.mocked(enviarPushDaOrg).mock.calls[0]![1]).toEqual({
       title: "La IA se quedó sin saldo en el proveedor",
       body: "Recarga el saldo en la cuenta del proveedor: las respuestas salen solas cuando vuelva.",
+      // Frase fixa, sem dado de cliente: pode aparecer no modo "só quem mandou".
+      corpoSemPrevia: "Recarga el saldo en la cuenta del proveedor: las respuestas salen solas cuando vuelva.",
       tag: "aviso:i4",
       href: "/app/ai/credentials",
     });
@@ -151,6 +158,8 @@ describe("aviso da Central → celular", () => {
       // como "A IA passou uma conversa para a equipe" — falso, e mandava quem
       // atendia procurar uma conversa que não existe.
       body: "A IA preparou uma proposta. Confira antes de enviar.",
+      // Frase fixa, sem dado de cliente: pode aparecer no modo "só quem mandou".
+      corpoSemPrevia: "A IA preparou uma proposta. Confira antes de enviar.",
       tag: "aviso:i7",
       href: "/app/proposals/prop-1",
     });
@@ -193,6 +202,28 @@ describe("aviso da Central → celular", () => {
     const r = await webPushInboundHandler.handle(evento("central.aviso_criado", { item_id: "i6" }));
     expect(r.status).toBe("skipped");
     expect(enviarPushDaOrg).not.toHaveBeenCalled();
+  });
+
+  it("o push segue o papel de quem recebe: aviso da empresa vai a quem vê a Central", async () => {
+    vi.mocked(createAdminClient).mockReturnValue(banco({
+      agent_inbox_items: { id: "i9", kind: "handoff", ref_kind: "conversation", ref_id: "c1", title: "Handoff", body: null, para_user_id: null },
+      organizations: { locale: "pt-BR" },
+    }) as never);
+    await webPushInboundHandler.handle(evento("central.aviso_criado", { item_id: "i9" }));
+    expect(PAPEL_MINIMO_DA_CENTRAL).toBe("agent");
+    expect(vi.mocked(enviarPushDaOrg).mock.calls[0]![2]).toEqual({ papelMinimo: PAPEL_MINIMO_DA_CENTRAL });
+  });
+
+  it("aviso com destinatário vai só a ele, com o mesmo papel mínimo da Central", async () => {
+    vi.mocked(createAdminClient).mockReturnValue(banco({
+      agent_inbox_items: { id: "i10", kind: "handoff", ref_kind: "conversation", ref_id: "c1", title: "Handoff", body: null, para_user_id: "u-dono" },
+      organizations: { locale: "pt-BR" },
+    }) as never);
+    await webPushInboundHandler.handle(evento("central.aviso_criado", { item_id: "i10" }));
+    expect(vi.mocked(enviarPushDaOrg).mock.calls[0]![2]).toEqual({
+      papelMinimo: PAPEL_MINIMO_DA_CENTRAL,
+      soUsuario: "u-dono",
+    });
   });
 
   it("aviso que sumiu antes do dreno não manda nada", async () => {

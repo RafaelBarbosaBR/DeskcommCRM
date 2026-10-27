@@ -12,7 +12,7 @@ import type { ConversationsFilters } from "@/hooks/inbox/useConversationsRealtim
  * ─── O que é "auxiliar" ──────────────────────────────────────────────────────
  * A ABA não entra. Ela é a visão escolhida, já está destacada na barra de cima, e
  * nomeá-la aqui diria ao operador para "limpar" o lugar onde ele está. Entram os
- * quatro que ele ligou por cima da aba e pode esquecer que ligou.
+ * que ele ligou por cima da aba e pode esquecer que ligou.
  *
  * As strings saem em português porque `t()` usa o português como chave. Elas
  * precisam existir em `lib/i18n/dicionario.ts`: o guardião do espanhol é cego a
@@ -25,5 +25,10 @@ export function filtrosAuxiliaresAtivos(filters: ConversationsFilters): string[]
   if (filters.tag) ativos.push("Etiqueta");
   if (filters.channel_session_id) ativos.push("Canal");
   if (filters.is_group) ativos.push("Grupos");
+  // O atendente escolhido pelo gerente. `me` e `unassigned` são a ABA (Minhas e
+  // a antiga Fila), não um filtro ligado por cima dela.
+  if (filters.assigned_to && filters.assigned_to !== "me" && filters.assigned_to !== "unassigned") {
+    ativos.push("Atendente");
+  }
   return ativos;
 }

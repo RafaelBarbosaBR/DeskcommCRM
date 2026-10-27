@@ -28,9 +28,15 @@ export async function PATCH(req: Request): Promise<Response> {
   const parsed = channelRoutingPatchSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return fail("validation_failed", "Confira o canal e os responsáveis selecionados.", 422, { requestId });
   const db = await createClient();
+  // Regra POR NÚMERO (#2331): o modo e o destino padrão viajam na MESMA gravação
+  // dos responsáveis — é uma tela, um botão. Omitir = gravar sem regra própria
+  // (herda a organização), que é o que a tela antiga fazia.
+  const distribution_mode = parsed.data.distribution_mode ?? null;
+  const default_assignee_user_id = parsed.data.default_assignee_user_id ?? null;
   const { data, error } = await db.rpc("fn_set_channel_routing", {
     p_org: auth.org.orgId, p_channel: parsed.data.channel_session_id,
     p_users: parsed.data.user_ids, p_reset: parsed.data.reset,
+    p_mode: distribution_mode, p_default_assignee: default_assignee_user_id,
   });
   if (error) {
     if (error.code === "P0002") return fail("not_found", "Canal não encontrado.", 404, { requestId });
@@ -40,6 +46,7 @@ export async function PATCH(req: Request): Promise<Response> {
   }
   void audit({ action: "routing.config_changed", actorUserId: auth.user.id, organizationId: auth.org.orgId,
     resourceType: "channel_session", resourceId: parsed.data.channel_session_id, requestId,
-    metadata: { user_ids: parsed.data.user_ids, reset: parsed.data.reset } });
+    metadata: { user_ids: parsed.data.user_ids, reset: parsed.data.reset,
+      distribution_mode, default_assignee_user_id } });
   return ok(data, { requestId });
 }

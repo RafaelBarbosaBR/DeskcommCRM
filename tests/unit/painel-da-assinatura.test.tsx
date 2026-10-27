@@ -15,6 +15,7 @@ const PLANO = { id: "plano-a", nome: "Básico", preco_cents: 4990, intervalo: "m
 const ASSINATURA_EM_TESTE: NonNullable<DadosDoPainel["assinatura"]> = {
   estado: "trial", trial_ate: "2026-10-10T12:00:00Z", prazo_extra_ate: null, proximo_vencimento: null, vencida_desde: null,
   cancela_no_fim: false, modo: null, provedor: null, link_de_pagamento: null, assinaturas_vivas: 0, plano_agendado: null,
+  periodo_pago_desde: null, troca_pagamento_url: null, troca_status: null, pagamento_inicial_pendente: false,
 };
 const EM_TESTE: DadosDoPainel = {
   assinatura: ASSINATURA_EM_TESTE,
@@ -39,6 +40,12 @@ describe("PainelDaAssinatura", () => {
     expect(container.querySelector('[data-uso="assentos"]')?.textContent).toBe("1 de 1");
     expect(container.querySelector('[data-uso="canais"]')?.textContent).toBe("2 · sem limite");
     expect(container.querySelector('[data-uso="ia"]')?.textContent).toContain("US$");
+  });
+
+  it("primeiro pagamento pendente é separado do atraso de renovação", () => {
+    render(<PainelDaAssinatura dados={{ ...EM_TESTE, assinatura: { ...ASSINATURA_EM_TESTE, estado: "em_atraso", pagamento_inicial_pendente: true } }} idioma="pt-BR" />);
+    expect(screen.getByText("Aguardando o primeiro pagamento. O acesso será liberado após a confirmação.")).toBeTruthy();
+    expect(screen.queryByText(/^Em atraso desde/)).toBeNull();
   });
 
   it("em dia: o rótulo do estado, sem data de teste", () => {

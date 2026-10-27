@@ -7,7 +7,8 @@ const h = vi.hoisted(() => ({
   papel: vi.fn(),
   ligada: true,
   provedor: "stripe" as string | null,
-  ad: { lerSituacao: vi.fn(), garantirCliente: vi.fn(), iniciarAssinatura: vi.fn() },
+  ad: { lerSituacao: vi.fn(), garantirCliente: vi.fn(), iniciarAssinatura: vi.fn(), lerPagamentoProporcional: vi.fn(), expirarSessao: vi.fn() },
+  emailDoAdmin: vi.fn(),
   taxaOk: true,
   audit: vi.fn(),
   logError: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("@/lib/logger", () => ({ logger: { error: h.logError, warn: vi.fn(), inf
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => h.banco.cliente }));
 vi.mock("@/lib/impersonate/support", () => ({ requireSupportWrite: async () => null }));
 vi.mock("@/lib/ai/dispatcher/rate-limit", () => ({ checkRateLimit: async () => ({ allowed: h.taxaOk }) }));
+vi.mock("@/lib/cobranca/emails", () => ({ emailDoAdminDaEmpresa: h.emailDoAdmin }));
 
 import { ErroDoProvedor } from "@/lib/cobranca/provedores/contrato";
 
@@ -66,6 +68,7 @@ beforeEach(() => {
   h.banco = bancoFalso(responder);
   h.papel.mockResolvedValue({ ok: true, user: { id: "admin-1", email: "admin@loja.com" }, org: { orgId: ORG } });
   h.ad.garantirCliente.mockResolvedValue("cus_novo");
+  h.emailDoAdmin.mockResolvedValue("ana@loja.com");
   h.ad.iniciarAssinatura.mockResolvedValue({ url: "https://checkout.stripe.com/c/pay/cs_1", expiraEm: new Date("2026-10-11T12:00:00Z"), assinaturaRef: null });
 });
 
@@ -94,12 +97,12 @@ describe("checkout da assinatura", () => {
     expect(h.ad.garantirCliente).not.toHaveBeenCalled();
   });
 
-  it("⭐ caminho feliz: reserva, cliente com o nome legal e o e-mail de quem clicou, checkout com o teste grátis, e grava o link", async () => {
+  it("⭐ caminho feliz: reserva, cliente com o nome legal e o e-mail do admin da empresa, checkout com o teste grátis, e grava o link", async () => {
     const res = await assinar();
     expect((await res.json()).data).toEqual({ url: "https://checkout.stripe.com/c/pay/cs_1" });
     const [reserva, gravacao] = updates();
     expect(reserva).toMatchObject({ checkout_url: null });
-    expect(h.ad.garantirCliente).toHaveBeenCalledWith({ id: ORG, nome: "Loja Legal Ltda", email: "admin@loja.com", documento: null });
+    expect(h.ad.garantirCliente).toHaveBeenCalledWith({ id: ORG, nome: "Loja Legal Ltda", email: "ana@loja.com", documento: null });
     const pedido = h.ad.iniciarAssinatura.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(pedido).toMatchObject({ clienteRef: "cus_novo", orgId: ORG, chaveIdempotencia: CHAVE, trialAte: new Date("2026-10-20T00:00:00.000Z") });
     expect(String(pedido.urlDeVolta)).toMatch(/\/cobranca\/volta\?para=painel$/);
@@ -219,7 +222,7 @@ describe("checkout da assinatura pelo Asaas (PR 3b)", () => {
     h.ad.garantirCliente.mockResolvedValue("cus_asaas_1");
     const res = await assinar({ documento: "11.222.333/0001-81" });
     expect(res.status).toBe(200);
-    expect(h.ad.garantirCliente).toHaveBeenCalledWith({ id: ORG, nome: "Loja Legal Ltda", email: "admin@loja.com", documento: CNPJ });
+    expect(h.ad.garantirCliente).toHaveBeenCalledWith({ id: ORG, nome: "Loja Legal Ltda", email: "ana@loja.com", documento: CNPJ });
     expect(JSON.stringify(updates())).not.toContain(CNPJ);
     expect(JSON.stringify(h.audit.mock.calls)).not.toContain(CNPJ);
     expect(JSON.stringify(h.logError.mock.calls)).not.toContain(CNPJ);
@@ -270,5 +273,69 @@ describe("checkout da assinatura pelo Asaas (PR 3b)", () => {
     expect(res.status).toBe(422);
     expect((await codigo(res)).code).toBe("documento_recusado");
     expect(updates().at(-1)).toEqual({ checkout_expira_em: null });
+  });
+});
+
+describe("#2961: entrada paga e ajuste proporcional x o checkout cheio (as duas portas passam por gerarLinkDePagamento)", () => {
+  const AJUSTE = {
+    troca_id: "troca-1", plano_troca_pendente_id: "plano-b", troca_status: "aguardando_pagamento",
+    troca_pagamento_ref: "pay_ajuste", troca_pagamento_url: "https://sandbox.asaas.com/i/pay_ajuste",
+    troca_reserva_ate: new Date(Date.now() + 10 * 86_400_000).toISOString(),
+  };
+
+  it("⭐ ajuste aguardando com a assinatura VIVA: 409 pagamento_em_andamento, nenhum checkout cheio", async () => {
+    m.linha = { ...EM_TESTE, ...AJUSTE, estado: "ativa", trial_ate: null, provedor: "asaas", provedor_cliente_id: "cus_1" };
+    h.ad.lerSituacao.mockResolvedValue({ assinaturasVivas: 1, linkDePagamento: null });
+    expect((await codigo(await assinar())).code).toBe("sem_link_de_pagamento");
+    h.ad.lerSituacao.mockResolvedValue({ assinaturasVivas: 1, linkDePagamento: "https://sandbox.asaas.com/i/pay_mensal" });
+    expect((await codigo(await assinar())).code).toBe("pagamento_em_andamento");
+    expect(h.ad.iniciarAssinatura).not.toHaveBeenCalled();
+  });
+
+  it("⭐ entrada pendente (teste de 0 dia, sem cliente): o checkout É a entrada, e o 2º clique devolve o MESMO link", async () => {
+    const criada = new Date(Date.now() - 60_000).toISOString();
+    m.linha = { ...EM_TESTE, trial_ate: criada, pagamento_inicial_pendente: true };
+    expect((await (await assinar()).json()).data).toEqual({ url: "https://checkout.stripe.com/c/pay/cs_1" });
+    expect(h.ad.iniciarAssinatura).toHaveBeenCalledTimes(1);
+    m.linha = { ...m.linha, provedor: "stripe", provedor_cliente_id: "cus_novo", checkout_url: "https://checkout.stripe.com/c/pay/cs_1", checkout_expira_em: new Date(Date.now() + 3_600_000).toISOString() };
+    expect((await (await assinar()).json()).data).toEqual({ url: "https://checkout.stripe.com/c/pay/cs_1" });
+    expect(h.ad.iniciarAssinatura).toHaveBeenCalledTimes(1);
+  });
+
+  it("⭐ ajuste aguardando com a assinatura MORTA (Asaas cancela na hora): o ajuste morre no provedor ANTES do checkout cheio", async () => {
+    m.linha = { ...EM_TESTE, ...AJUSTE, estado: "cancelada", trial_ate: null, provedor: "asaas", provedor_cliente_id: "cus_1" };
+    h.ad.lerSituacao.mockResolvedValue({ assinaturasVivas: 0, linkDePagamento: null });
+    h.ad.lerPagamentoProporcional.mockResolvedValue("pendente");
+    h.ad.iniciarAssinatura.mockResolvedValue({ url: "https://sandbox.asaas.com/i/pay_cheio", expiraEm: null, assinaturaRef: "sub_nova" });
+    expect((await assinar()).status).toBe(200);
+    expect(h.ad.expirarSessao).toHaveBeenCalledWith("pay_ajuste");
+    const desistencia = h.banco.cadeias.find((c) => c.tabela === "cobranca_assinaturas" && operacao(c) === "update" && (argumentos(c, "update")?.[0] as Record<string, unknown>).troca_id === null)!;
+    expect(filtros(desistencia)).toContainEqual(["eq", "troca_id", "troca-1"]);
+    expect(h.ad.expirarSessao.mock.invocationCallOrder[0]!).toBeLessThan(h.ad.iniciarAssinatura.mock.invocationCallOrder[0]!);
+  });
+
+  it("⭐ ajuste já PAGO com a assinatura morta: 409 troca_pendente, nenhum checkout cheio, reserva liberada", async () => {
+    m.linha = { ...EM_TESTE, ...AJUSTE, estado: "cancelada", trial_ate: null, provedor: "asaas", provedor_cliente_id: "cus_1" };
+    h.ad.lerSituacao.mockResolvedValue({ assinaturasVivas: 0, linkDePagamento: null });
+    h.ad.lerPagamentoProporcional.mockResolvedValue("pago");
+    expect((await codigo(await assinar())).code).toBe("troca_pendente");
+    expect(h.ad.iniciarAssinatura).not.toHaveBeenCalled();
+    expect(updates().at(-1)).toEqual({ checkout_expira_em: null });
+  });
+
+  it("⭐ quem clica é o dono/provisório (empresa sem cliente no provedor): o cliente nasce com o e-mail do admin da empresa", async () => {
+    h.papel.mockResolvedValue({ ok: true, user: { id: "dono-1", email: "dono@instalacao.com" }, org: { orgId: ORG } });
+    m.linha = { ...EM_TESTE, trial_ate: new Date(Date.now() - 60_000).toISOString(), pagamento_inicial_pendente: true };
+    await assinar();
+    expect(h.ad.garantirCliente).toHaveBeenCalledWith(expect.objectContaining({ email: "ana@loja.com" }));
+  });
+
+  it("empresa só com o dono provisório (nenhum admin de verdade): 409 empresa_sem_email; admins ilegíveis: 500 sem o endereço no log", async () => {
+    h.emailDoAdmin.mockResolvedValue(null);
+    expect((await codigo(await assinar())).code).toBe("empresa_sem_email");
+    h.emailDoAdmin.mockRejectedValue(new Error("admins ilegíveis (08006)"));
+    const res = await assinar();
+    expect(res.status).toBe(500);
+    expect(h.ad.garantirCliente).not.toHaveBeenCalled();
   });
 });

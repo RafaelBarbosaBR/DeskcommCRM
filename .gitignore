@@ -163,6 +163,11 @@ backups/
 # que o rollback devolve (#1955). Estado da VPS, como o marcador acima.
 .deskcomm-update-diagnostico.log
 .deskcomm-env-antes-do-update
+# A vigência do app DEPOIS de uma atualização (#2757): a marca (epoch + a
+# versão de onde se saiu) e o contador de healthchecks seguidos que faltam
+# para o agente voltar sozinho. Mesmo estado da VPS das marcas acima.
+.update-vigia
+.update-vigia-falhas
 
 # Dump de banco de QA. A doutrina já estava escrita duas linhas acima e só o
 # PADRÃO faltava: `backups/` não casa com `.qa-backups/`, e um dump de 1,1 MB de
@@ -185,3 +190,19 @@ __pycache__/
 
 # Runtime do instalador single-server: Supabase self-hosted, credenciais e dados.
 .runtime/
+
+# Ponto de extensão do Caddy (#2724): o operador solta aqui os arquivos .caddy
+# dos serviços extras que quer publicar no MESMO VPS, e o `import` no fim dos
+# dois Caddyfiles os publica sem que ninguém edite arquivo versionado.
+#
+# Não versiona por uma razão medida: o update.sh troca de versão com
+# `git checkout <tag>`, e um arquivo local alterado faz a atualização parar em
+# "parece haver mudanças locais que divergem" — é o mesmo sintoma da issue,
+# reaberto por outro caminho. A única exceção é o placeholder comentado, que é
+# o que mantém a pasta presente no clone novo (sem pasta, o bind mount do
+# compose não tem de onde nascer).
+caddy-sites/*
+!caddy-sites/README.caddy
+
+# Curso ilustrado — fotos e site gerados (curso/capturar.ts, curso/montar.ts)
+curso/saida/

@@ -26,6 +26,7 @@ import { registerAction } from "@/lib/automation/actions";
 import type { ActionCtx, ActionResultDetail } from "@/lib/automation/types";
 import { assertDestinoResolvidoSeguro } from "@/lib/automation/outbound-ip";
 import { assertSafeOutboundUrl } from "@/lib/automation/outbound-url";
+import { mensagemDeErro } from "@/lib/automation/actions/erro-legivel";
 import { decryptWebhookSecret } from "@/lib/webhooks/secrets";
 
 const TIMEOUT_MS = 10_000;
@@ -489,7 +490,7 @@ export async function executeCallWebhook(
       }
       lastError = res.status >= 300 && res.status < 400 ? "redirect_not_followed" : `http_${res.status}`;
     } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err);
+      lastError = mensagemDeErro(err);
     }
     const delay = retryDelaysMs[i];
     if (delay !== undefined) await sleep(delay);
